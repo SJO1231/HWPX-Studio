@@ -59,3 +59,5 @@ export { extractFragment } from "./fragment/extract.ts";
 export { planImport } from "./fragment/import.ts";
 export { fingerprintResource, makeLookup, type FingerprintLookup } from "./fragment/resources.ts";
 export { serializeFragment, parseFragment } from "./fragment/json.ts";
+
+export * from "./repair/index.ts";
