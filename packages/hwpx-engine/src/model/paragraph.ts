@@ -108,6 +108,16 @@ export function parseParagraph(element: XElement, path: number[]): ParagraphNode
   const subLists = subListEls.map((el, i) => buildSubList(el, path, i));
   const subListOf = new Map<XElement, SubListNode>(subLists.map((s) => [s.element, s]));
 
+  // 객체 → 하위 목록 대응. 객체(run의 자식)와 하위 목록은 모두 문서 순서이고 서로 겹치지 않으므로(하위 목록 안쪽은
+  // 찾지 않는다), 객체를 만나는 순서대로 하위 목록 목록을 한 번만 앞으로 훑으면 된다. 객체마다 전체를 거르면 N²이 된다.
+  let nextSubList = 0;
+  const subListsWithin = (el: XElement): SubListNode[] => {
+    while (nextSubList < subLists.length && (subLists[nextSubList]?.element.start ?? Infinity) < el.start) nextSubList++;
+    const from = nextSubList;
+    while (nextSubList < subLists.length && (subLists[nextSubList]?.element.end ?? Infinity) <= el.end) nextSubList++;
+    return subLists.slice(from, nextSubList);
+  };
+
   const addPiece = (kind: PieceKind, start: number, end: number, contribution: string, runOrdinal: number): void => {
     pieces.push({ kind, start, end, logicalStart: logical.length, logicalEnd: logical.length + contribution.length, runOrdinal });
     logical += contribution;
@@ -140,7 +150,7 @@ export function parseParagraph(element: XElement, path: number[]): ParagraphNode
       element: el,
       type: el.local,
       pieceIndex,
-      subLists: subLists.filter((s) => s.element.start >= el.start && s.element.end <= el.end),
+      subLists: subListsWithin(el),
     };
     const objId = attrValue(el, "id");
     if (objId !== undefined) base.id = objId;

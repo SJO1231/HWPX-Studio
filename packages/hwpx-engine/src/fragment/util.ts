@@ -116,7 +116,7 @@ const OBJECT_TAGS = new Set([
 
 export type InstanceAttr = { role: InstanceIdRole; element: XElement; attr: XAttr };
 
-/** 요소들에서 개체 id, instId(`instid`), 누름틀 시작 id, 누름틀 끝의 beginIDRef를 문서 순서로 찾는다. */
+/** 요소들에서 개체 id, instId(`instid`), 누름틀 시작 id, 누름틀 끝의 beginIDRef, 문단 id를 문서 순서로 찾는다. */
 export function scanInstanceAttrs(elements: Iterable<XElement>): InstanceAttr[] {
   const found: InstanceAttr[] = [];
   for (const el of elements) {
@@ -126,6 +126,7 @@ export function scanInstanceAttrs(elements: Iterable<XElement>): InstanceAttr[] 
       else if (attr.qname === "id" && nsRole(el.ns) === "paragraph") {
         if (OBJECT_TAGS.has(el.local)) role = "object";
         else if (el.local === "fieldBegin") role = "fieldBegin";
+        else if (el.local === "p") role = "paragraph";
       } else if (attr.qname === "beginIDRef" && elIs(el, "paragraph", "fieldEnd")) role = "fieldEndRef";
       if (role !== undefined) found.push({ role, element: el, attr });
     }

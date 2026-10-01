@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readdirSync } from "node:fs";
 import { crc32 } from "node:zlib";
+import * as engine from "../src/index.ts";
 import {
   HwpxError,
   LIMITS,
@@ -769,4 +770,63 @@ test("3.3 역슬래시 이름이 없으면 PKG_MISSING 그대로, 필수 항목�
   // 필수 항목이 모두 있으면 역슬래시 이름이 있어도 열린다
   const pkg = openPackage(without("", [{ name: "BinData\\a.png", data: new Uint8Array([1]) }]));
   assert.equal(pkg.headerEntry, "Contents/header.xml");
+});
+
+// ── rootfile 경로 노출 ───────────────────────────────────────────────────
+
+/** container.xml의 rootfile 목록과 manifest·구역·header 항목을 가진 패키지. 패키지 문서 항목 이름은 `hpfName`이다. */
+function packageWithRootfiles(rootfiles: string, hpfName: string): Uint8Array {
+  const container =
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>` +
+    `<ocf:container xmlns:ocf="urn:oasis:names:tc:opendocument:xmlns:container"><ocf:rootfiles>${rootfiles}</ocf:rootfiles></ocf:container>`;
+  return buildZip([
+    { name: "mimetype", data: utf8("application/hwp+zip") },
+    { name: "META-INF/container.xml", data: utf8(container) },
+    { name: hpfName, data: utf8(hpfXml([0])) },
+    { name: "Contents/header.xml", data: utf8(MINIMAL_HEADER) },
+    { name: "Contents/section0.xml", data: utf8(sectionXml("")) },
+    { name: "Preview/PrvText.txt", data: utf8("preview") },
+  ]);
+}
+
+test("3.3 rootfile: 패키지 문서 항목의 경로를 노출한다 (fixtures 18개는 container.xml의 hwpml-package+xml 항목과 같다)", () => {
+  for (const name of allFixtureNames()) {
+    const bytes = readFixture(name);
+    const pkg = openPackage(bytes);
+    // 독립 기준: container.xml 원문에서 정규식으로 찾는다
+    const container = new TextDecoder().decode(readEntry(pkg.archive, bytes, "META-INF/container.xml"));
+    const expected = /<[\w:]*rootfile\b[^>]*?\sfull-path="([^"]*)"[^>]*?\smedia-type="application\/hwpml-package\+xml"/.exec(container)?.[1];
+    assert.equal(expected, "Contents/content.hpf", `${name}: 기준값`);
+    assert.equal(pkg.rootfile, expected, name);
+  }
+});
+
+test("3.3 rootfile: 한컴 저장본처럼 미리보기가 앞에 있어도 media-type이 패키지 문서인 항목을 고른다. 이름이 content.hpf가 아니어도 된다", () => {
+  const preview = `<ocf:rootfile full-path="Preview/PrvText.txt" media-type="text/plain"/>`;
+  const main = `<ocf:rootfile full-path="Package/main.hpf" media-type="application/hwpml-package+xml"/>`;
+  const pkg = openPackage(packageWithRootfiles(preview + main, "Package/main.hpf"));
+  assert.equal(pkg.rootfile, "Package/main.hpf");
+  assert.equal(pkg.headerEntry, "Contents/header.xml");
+  assert.deepEqual(pkg.sectionEntries, ["Contents/section0.xml"]);
+});
+
+test("3.3 rootfile: media-type이 없으면 .hpf로 끝나는 첫 항목이다", () => {
+  const preview = `<ocf:rootfile full-path="Preview/PrvText.txt"/>`;
+  const main = `<ocf:rootfile full-path="Package/alt.hpf"/>`;
+  assert.equal(openPackage(packageWithRootfiles(preview + main, "Package/alt.hpf")).rootfile, "Package/alt.hpf");
+});
+
+// ── 공개 목록 ───────────────────────────────────────────────────────────
+
+test("공개 목록: index가 검사기(validateDocument·compareToBaseline)를 내보내고 기존 공개 이름은 그대로다", () => {
+  assert.equal(typeof engine.validateDocument, "function");
+  assert.equal(typeof engine.compareToBaseline, "function");
+  // export *가 이름 충돌로 기존 이름을 가리지 않았다
+  for (const name of ["openPackage", "parseDocument", "planImport", "applyPlan", "extractFragment", "listFields", "tokenize", "HwpxError"]) {
+    assert.equal(typeof (engine as Record<string, unknown>)[name], "function", name);
+  }
+  // 내보낸 함수가 실제로 동작한다: 정상 fixture의 검사 결과를 자기 자신과 대조하면 새 오류가 없다
+  const report = engine.validateDocument(readFixture("D1"));
+  assert.ok(Array.isArray(report.errors) && Array.isArray(report.warnings));
+  assert.deepEqual(engine.compareToBaseline(report, report).newErrors, []);
 });

@@ -38,6 +38,8 @@ const CASES: Case[] = [
   { name: "bookmark-d1", src: "extra/features-picture", from: 15, to: 15, target: "D1", inserted: 1 },
   { name: "features-picture-d1", src: "extra/features-picture", from: 14, to: 14, target: "D1", inserted: 1 },
   { name: "table-hancom", src: "hancom/ph-table", from: 1, to: 1, target: "hancom/blocks", inserted: 1 },
+  // 고유한 문단 id(134626807 등)를 가진 문단을 자기 자신에게 가져온다: 문단 id를 재발급하지 않으면 검사기가 문단 id 중복을 센다
+  { name: "merged-self", src: "hancom-merged", from: 1, to: 8, target: "hancom-merged", inserted: 8 },
 ];
 
 /** 가져오기 결과를 임시 폴더에 저장하고 경로를 돌려준다. 대상 원본도 같은 폴더에 사본으로 둔다. */
@@ -104,10 +106,13 @@ for (const c of CASES) {
   });
 }
 
-test("오라클 Python 검사기: 문단 id는 건드리지 않으므로 id가 있는 문단을 자기 자신에게 가져오면 문단 id 중복이 센다 (알려진 동작)", { skip: skipPython }, () => {
+// 이전에는 문단 id를 건드리지 않아 id가 있는 문단을 자기 자신에게 가져오면 검사기에 `paragraph id 중복: '705723480'`(INST_DUP_ID)이
+// 새로 생겼다(알려진 동작이었다). 이제 대상에 이미 있는 문단 id는 새 값으로 바꾸므로 문단 id 중복 오류가 늘지 않는다.
+test("오라클 Python 검사기: id가 있는 문단을 자기 자신에게 가져와도 문단 id 중복 오류가 새로 생기지 않는다", { skip: skipPython }, () => {
   const doc = loadDoc("extra/features-picture");
   const fragment = extractFragment(doc, { sectionIndex: 0, parentPath: [], from: 15, to: 15 });
   const plan = planImport(doc, fragment, { sectionIndex: 0, parentPath: [], index: 17, position: "after" });
+  assert.ok((plan.summary["reissuedIds"] ?? 0) >= 1, "문단 id를 새로 받았다");
   const file = join(tmp, "paragraph-id-dup.hwpx");
   const original = join(tmp, "paragraph-id-dup.orig.hwpx");
   writeFileSync(file, applyPlan(doc.pkg, plan));
@@ -115,6 +120,7 @@ test("오라클 Python 검사기: 문단 id는 건드리지 않으므로 id가 �
   const before = validate(original);
   const after = validate(file);
   const added = after.errors.filter((e) => !before.errors.some((b) => b.code === e.code && b.msg === e.msg && b.where === e.where));
-  assert.deepEqual(added.map((e) => e.code), ["INST_DUP_ID"]);
-  assert.ok(added[0]?.msg.includes("paragraph id 중복: '705723480'"), added[0]?.msg);
+  assert.deepEqual(added.map((e) => `${e.code} ${e.msg}`), [], "새 오류가 없다(문단 id 중복 포함)");
+  const paragraphDups = (r: PyReport): number => r.errors.filter((e) => e.msg.startsWith("paragraph id 중복")).reduce((n, e) => n + e.count, 0);
+  assert.ok(paragraphDups(after) <= paragraphDups(before), `문단 id 중복 ${paragraphDups(before)} → ${paragraphDups(after)}`);
 });

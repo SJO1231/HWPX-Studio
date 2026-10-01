@@ -43,6 +43,8 @@ export {
 
 export { applyPlan, mergePlans, type SpanEdit, type EditPlan } from "./edit/plan.ts";
 
+export * from "./validate/index.ts";
+
 export type {
   Fragment,
   FragmentBinary,

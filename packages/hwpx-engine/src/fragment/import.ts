@@ -8,10 +8,10 @@ import { decodeEntities, escapeAttr } from "../xml/chars.ts";
 import { parseXmlBytes } from "../xml/parse.ts";
 import { attrNode, attrValue, childEl, childEls, elementChildren, elIs, nsRole, walkElements, type XElement } from "../xml/tree.ts";
 import { validateFragment } from "./json.ts";
-import { createFingerprinter, makeLookup } from "./resources.ts";
+import { createFingerprinter, makeLookup, resourceRefs } from "./resources.ts";
 import { paragraphsAt, sectionAt } from "./select.ts";
 import type { Fragment, FragmentResource, InsertPoint } from "./types.ts";
-import { applyReps, missingDeclarations, scanInstanceAttrs, sha256Hex, type Rep } from "./util.ts";
+import { applyReps, isNoRef, missingDeclarations, scanInstanceAttrs, sha256Hex, type Rep } from "./util.ts";
 
 // 자원 종류 → header의 목록 요소(local 이름)
 const LIST_NAME: Record<string, string> = {
@@ -109,6 +109,47 @@ function mapResources(target: HwpxDocument, fragment: Fragment): ResourcePlan {
   return { ids, added };
 }
 
+/**
+ * 새로 추가하는 자원의 id가, 대상에서 없는 자원을 가리키던 참조의 id와 같으면 경고를 낸다. 그런 참조(예: 탭 목록이 비었는데 0번을
+ * 가리키는 문단모양)는 가져온 뒤 새 자원을 가리키게 되어 기존 문단의 모양이 달라질 수 있다. id 배정은 바꾸지 않는다.
+ * 대상의 header 자원이 가리키는 참조와 본문 참조를 모두 보고, 같은 종류·id는 한 경고로 묶는다. 이진 자료 참조는 보지 않는다.
+ */
+function fillsDangling(target: HwpxDocument, added: AddedResource[]): Issue[] {
+  if (added.length === 0) return [];
+  const lookup = makeLookup(target);
+  const dangling = new Map<string, number>();
+  const note = (kind: string, lang: string | undefined, id: string): void => {
+    if (isNoRef(id) || lookup.resource(kind, lang, id) !== undefined) return;
+    const key = refKey(kind, lang, id);
+    dangling.set(key, (dangling.get(key) ?? 0) + 1);
+  };
+  for (const items of Object.values(target.header.resources)) {
+    for (const item of items) {
+      for (const ref of resourceRefs(item)) if (ref.kind !== "binaryItem") note(ref.kind, ref.lang, ref.id);
+    }
+  }
+  for (const section of target.sections) {
+    for (const ref of section.bodyRefs) {
+      if (ref.kind !== "unknown" && ref.kind !== "memoShape" && ref.kind !== "binaryItem") note(ref.kind, undefined, ref.id);
+    }
+  }
+  const issues: Issue[] = [];
+  for (const { res, newId } of added) {
+    const n = dangling.get(refKey(res.kind, res.lang, newId));
+    if (n === undefined) continue;
+    const label = res.lang === undefined ? `${res.kind} ${newId}` : `${res.kind}(${res.lang}) ${newId}`;
+    issues.push(
+      makeIssue(
+        "warning",
+        "FRAG_FILLS_DANGLING",
+        `${label}이(가) 대상에 없는데 ${n}곳에서 가리킵니다. 새로 추가하는 자원이 이 id를 받아 그 참조가 새 자원을 가리키게 되므로 기존 문단의 모양이 달라질 수 있습니다.`,
+        target.pkg.headerEntry,
+      ),
+    );
+  }
+  return issues;
+}
+
 /** 추가할 자원의 원문을 새 id·새 참조·새 이름으로 고친다. */
 function rewriteResource(entry: AddedResource, ids: Map<string, string>, binaries: Map<string, string>): string {
   const { res } = entry;
@@ -168,13 +209,7 @@ function listEdits(header: HeaderModel, headerEntry: string, list: XElement, ite
 // ── 이진 자료 ───────────────────────────────────────────────────
 
 function locateManifest(pkg: HwpxPackage): { entry: string; manifest: XElement } {
-  const container = parseXmlBytes(readEntry(pkg.archive, pkg.bytes, "META-INF/container.xml"), "META-INF/container.xml");
-  const rootfiles = [...walkElements(container.root)].filter((el) => elIs(el, "container", "rootfile"));
-  const rootfile =
-    rootfiles.find((el) => attrValue(el, "media-type") === "application/hwpml-package+xml") ??
-    rootfiles.find((el) => (attrValue(el, "full-path") ?? "").endsWith(".hpf"));
-  const entry = rootfile === undefined ? undefined : attrValue(rootfile, "full-path");
-  if (entry === undefined) throw new HwpxError("PKG_MISSING", "container.xml에 패키지 루트 파일(rootfile)이 없습니다.", "META-INF/container.xml");
+  const entry = pkg.rootfile;
   const hpf = parseXmlBytes(readEntry(pkg.archive, pkg.bytes, entry), entry);
   const manifest = [...walkElements(hpf.root)].find((el) => elIs(el, "opf", "manifest"));
   if (manifest === undefined) throw new HwpxError("PKG_MISSING", "content.hpf에 manifest가 없습니다.", entry);
@@ -260,25 +295,41 @@ function planBinaries(target: HwpxDocument, fragment: Fragment, edits: SpanEdit[
 
 // ── 인스턴스 id·책갈피 ──────────────────────────────────────────
 
+/** 한컴이 여러 문단에 같은 값을 쓰는 자리값. 겹쳐도 되므로 바꾸지 않고, 새 값으로도 쓰지 않는다. */
+const PARAGRAPH_PLACEHOLDERS = new Set(["", "0", "2147483648", "4294967295"]);
+
+/**
+ * 객체·instId·누름틀 id(대상과 조각을 합친 가장 큰 숫자 + 1부터)와 문단 id(문단 id끼리의 최댓값 + 1부터)를 재발급한다.
+ * 객체 계열은 대상에 있거나 자리값(0, 빈 값)이면 바꾸고, 문단 id는 자리값이 아니고 대상에 이미 있을 때만 바꾼다.
+ */
 function reissueIds(target: HwpxDocument, fragment: Fragment, reps: Rep[]): number {
-  const used = { object: new Set<string>(), inst: new Set<string>(), fieldBegin: new Set<string>() };
+  const used = { object: new Set<string>(), inst: new Set<string>(), fieldBegin: new Set<string>(), paragraph: new Set<string>() };
   let max = 0;
+  let paragraphMax = 0;
   const note = (v: string): void => {
     if (isNumericId(v)) max = Math.max(max, Number(v));
   };
+  const noteParagraph = (v: string): void => {
+    if (isNumericId(v)) paragraphMax = Math.max(paragraphMax, Number(v));
+  };
   for (const s of target.sections) {
     for (const x of scanInstanceAttrs(walkElements(s.root))) {
+      if (x.role === "paragraph") {
+        used.paragraph.add(x.attr.value);
+        noteParagraph(x.attr.value);
+        continue;
+      }
       if (x.role !== "fieldEndRef") used[x.role].add(x.attr.value);
       note(x.attr.value);
     }
   }
-  for (const x of fragment.instanceIds) note(x.value);
+  for (const x of fragment.instanceIds) (x.role === "paragraph" ? noteParagraph : note)(x.value);
 
   let counter = max + 1;
   let reissued = 0;
   const fieldIds = new Map<string, string>();
   for (const x of fragment.instanceIds) {
-    if (x.role === "fieldEndRef") continue;
+    if (x.role === "fieldEndRef" || x.role === "paragraph") continue;
     const placeholder = x.role !== "fieldBegin" && (x.value === "0" || x.value === "");
     if (!placeholder && !used[x.role].has(x.value)) continue;
     const next = String(counter++);
@@ -290,6 +341,33 @@ function reissueIds(target: HwpxDocument, fragment: Fragment, reps: Rep[]): numb
   for (const x of fragment.instanceIds) {
     const next = x.role === "fieldEndRef" ? fieldIds.get(x.value) : undefined;
     if (next !== undefined) reps.push({ start: x.start, end: x.end, text: next });
+  }
+  return reissued + reissueParagraphIds(fragment, used.paragraph, paragraphMax, reps);
+}
+
+/**
+ * 조각 문단의 id가 자리값이 아니고 대상에 이미 있으면 새 값으로 바꾼다(같은 문서에 다시 넣을 때 문단 id가 겹치지 않게).
+ * 새 값은 `paragraphMax + 1`부터 문서 순서로 주되 자리값과 이미 쓰인 값은 건너뛴다. 4294967295에 닿으면 1부터 빈 값을 찾는다.
+ */
+function reissueParagraphIds(fragment: Fragment, inTarget: Set<string>, paragraphMax: number, reps: Rep[]): number {
+  const taken = new Set(inTarget);
+  for (const x of fragment.instanceIds) if (x.role === "paragraph") taken.add(x.value);
+  let counter = paragraphMax + 1;
+  const take = (): string => {
+    for (;;) {
+      if (counter >= MAX_ID) counter = 1;
+      const id = String(counter++);
+      if (!PARAGRAPH_PLACEHOLDERS.has(id) && !taken.has(id)) {
+        taken.add(id);
+        return id;
+      }
+    }
+  };
+  let reissued = 0;
+  for (const x of fragment.instanceIds) {
+    if (x.role !== "paragraph" || PARAGRAPH_PLACEHOLDERS.has(x.value) || !inTarget.has(x.value)) continue;
+    reps.push({ start: x.start, end: x.end, text: take() });
+    reissued++;
   }
   return reissued;
 }
@@ -356,6 +434,7 @@ export function planImport(target: HwpxDocument, fragment: Fragment, at: InsertP
 
   // 2. 자원 대응과 header 편집
   const resources = mapResources(target, fragment);
+  issues.push(...fillsDangling(target, resources.added));
   const byList = new Map<XElement, { items: string[]; reason: string }>();
   const headerDeclarations = new Map<string, string>();
   for (const entry of resources.added) {

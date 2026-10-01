@@ -8,6 +8,8 @@ export type ManifestItem = { id: string; href: string; mediaType: string };
 export type HwpxPackage = {
   archive: Archive;
   bytes: Uint8Array;
+  /** container.xml이 가리키는 패키지 문서(manifest·spine이 든 .hpf)의 항목 이름. 보통 `Contents/content.hpf` */
+  rootfile: string;
   headerEntry: string;
   sectionEntries: string[];
   manifestItems: ManifestItem[];
@@ -123,5 +125,5 @@ export function openPackage(bytes: Uint8Array): HwpxPackage {
   for (const name of sectionEntries) requireEntry(archive, name);
 
   const binaryEntries = archive.entries.filter((e) => !e.isDirectory && e.name.startsWith("BinData/")).map((e) => e.name);
-  return { archive, bytes, headerEntry: header.href, sectionEntries, manifestItems, binaryEntries, issues };
+  return { archive, bytes, rootfile: rootfile.path, headerEntry: header.href, sectionEntries, manifestItems, binaryEntries, issues };
 }

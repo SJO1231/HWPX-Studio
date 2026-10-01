@@ -78,7 +78,7 @@ type Issue = { severity: "error" | "warning"; code: string; message: string; whe
 - `META-INF/container.xml`의 rootfile → `Contents/content.hpf`의 manifest·spine을 읽어 `headerEntry`, `sectionEntries[]`(spine 순서)를 정한다. spine에 없는 `Contents/section<N>.xml`이 있으면 번호순(숫자 비교)으로 뒤에 붙이고 경고한다.
 - 필수 항목이 없으면 `PKG_MISSING`.
 - XML 항목은 UTF-8(치명 모드)로 해독한다. 실패하면 `XML_ENCODING`. BOM은 보존한다.
-- `HwpxPackage = { archive, bytes, headerEntry, sectionEntries, manifestItems[{id, href, mediaType}], binaryEntries[], issues }`
+- `HwpxPackage = { archive, bytes, rootfile, headerEntry, sectionEntries, manifestItems[{id, href, mediaType}], binaryEntries[], issues }` (`rootfile`은 `content.hpf`의 항목 이름)
 
 ## 4. S1 — XML (`src/xml/`)
 
@@ -300,7 +300,7 @@ type Fragment = {
   refs: { kind: string; lang?: string; id: string; start: number; end: number }[]      // xml 안 참조 속성값 구간
   resources: FragmentResource[]     // 의존 닫힘, 의존 순서(참조되는 것이 먼저)
   binaries: { itemId: string; href: string; mediaType: string; sha256: string; base64: string }[]
-  instanceIds: { role: "object" | "inst" | "fieldBegin" | "fieldEndRef"; value: string; start: number; end: number }[]
+  instanceIds: { role: "paragraph" | "object" | "inst" | "fieldBegin" | "fieldEndRef"; value: string; start: number; end: number }[]
   bookmarks: { name: string; start: number; end: number }[]
   lineSegSpans: { start: number; end: number }[]
   texts: string[]                   // 조각 안 모든 문단의 논리 텍스트(문서 순서)
@@ -337,7 +337,7 @@ type InsertPoint = { sectionIndex: number; parentPath: number[]; index: number; 
    - 스타일은 이름이 같고 지문이 다르면 새 스타일의 이름에 ` (2)`, ` (3)` …을 붙인다.
    - 대상 header에 해당 목록 요소가 없으면 `FRAG_NO_LIST`로 거절한다.
 3. **본문 재작성**: 조각 원문의 참조 속성값을 대응표대로 바꾼다. 줄 배치 캐시 구간을 지운다.
-4. **인스턴스 id**: 객체 id·instId가 대상에 이미 있거나 자리값(`0`, 빈 값)이면 새 값(대상과 조각을 합친 가장 큰 숫자 + 1부터)을 준다. 필드는 시작 id와 끝의 `beginIDRef`를 함께 바꾼다. 문단 id는 건드리지 않는다.
+4. **인스턴스 id**: 객체 id·instId가 대상에 이미 있거나 자리값(`0`, 빈 값)이면 새 값(대상과 조각을 합친 가장 큰 숫자 + 1부터)을 준다. 필드는 시작 id와 끝의 `beginIDRef`를 함께 바꾼다. 문단 id는 자리값(빈 값, `0`, `2147483648`, `4294967295`)이 아니고 대상에 이미 있을 때만 새 값(문단 id 최댓값 + 1부터, 자리값은 건너뜀)으로 바꾼다.
 5. **책갈피**: 이름이 대상과 겹치면 `_1`, `_2` …를 붙인다.
 6. **이진 자료**: 대상에 같은 내용(sha256)의 항목이 있으면 그 id를 재사용한다. 없으면 겹치지 않는 새 id와 항목 이름으로 추가하고 manifest에 등록한다.
 7. **삽입**: 삽입 지점 문단의 시작(before) 또는 끝(after)에 재작성한 조각 원문을 넣는다.
@@ -378,12 +378,14 @@ type InsertPoint = { sectionIndex: number; parentPath: number[]; index: number; 
 - 추가한 코드: `EDIT_RANGE`, `FRAG_SELECTION`, `FRAG_INSERT_POINT`, `FRAG_SCHEMA`(오류), `FRAG_UNKNOWN_REF`, `FRAG_TABLE_PARAGRAPH_TEXT`, `FRAG_BEFORE_SECPR`(경고).
 - 독립으로 만든 두 가져오기 계획은 합치지 않는다(새 id가 겹친다). 가져오기 → 다시 파싱 → 다음 가져오기 순서로 적용한다.
 
-후속 수정(확정):
+후속 수정(구현·검증 완료, 테스트 414개와 오라클 23개 통과):
 
 - **문단 id**: 조각의 문단 id가 자리값이 아니고 대상에 이미 있으면 새 값으로 바꾼다(같은 문서에 다시 넣을 때 중복 오류가 나던 문제).
 - **없는 참조를 채우는 경우 경고**: 대상에서 없는 자원을 가리키던 id를 새 자원이 차지하게 되면(예: 탭 목록이 비었는데 0번을 가리키는 합성 문서) 기존 문단의 모양이 달라질 수 있다. 계획에 `FRAG_FILLS_DANGLING` 경고를 남긴다.
 - 소스에서 없는 대상을 가리키던 참조는 그대로 옮긴다(`FRAG_DANGLING_SOURCE` 경고). 대상에 같은 id가 있으면 그 자원을 가리키게 된다. 원본이 깨끗하면 생기지 않는다.
 - `HwpxPackage`에 rootfile 경로를 둔다.
+- 문단 해석에서 객체와 하위 목록의 대응을 한 번의 순회로 만든다(하위 목록 2만 개 문단이 0.1초 안팎).
+- 알려진 한계: 이전 형식으로 저장한 조각 JSON에는 문단 id 항목이 없어 재발급이 일어나지 않는다. 조각 안에서만 겹치는 문단 id는 그대로 들어간다. `FRAG_FILLS_DANGLING`은 header 자원만 본다(이진 자료 id는 보지 않는다).
 - header에 이진 목록(`binDataList`)이 있는 문서는 그 목록을 갱신하지 않는다(한컴 저장본에는 이 목록이 없다. 알려진 한계).
 
 ### 7.7 서식 변경 (`src/format/`) — S2b (사용자 지시, 2026-10-01)

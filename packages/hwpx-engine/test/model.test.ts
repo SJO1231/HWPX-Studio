@@ -21,6 +21,7 @@ import {
 import {
   FIXTURE_NAMES,
   MINIMAL_HEADER,
+  buildHwpx,
   mutateEntryText,
   parseSynthetic,
   readFixture,
@@ -970,4 +971,94 @@ test("5.4 exportModel: 표·셀·하위 목록 위치를 색인으로 내보낸�
   assert.equal(host.subLists.length, 40);
   assert.equal(host.subLists[0]?.owner, "tc");
   assert.deepEqual(host.subLists[3]?.paragraphs[0]?.path, [...host.path, 3, 0]);
+});
+
+// ── 객체 → 하위 목록 대응 ─────────────────────────────────────────────────
+
+/** 대응의 정의(독립 기준): 객체 요소의 원문 구간 안에 통째로 든 하위 목록이 그 객체의 것이다. */
+function expectedSubLists(p: ParagraphNode, object: ParagraphNode["objects"][number]): ParagraphNode["subLists"] {
+  return p.subLists.filter((s) => s.element.start >= object.element.start && s.element.end <= object.element.end);
+}
+
+test("5.2 객체의 subLists는 객체 구간 안에 든 하위 목록이다 (fixtures 전체의 모든 문단·객체)", () => {
+  let objects = 0;
+  let withSubLists = 0;
+  for (const name of [...FIXTURE_NAMES, "hancom/blocks", "hancom/header-footer", "hancom/picture", "extra/features-picture"]) {
+    for (const p of allParagraphs(load(name))) {
+      for (const o of p.objects) {
+        const expected = expectedSubLists(p, o);
+        assert.equal(o.subLists.length, expected.length, `${name} ${p.path.join(".")}`);
+        o.subLists.forEach((s, i) => assert.equal(s, expected[i], `${name} ${p.path.join(".")} ${i}번째`));
+        objects++;
+        if (o.subLists.length > 0) withSubLists++;
+      }
+    }
+  }
+  assert.ok(objects >= 50 && withSubLists >= 10, `fixtures에 객체 ${objects}개, 하위 목록을 가진 객체 ${withSubLists}개`);
+});
+
+test("5.2 객체의 subLists: 하위 목록이 없는 객체, 객체 밖 하위 목록, run 바로 아래의 하위 목록", () => {
+  const sl = (t: string) =>
+    `<hp:subList><hp:p paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0"><hp:t>${t}</hp:t></hp:run></hp:p></hp:subList>`;
+  const body =
+    `<hp:p paraPrIDRef="0" styleIDRef="0">` +
+    `<hp:run charPrIDRef="0"><hp:ctrl/><hp:ctrl>${sl("a")}${sl("b")}</hp:ctrl><hp:t>x</hp:t><hp:ctrl><hp:foo>${sl("c")}</hp:foo></hp:ctrl></hp:run>` +
+    `<hp:run charPrIDRef="0">${sl("d")}<hp:ctrl/></hp:run>` +
+    `<hp:extra>${sl("loose")}</hp:extra>` +
+    `</hp:p>`;
+  const p = parseSynthetic([body]).sections[0]?.paragraphs[0];
+  assert.ok(p !== undefined);
+  const texts = (subLists: ParagraphNode["subLists"]): string[] => subLists.map((s) => s.paragraphs[0]?.logicalText ?? "");
+  assert.deepEqual(texts(p.subLists), ["a", "b", "c", "d", "loose"]);
+  assert.equal(p.objects.length, 5); // ctrl, ctrl, ctrl, subList(d), ctrl
+  assert.deepEqual(p.objects.map((o) => texts(o.subLists)), [[], ["a", "b"], ["c"], ["d"], []]);
+  p.objects.forEach((o) => assert.deepEqual(o.subLists, expectedSubLists(p, o)));
+});
+
+// ── 문단 해석의 시간: 한 문단 안의 하위 목록 수에 선형이다 ──────────────────
+
+/** 한 문단에 `<hp:ctrl><hp:subList><hp:p/></hp:subList></hp:ctrl>`가 n개 든 합성 문서의 패키지. */
+function manySubListsPackage(n: number): ReturnType<typeof openPackage> {
+  const ctrl = "<hp:ctrl><hp:subList><hp:p/></hp:subList></hp:ctrl>";
+  const body = `<hp:p paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0">${ctrl.repeat(n)}</hp:run></hp:p>`;
+  return openPackage(buildHwpx([body]));
+}
+
+/** parseDocument 소요 시간(ms)의 최솟값. 실행 잡음(GC 등)을 줄이려고 여러 번 잰 값 가운데 가장 작은 것을 쓴다. */
+function bestParseMs(pkg: ReturnType<typeof openPackage>, runs: number): number {
+  let best = Infinity;
+  for (let i = 0; i < runs; i++) {
+    const t0 = performance.now();
+    parseDocument(pkg);
+    best = Math.min(best, performance.now() - t0);
+  }
+  return best;
+}
+
+test("5.2 한 문단에 하위 목록이 2만 개여도 해석이 제한 시간 안에 끝나고 모델이 맞다", () => {
+  const n = 20_000;
+  const pkg = manySubListsPackage(n);
+  const t0 = performance.now();
+  const doc = parseDocument(pkg);
+  const ms = performance.now() - t0;
+  const p = doc.sections[0]?.paragraphs[0];
+  assert.ok(p !== undefined);
+  assert.equal(p.objects.length, n);
+  assert.equal(p.subLists.length, n);
+  // 객체 i의 하위 목록은 i번째 하위 목록 하나뿐이다
+  for (const i of [0, 1, 777, n - 2, n - 1]) {
+    assert.equal(p.objects[i]?.subLists.length, 1, `객체 ${i}`);
+    assert.equal(p.objects[i]?.subLists[0], p.subLists[i], `객체 ${i}`);
+  }
+  assert.ok(p.objects.every((o) => o.subLists.length === 1));
+  assert.ok(ms < 1500, `parseDocument(하위 목록 ${n}개)가 ${ms.toFixed(0)}ms 걸렸다(기준 1500ms)`);
+});
+
+test("5.2 한 문단의 하위 목록 수를 2배로 늘려도 해석 시간은 3배를 넘지 않는다 (선형)", () => {
+  const small = manySubListsPackage(20_000);
+  const large = manySubListsPackage(40_000);
+  parseDocument(small); // 예열
+  const tSmall = bestParseMs(small, 3);
+  const tLarge = bestParseMs(large, 3);
+  assert.ok(tLarge < 3 * tSmall, `2만 개 ${tSmall.toFixed(0)}ms → 4만 개 ${tLarge.toFixed(0)}ms (${(tLarge / tSmall).toFixed(1)}배)`);
 });

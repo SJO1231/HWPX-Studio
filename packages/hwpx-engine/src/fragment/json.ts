@@ -10,7 +10,7 @@ import type {
 
 export const FRAGMENT_SCHEMA = "hwpx-studio/fragment@1";
 
-const ROLES: readonly string[] = ["object", "inst", "fieldBegin", "fieldEndRef"];
+const ROLES: readonly string[] = ["object", "inst", "fieldBegin", "fieldEndRef", "paragraph"];
 
 function fail(what: string): never {
   throw new HwpxError("FRAG_SCHEMA", `조각이 올바르지 않습니다: ${what}`);

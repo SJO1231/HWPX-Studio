@@ -29,6 +29,7 @@ import {
   NS_HH,
   NS_HP,
   NS_HS,
+  buildZip,
   bytesEqual,
   duplicates,
   expandResource,
@@ -44,6 +45,7 @@ import {
   reparse,
   sectionXml,
   sha256Hex,
+  utf8,
 } from "./helpers.ts";
 
 const SECTION = "Contents/section0.xml";
@@ -1033,4 +1035,241 @@ test("7.1 두 가져오기 계획을 합친다: header를 둘 다 고치면 EDIT
   assert.equal(merged.summary["insertedParagraphs"], 6);
   const result = reparse(applyPlan(first.result.pkg, merged));
   assert.equal(result.sections[0]?.paragraphs.length, (first.result.sections[0]?.paragraphs.length ?? 0) + 6);
+});
+
+// ── 문단 id 재발급 ──────────────────────────────────────────────────────
+
+/** 한컴이 여러 문단에 같은 값을 쓰는 자리값(명세 7.5-4). 겹쳐도 오류가 아니다. */
+const PARAGRAPH_PLACEHOLDERS = new Set(["", "0", "2147483648", "4294967295"]);
+/** 원문에서 `hp:p`의 id 속성값을 문서 순서로 모은다(id가 없는 문단은 건너뛴다). `hp:pic` 등은 걸리지 않는다. */
+const paragraphIdsIn = (xml: string): string[] => [...xml.matchAll(/<hp:p\b[^>]*?\sid="([^"]*)"/g)].map((m) => m[1] ?? "");
+const realParagraphIds = (ids: string[]): string[] => ids.filter((id) => !PARAGRAPH_PLACEHOLDERS.has(id));
+const isNumericParagraphId = (id: string): boolean => /^\d+$/.test(id) && Number(id) < 4294967295;
+/** 객체 id·instId·누름틀 시작 id (문단 id와 다른 id 공간) */
+const otherIdsIn = (xml: string): string[] => [
+  ...objectIdsIn(xml),
+  ...instIdsIn(xml),
+  ...[...xml.matchAll(/<hp:fieldBegin\b[^>]*?\sid="([^"]*)"/g)].map((m) => m[1] ?? ""),
+];
+const countChanged = (before: string[], after: string[]): number => before.filter((v, i) => v !== after[i]).length;
+
+test("7.5-4 문단 id: 고유한 id를 가진 문단을 자기 자신에게 가져오면 새 id를 받아 중복이 없다 (hancom-merged)", () => {
+  const target = loadDoc("hancom-merged");
+  const targetIds = paragraphIdsIn(target.sections[0]?.text ?? "");
+  assert.deepEqual(duplicates(realParagraphIds(targetIds)), [], "대상 문서는 자리값만 겹친다");
+  const r = runDocs(target, 1, 8, target, endOf(target));
+  const srcIds = paragraphIdsIn(r.srcXml);
+  const outIds = paragraphIdsIn(r.block);
+  assert.ok(realParagraphIds(srcIds).length >= 2, "조각에 고유 id를 가진 문단이 있다");
+  assert.ok(srcIds.some((id) => PARAGRAPH_PLACEHOLDERS.has(id)), "조각에 자리값 문단도 있다");
+  assert.equal(outIds.length, srcIds.length);
+
+  // 결과 문서 전체에서 자리값 밖의 문단 id는 겹치지 않는다
+  assert.deepEqual(duplicates(realParagraphIds(paragraphIdsIn(r.result.sections[0]?.text ?? ""))), []);
+  // 대상의 기존 문단 id는 순서까지 그대로다
+  assert.deepEqual(paragraphIdsIn(r.result.sections[0]?.text ?? "").slice(0, targetIds.length), targetIds);
+  // 새 값은 대상과 조각의 숫자 문단 id 최댓값 + 1부터 문서 순서로 받고, 자리값은 그대로다
+  const max = Math.max(...[...targetIds, ...srcIds].filter(isNumericParagraphId).map(Number));
+  let next = max + 1;
+  srcIds.forEach((id, i) => {
+    if (PARAGRAPH_PLACEHOLDERS.has(id)) assert.equal(outIds[i], id, `${i}번째: 자리값은 그대로`);
+    else assert.equal(outIds[i], String(next++), `${i}번째: ${id} → 새 id`);
+  });
+  // summary.reissuedIds = 새로 받은 문단 id 수 + 새로 받은 객체·인스턴스 id 수
+  const paragraphsReissued = next - (max + 1);
+  assert.equal(paragraphsReissued, realParagraphIds(srcIds).length, "대상에 있는 문단 id는 모두 바뀐다");
+  assert.equal(r.plan.summary["reissuedIds"], paragraphsReissued + countChanged(otherIdsIn(r.srcXml), otherIdsIn(r.block)));
+  // 글과 서식은 그대로다
+  assertSameTextAndFormat(r, "hancom-merged self");
+  assertPreserved(r, "hancom-merged self");
+});
+
+test("7.5-4 문단 id 규칙: 자리값·대상에 없는 id는 그대로, 겹치는 id는 새 값. 표 셀 안 문단·숫자가 아닌 id·조각 안 같은 id도 각각 새 값", () => {
+  const p = (id: string | undefined, inner = "<hp:t>x</hp:t>"): string =>
+    `<hp:p${id === undefined ? "" : ` id="${id}"`} paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0">${inner}</hp:run></hp:p>`;
+  const table = (tblId: string, inner: string): string =>
+    `<hp:tbl id="${tblId}" rowCnt="1" colCnt="1"><hp:tr><hp:tc borderFillIDRef="1"><hp:subList>${inner}</hp:subList>` +
+    `<hp:cellAddr colAddr="0" rowAddr="0"/><hp:cellSpan colSpan="1" rowSpan="1"/></hp:tc></hp:tr></hp:tbl>`;
+  const target = parseSynthetic([
+    p("10") + p("20") + p("0") + p("4294967295") + p("abc") + p("") + p(undefined) + p(undefined, table("901", p("30"))),
+  ]);
+  const src = parseSynthetic([
+    p("10") + p("11") + p("0") + p("4294967295") + p("abc") + p("20") + p("20") + p(undefined, table("902", p("30"))) + p("") + p(undefined),
+  ]);
+  const r = runDocs(src, 0, 9, target, endOf(target));
+  // 조각의 문단 id(문서 순서, 표 셀 안 포함): 10 11 0 4294967295 abc 20 20 (표 문단 id 없음) 30 ""
+  assert.deepEqual(paragraphIdsIn(r.srcXml), ["10", "11", "0", "4294967295", "abc", "20", "20", "30", ""]);
+  // 대상과 조각의 숫자 문단 id 최댓값은 30이므로 새 값은 31부터 문서 순서로 준다
+  assert.deepEqual(paragraphIdsIn(r.block), ["31", "11", "0", "4294967295", "32", "33", "34", "35", ""]);
+  assert.equal(r.plan.summary["reissuedIds"], 5, "객체 id(901·902)는 겹치지 않아 문단 id 다섯 개뿐이다");
+  assert.deepEqual(duplicates(realParagraphIds(paragraphIdsIn(r.result.sections[0]?.text ?? ""))), []);
+  // 대상의 문단 id는 그대로다
+  assert.deepEqual(paragraphIdsIn(r.result.sections[0]?.text ?? "").slice(0, 7), ["10", "20", "0", "4294967295", "abc", "", "30"]);
+  assert.deepEqual(r.inserted.map((q) => q.attrs.id), ["31", "11", "0", "4294967295", "32", "33", "34", undefined, "", undefined]);
+});
+
+test("7.5-4 문단 id는 객체·인스턴스 id와 따로 센다: 서로의 최댓값에 영향을 주지 않는다", () => {
+  const pic = (id: string): string => `<hp:pic id="${id}" instid="${id}"><hp:sz width="1" height="1"/></hp:pic>`;
+  const p = (id: string, inner: string): string =>
+    `<hp:p id="${id}" paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0">${inner}</hp:run></hp:p>`;
+  const target = parseSynthetic([p("5000", pic("7"))]);
+  const src = parseSynthetic([p("5000", pic("7"))]);
+  const r = runDocs(src, 0, 0, target, endOf(target));
+  assert.deepEqual(paragraphIdsIn(r.block), ["5001"], "문단 id는 문단 id의 최댓값(5000) + 1");
+  assert.deepEqual(objectIdsIn(r.block), ["8"], "객체 id는 객체·instId의 최댓값(7) + 1");
+  assert.deepEqual(instIdsIn(r.block), ["9"]);
+  assert.equal(r.plan.summary["reissuedIds"], 3);
+});
+
+test("7.5-4 문단 id 새 값은 자리값을 피한다 (2147483648)", () => {
+  const p = (id: string): string => `<hp:p id="${id}" paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0"><hp:t>x</hp:t></hp:run></hp:p>`;
+  const target = parseSynthetic([p("2147483647")]);
+  const src = parseSynthetic([p("2147483647") + p("2147483647")]);
+  const r = runDocs(src, 0, 1, target, endOf(target));
+  assert.deepEqual(paragraphIdsIn(r.block), ["2147483649", "2147483650"], "2147483648은 건너뛴다");
+});
+
+test("7.5-4 문단 id가 4294967294까지 쓰였어도 새 값은 자리값이 아니고 겹치지 않는 숫자다", () => {
+  const p = (id: string): string => `<hp:p id="${id}" paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0"><hp:t>x</hp:t></hp:run></hp:p>`;
+  const target = parseSynthetic([p("4294967294") + p("1")]);
+  const src = parseSynthetic([p("4294967294") + p("1")]);
+  const r = runDocs(src, 0, 1, target, endOf(target));
+  const out = paragraphIdsIn(r.block);
+  assert.equal(out.length, 2);
+  for (const id of out) {
+    assert.match(id, /^\d+$/);
+    assert.ok(Number(id) <= 4294967294 && !PARAGRAPH_PLACEHOLDERS.has(id), `새 id ${id}`);
+  }
+  assert.deepEqual(duplicates(paragraphIdsIn(r.result.sections[0]?.text ?? "")), []);
+  assert.equal(r.plan.summary["reissuedIds"], 2);
+});
+
+test("7.5-4 같은 조각을 몇 번 가져와도 문단 id는 겹치지 않고, 계획은 조각을 바꾸지 않는다", () => {
+  const target = loadDoc("hancom-merged");
+  const fragment = extractFragment(target, sel(1, 8));
+  const snapshot = JSON.stringify(fragment);
+  let doc = target;
+  for (let i = 0; i < 3; i++) {
+    const r = runDocs(target, 1, 8, doc, endOf(doc), { fragment });
+    doc = r.result;
+    assert.deepEqual(duplicates(realParagraphIds(paragraphIdsIn(doc.sections[0]?.text ?? ""))), [], `${i + 1}번째`);
+  }
+  assert.equal(JSON.stringify(fragment), snapshot);
+  // JSON으로 저장했다가 읽은 조각도 같은 계획이다
+  const again = parseFragment(serializeFragment(fragment));
+  assert.deepEqual(planImport(target, again, endOf(target)), planImport(target, fragment, endOf(target)));
+});
+
+// ── 없는 참조를 채우는 경우 (FRAG_FILLS_DANGLING) ───────────────────────
+
+const fillsOf = (plan: EditPlan) => plan.issues.filter((i) => i.code === "FRAG_FILLS_DANGLING");
+
+test("7.65 D5 표를 D1에 가져오면 D1에서 없던 tabPr 0을 새 자원이 차지하므로 FRAG_FILLS_DANGLING 경고가 하나 나온다", () => {
+  const d5 = loadDoc("D5");
+  const target = loadDoc("D1");
+  const { from, to } = selectTable(d5, 0, 4).selection;
+  const r = runDocs(d5, from, to, target, endOf(target));
+  const warnings = fillsOf(r.plan);
+  assert.equal(warnings.length, 1, "같은 종류·id는 한 경고로 묶는다(D1에서 tabPr 0을 가리키는 참조는 8곳)");
+  assert.equal(warnings[0]?.severity, "warning");
+  assert.ok(warnings[0]?.message.includes("tabPr 0"), warnings[0]?.message);
+  assert.equal(warnings[0]?.where, HEADER);
+  // 경고의 근거: 대상에서 tabPr 0은 없었고(모델의 없는 참조), 가져온 뒤에는 있다. 그 참조들이 새 자원을 가리키게 된다
+  assert.ok(missingMessages(target).some((m) => m.startsWith("tabPr 0이(가) 없는데")));
+  assert.ok(!missingMessages(r.result).some((m) => m.startsWith("tabPr 0")));
+  assert.ok((r.result.header.resources["tabPr"] ?? []).some((t) => t.id === "0"));
+  // 경고만 더하고 동작은 그대로다: 가져오기는 되고, 새 id는 0부터, 계획의 다른 경고는 조각이 가져온 것뿐이다
+  assert.deepEqual(r.plan.issues.filter((i) => i.code !== "FRAG_FILLS_DANGLING"), r.fragment.issues);
+  assert.equal(r.plan.summary["addedResources"], expectedAdded(r));
+});
+
+test("7.65 경고가 없는 경우: 한컴 저장본끼리, 새 id가 없던 참조와 겹치지 않을 때, 자원을 추가하지 않을 때", () => {
+  const cases: [string, number, number, string][] = [
+    ["hancom/picture", 1, 1, "hancom/blocks"],
+    ["hancom-merged", 1, 8, "hancom/blocks"],
+    ["hancom/ph-table", 1, 1, "hancom/blocks"],
+    ["D5", 4, 6, "hancom/blocks"],
+    ["D1", 9, 9, "D1"], // D1에는 없는 tabPr 0이 있어도 자원을 추가하지 않으면 채우지 않는다
+    ["D1", 1, 12, "D1"],
+  ];
+  for (const [src, from, to, tgt] of cases) {
+    const r = run(src, from, to, tgt);
+    assert.deepEqual(fillsOf(r.plan), [], `${src}[${from}~${to}] → ${tgt}`);
+  }
+  // 위 경우들 가운데 자원을 추가하는 경우가 있어야 "추가가 없어서"가 아니라 "id가 겹치지 않아서"가 된다
+  assert.ok((run("D5", 4, 6, "hancom/blocks").plan.summary["addedResources"] ?? 0) > 0);
+  assert.equal(run("D1", 1, 12, "D1").plan.summary["addedResources"], 0);
+});
+
+// 글자모양 0만 높이가 다른 원본과, 글자모양 2를 가리키는 문단이 있는(그런 글자모양은 없는) 대상
+const FILL_SRC_HEADER = MINIMAL_HEADER.replace('<hh:charPr id="0" height="1000"', '<hh:charPr id="0" height="1500"');
+assert.notEqual(FILL_SRC_HEADER, MINIMAL_HEADER);
+const charRun = (charPrId: string): string =>
+  `<hp:p paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="${charPrId}"><hp:t>x</hp:t></hp:run></hp:p>`;
+
+test("7.65 본문이 없는 글자모양을 가리키고 새 글자모양이 그 id를 받으면 경고하고, 받지 않으면 경고하지 않는다", () => {
+  const src = parseSynthetic([charRun("0")], FILL_SRC_HEADER);
+  // 대상의 글자모양은 0·1이라 새 id는 2다. 본문의 charPr 2(없음)를 새 자원이 채운다
+  const filled = parseSynthetic([charRun("0"), charRun("2")]);
+  assert.ok(missingMessages(filled).some((m) => m.startsWith("charPr 2이(가) 없는데 1곳")));
+  const r = runDocs(src, 0, 0, filled, endOf(filled));
+  assert.ok((r.plan.summary["addedResources"] ?? 0) >= 1);
+  const warnings = fillsOf(r.plan);
+  assert.equal(warnings.length, 1, JSON.stringify(warnings));
+  assert.equal(warnings[0]?.severity, "warning");
+  assert.ok(warnings[0]?.message.includes("charPr 2"), warnings[0]?.message);
+  assert.ok(!missingMessages(r.result).some((m) => m.startsWith("charPr 2")), "실제로 채워졌다");
+  // 없는 참조가 다른 id(9)면 새 id 2와 겹치지 않는다
+  const apart = parseSynthetic([charRun("0"), charRun("9")]);
+  const r2 = runDocs(src, 0, 0, apart, endOf(apart));
+  assert.ok((r2.plan.summary["addedResources"] ?? 0) >= 1);
+  assert.deepEqual(fillsOf(r2.plan), []);
+  // 대상에 없는 참조가 없으면 경고도 없다
+  const clean = parseSynthetic([charRun("0")]);
+  assert.deepEqual(fillsOf(runDocs(src, 0, 0, clean, endOf(clean)).plan), []);
+});
+
+test("7.65 없는 참조를 채우는 경고는 종류별로 따로 나온다 (본문의 없는 문단모양, header의 없는 테두리)", () => {
+  // 대상: paraPr 1·borderFill 2가 없는데 문단이 paraPr 1을, 글자모양 1이 borderFill 2를 가리킨다
+  const header = MINIMAL_HEADER.replace('<hh:charPr id="1" height="1200" borderFillIDRef="1">', '<hh:charPr id="1" height="1200" borderFillIDRef="2">');
+  assert.notEqual(header, MINIMAL_HEADER);
+  const target = parseSynthetic(['<hp:p paraPrIDRef="1" styleIDRef="0"><hp:run charPrIDRef="1"><hp:t>y</hp:t></hp:run></hp:p>'], header);
+  const missing = missingMessages(target);
+  assert.ok(missing.some((m) => m.startsWith("paraPr 1이(가) 없는데")), missing.join("|"));
+  assert.ok(missing.some((m) => m.startsWith("borderFill 2이(가) 없는데")), missing.join("|"));
+  // 원본: 문단모양 0이 다르고(줄 간격이 있다) 테두리 1도 다른 모양
+  const srcHeader = MINIMAL_HEADER
+    .replace('<hh:paraPr id="0"><hh:heading', '<hh:paraPr id="0"><hh:align horizontal="CENTER"/><hh:heading')
+    .replace('<hh:borderFill id="1" threeD="0"/>', '<hh:borderFill id="1" threeD="1"/>');
+  assert.notEqual(srcHeader, MINIMAL_HEADER);
+  const src = parseSynthetic(['<hp:p paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0"><hp:t>x</hp:t></hp:run></hp:p>'], srcHeader);
+  const r = runDocs(src, 0, 0, target, endOf(target));
+  const kinds = fillsOf(r.plan).map((w) => w.message.slice(0, w.message.indexOf("이(가)")));
+  // 새 borderFill은 id 2를(대상의 borderFill은 1뿐이라), 새 paraPr은 id 1을(대상의 paraPr은 0뿐이라) 받는다
+  assert.ok(kinds.some((m) => m.startsWith("paraPr 1")), JSON.stringify(fillsOf(r.plan)));
+  assert.ok(kinds.some((m) => m.startsWith("borderFill 2")), JSON.stringify(fillsOf(r.plan)));
+});
+
+// ── rootfile ────────────────────────────────────────────────────────────
+
+test("7.5-6 이진 자료 등록은 container.xml이 가리키는 패키지 문서(pkg.rootfile)에 한다: 이름이 content.hpf가 아니어도 된다", () => {
+  const original = loadDoc("hancom/blocks");
+  const moved = "Package/main.hpf";
+  const zip = buildZip(
+    original.pkg.archive.entries
+      .filter((e) => !e.isDirectory)
+      .map((e) => {
+        let data = readEntry(original.pkg.archive, original.pkg.bytes, e.name);
+        if (e.name === "META-INF/container.xml") data = utf8(decode(data).replace(`full-path="${HPF}"`, `full-path="${moved}"`));
+        return { name: e.name === HPF ? moved : e.name, data, method: e.name === "mimetype" ? (0 as const) : (8 as const) };
+      }),
+  );
+  const target = reparse(zip);
+  assert.equal(target.pkg.rootfile, moved);
+  assert.ok(target.pkg.archive.entries.every((e) => e.name !== HPF));
+  const r = runDocs(loadDoc("hancom/picture"), 1, 1, target, endOf(target));
+  assert.deepEqual(r.plan.edits.filter((e) => e.reason.includes("manifest")).map((e) => e.entry), [moved]);
+  assertPictureImported(r, "picture → 옮긴 rootfile");
+  assert.ok(decode(readEntry(r.result.pkg.archive, r.bytes, moved)).includes(PICTURE_ITEM("image1", "BinData/image1.png")));
+  assert.equal(r.result.pkg.rootfile, moved);
 });

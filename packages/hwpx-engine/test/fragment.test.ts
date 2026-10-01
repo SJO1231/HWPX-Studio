@@ -231,13 +231,28 @@ test("7.3 그림 조각: 이진 자료가 manifest에서 찾아져 내용과 함
   const binRefs = f.refs.filter((r) => r.kind === "binaryItem");
   assert.deepEqual(binRefs.map((r) => r.id), ["image1"]);
   assert.equal(f.census.pictures, 1);
-  // 그림의 id·instid는 객체·인스턴스 id로 기록된다
+  // 문단 id(한컴 자리값 0)는 paragraph 역할로, 그림의 id·instid는 객체·인스턴스 id로 문서 순서대로 기록된다
   assert.deepEqual(
     f.instanceIds.map((x) => [x.role, x.value]),
-    [["object", "1208941154"], ["inst", "135199331"]],
+    [["paragraph", "0"], ["object", "1208941154"], ["inst", "135199331"]],
   );
   // 이진 자료가 없는 조각은 binaries가 비어 있다
   assert.deepEqual(extractFragment(pic, sel(0, 2, 2)).binaries, []);
+});
+
+test("7.3 문단 id: 조각 안 모든 문단(표 셀 안 포함)의 id가 paragraph 역할로 문서 순서대로 기록되고, id 속성이 없는 문단은 기록하지 않는다", () => {
+  const merged = loadDoc("hancom-merged");
+  const f = extractFragment(merged, sel(0, 9, 11)); // 표가 든 문단 둘과 그 사이: 셀 안 문단이 많다
+  const expected = [...f.xml.matchAll(/<hp:p\b[^>]*?\sid="([^"]*)"/g)].map((m) => m[1]);
+  const mine = f.instanceIds.filter((x) => x.role === "paragraph");
+  assert.equal(expected.length, f.census.paragraphs, "hancom-merged의 문단은 모두 id가 있다");
+  assert.deepEqual(mine.map((x) => x.value), expected);
+  for (const x of mine) assert.equal(f.xml.slice(x.start, x.end), x.value);
+  // id 속성이 없는 문단만 있는 조각(D1)에는 문단 id가 없다
+  const d1 = extractFragment(loadDoc("D1"), sel(0, 1, 12));
+  assert.deepEqual(d1.instanceIds.filter((x) => x.role === "paragraph"), []);
+  // JSON으로 저장했다가 읽어도 같다(parseFragment가 paragraph 역할을 받아들인다)
+  assert.deepEqual(parseFragment(serializeFragment(f)).instanceIds, f.instanceIds);
 });
 
 test("7.3 누름틀·책갈피 조각: 시작 id, 끝의 beginIDRef, 책갈피 이름의 구간", () => {

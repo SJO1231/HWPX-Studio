@@ -25,7 +25,8 @@ export type FragmentResource = {
 
 export type FragmentBinary = { itemId: string; href: string; mediaType: string; sha256: string; base64: string };
 
-export type InstanceIdRole = "object" | "inst" | "fieldBegin" | "fieldEndRef";
+/** 인스턴스 id의 종류. `paragraph`는 문단(`hp:p`)의 `id` 속성이다(개체 id와는 다른 id 공간). */
+export type InstanceIdRole = "object" | "inst" | "fieldBegin" | "fieldEndRef" | "paragraph";
 
 export type Fragment = {
   schema: "hwpx-studio/fragment@1";
