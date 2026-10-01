@@ -1,4 +1,4 @@
-import { attrValue, elementChildren, walkElements, type XElement } from "../xml/tree.ts";
+import { attrValue, subElements, walkElements, type XElement } from "../xml/tree.ts";
 import { HEADER_ENTRY, show } from "./package.ts";
 import type { IssueLog } from "./types.ts";
 
@@ -74,13 +74,13 @@ export function collectResources(header: XElement, log: IssueLog): IdSpaces {
     log.err("RES_NO_REFLIST", "header.xml 에 refList 가 없음");
     return out;
   }
-  for (const grp of elementChildren(refList)) {
+  for (const grp of subElements(refList)) {
     if (grp.local === "fontfaces") {
-      for (const ff of elementChildren(grp)) {
+      for (const ff of subElements(grp)) {
         const lang = attrValue(ff, "lang");
         let ids = out.fonts.get(lang);
         if (ids === undefined) out.fonts.set(lang, (ids = new Set()));
-        for (const f of elementChildren(ff)) {
+        for (const f of subElements(ff)) {
           const fid = attrValue(f, "id");
           if (ids.has(fid)) log.err("RES_DUP_ID", `font id 중복 (lang=${show(lang)})`, show(fid));
           ids.add(fid);
@@ -93,7 +93,7 @@ export function collectResources(header: XElement, log: IssueLog): IdSpaces {
     const [childTag, space] = known;
     const ids = spaceOf(out, space);
     let n = 0;
-    for (const it of elementChildren(grp)) {
+    for (const it of subElements(grp)) {
       if (it.local !== childTag) continue;
       n++;
       const iid = attrValue(it, "id");

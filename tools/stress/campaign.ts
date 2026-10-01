@@ -37,7 +37,8 @@ import {
 } from "./oracle.ts";
 import { hashSeed, makeRng, type Rng } from "./rng.ts";
 import { bump, dist, pct, sortedRecord } from "./stats.ts";
-import { danglingKeysOf, type Fail, type Notes } from "./verify.ts";
+import type { FormatStats } from "./formats.ts";
+import type { Fail, Notes } from "./verify.ts";
 
 const HERE = fileURLToPath(new URL(".", import.meta.url));
 const REPO = resolve(HERE, "..", "..");
@@ -288,12 +289,17 @@ type CaseRecord = {
   dangling: boolean;
   /** 소스에서 이미 없던 대상을 가리키는 참조의 종류별 서로 다른 대상 수(FRAG_DANGLING_SOURCE) */
   danglingSpaces: Record<string, number>;
+  /** 계획이 기록한 상속(inherited)의 항목 수: 조각 안에서 겹치는 id (역할, 값)과 소스에서 없던 참조 (종류, id)의 단계별 합 */
+  planInherited: { duplicateIds: number; danglingRefs: number };
+  /** M10: 서식 변경을 적용한 종류별 건수와 거절 사유 */
+  formats: FormatStats | null;
   deterministic: "same" | "differ" | null;
 };
 
 const SUMMARY_KEYS = [
   "reusedResources",
   "addedResources",
+  "createdLists",
   "reusedBinaries",
   "addedBinaries",
   "reissuedIds",
@@ -334,6 +340,8 @@ const emptyRecord = (pair: number, method: MethodName): CaseRecord => ({
   notes: {},
   dangling: false,
   danglingSpaces: {},
+  planInherited: { duplicateIds: 0, danglingRefs: 0 },
+  formats: null,
   deterministic: null,
 });
 
@@ -351,7 +359,7 @@ function riskOf(win: WindowPick, method: MethodName, caseId: string): number {
   if (win.headerFooter > 0) r += 1;
   if (win.len >= 100) r += 1;
   if (method === "M4" || method === "M5" || method === "M8") r += 1;
-  if (method === "M6") r += 1;
+  if (method === "M6" || method === "M10") r += 1;
   return r + (hashSeed(caseId) % 1000) / 1000;
 }
 
@@ -369,7 +377,7 @@ function main(): number {
   log(`모음: .hwpx ${snapStart.hwpxFiles}개, ${snapStart.totalBytes} 바이트`);
   if (snapStart.hwpxFiles === 0) throw new Error("모음에 .hwpx 파일이 없다");
 
-  const pool = new OraclePool(opts.oracleSample * 3);
+  const pool = new OraclePool(Math.ceil(opts.oracleSample * 1.5));
   let corpusChanged = false;
   const checkCorpus = (): void => {
     const now = snapshotOf(scanCorpus(opts.corpus));
@@ -481,8 +489,20 @@ function main(): number {
         rec.steps = out.steps.length;
         rec.parts = out.parts ?? null;
         rec.notes = out.notes;
-        rec.dangling = out.fragments.some((f) => f.issues.some((i) => i.code === "FRAG_DANGLING_SOURCE"));
-        for (const key of danglingKeysOf(out.fragments).keys) bump(rec.danglingSpaces, key.slice(0, key.indexOf(":")));
+        rec.dangling = out.fragments.some((f) => f.dangling.length > 0);
+        const seenDangling = new Set<string>();
+        for (const f of out.fragments) {
+          for (const d of f.dangling) {
+            if (seenDangling.has(`${d.kind}:${d.id}`)) continue;
+            seenDangling.add(`${d.kind}:${d.id}`);
+            bump(rec.danglingSpaces, d.kind);
+          }
+        }
+        rec.planInherited = {
+          duplicateIds: out.steps.reduce((n, st) => n + st.plan.inherited.duplicateIds.length, 0),
+          danglingRefs: out.steps.reduce((n, st) => n + st.plan.inherited.danglingRefs.length, 0),
+        };
+        if (out.formats !== undefined) rec.formats = out.formats;
         const fails = [...out.fails];
         // V-h: 표본으로 같은 입력을 새로 읽어 한 번 더 실행해 출력 바이트를 견준다
         if (hashSeed(`${opts.seed}:det:${rec.caseId}`) % 5 === 0) {
@@ -522,6 +542,8 @@ function main(): number {
               notes: win.notes,
               bookmarks: win.bookmarks,
               headerFooter: win.headerFooter,
+              createdLists: out.steps.reduce((n, st) => n + (st.plan.summary["createdLists"] ?? 0), 0),
+              cellClip: out.steps.some((st) => st.plan.issues.some((i) => i.code === "FRAG_CELL_MAY_CLIP")) ? 1 : 0,
               insertedAll: out.final.steps.reduce((n, st) => n + (st.plan.summary["insertedParagraphs"] ?? 0), 0),
               insertedTop: method === "M6" ? 0 : out.final.steps.reduce((n, st) => n + st.count, 0),
             },
@@ -726,6 +748,42 @@ function buildReport(r: ReportInput): Record<string, unknown> {
   const planWarnings: Record<string, number> = {};
   for (const x of records) for (const [k, v] of Object.entries(x.planIssues)) bump(planWarnings, k, v > 0 ? 1 : 0);
 
+  // M10(서식 변경 조합): 적용한 서식 종류별 건수와 거절 사유
+  const m10 = records.filter((x) => x.method === "M10");
+  const sumBy = (pick: (f: FormatStats) => Record<string, number>): Record<string, number> => {
+    const out: Record<string, number> = {};
+    for (const x of m10) if (x.formats !== null) for (const [k, v] of Object.entries(pick(x.formats))) bump(out, k, v);
+    return sortedRecord(out);
+  };
+  const appliedByKind = sumBy((f) => f.applied);
+  const formatReport = {
+    cases: m10.length,
+    casesWithApplied: m10.filter((x) => x.formats !== null && Object.keys(x.formats.applied).length > 0).length,
+    applied: appliedByKind,
+    appliedTotals: {
+      char: Object.entries(appliedByKind).filter(([k]) => k.startsWith("char:")).reduce((n, [, v]) => n + v, 0),
+      para: Object.entries(appliedByKind).filter(([k]) => k.startsWith("para:")).reduce((n, [, v]) => n + v, 0),
+    },
+    noop: m10.reduce((n, x) => n + (x.formats?.noop ?? 0), 0),
+    rejected: sumBy((f) => f.rejected),
+    rejectedByKind: sumBy((f) => f.rejectedByKind),
+    casesRejectedAsAWhole: m10.filter((x) => x.outcome === "rejected").length,
+  };
+  // 상속 기록(plan.inherited)과 목록 생성, 셀 안 삽입 경고
+  const inheritedPlan = {
+    casesWithDuplicateIds: records.filter((x) => x.planInherited.duplicateIds > 0).length,
+    casesWithDanglingRefs: records.filter((x) => x.planInherited.danglingRefs > 0).length,
+    byMethodDuplicateIds: sortedRecord(Object.fromEntries(METHODS.map((m) => [m, records.filter((x) => x.method === m && x.planInherited.duplicateIds > 0).length]))),
+  };
+  const created = records.filter((x) => (x.summary["createdLists"] ?? 0) > 0);
+  const createdLists = { cases: created.length, byMethod: sortedRecord(Object.fromEntries(METHODS.map((m) => [m, created.filter((x) => x.method === m).length]))), lists: created.reduce((n, x) => n + (x.summary["createdLists"] ?? 0), 0) };
+  const m6 = records.filter((x) => x.method === "M6" && x.steps > 0);
+  const cellMayClip = {
+    m6Cases: m6.length,
+    warned: m6.filter((x) => (x.planIssues["FRAG_CELL_MAY_CLIP"] ?? 0) > 0).length,
+    notWarned: m6.filter((x) => (x.planIssues["FRAG_CELL_MAY_CLIP"] ?? 0) === 0).length,
+  };
+
   const paragraphIdDup = {
     collidesWithTarget: records.filter((x) => x.codes.some((c) => c.endsWith("INST_DUP_ID:paraId"))).length,
     duplicateInsideSourceFragment: records.filter((x) => x.codes.some((c) => c.endsWith("INST_DUP_ID:paraId.inFragment"))).length,
@@ -778,6 +836,7 @@ function buildReport(r: ReportInput): Record<string, unknown> {
       oracleSample: r.opts.oracleSample,
       noCom: r.opts.noCom,
       noRhwp: r.opts.noRhwp,
+      methods: [...METHODS],
       timeBudgetMin: r.opts.timeBudgetMin,
       truncatedByTimeBudget: r.truncated,
       node: process.version,
@@ -827,6 +886,10 @@ function buildReport(r: ReportInput): Record<string, unknown> {
     totals,
     codes: { ...codes, rejectedByPhase: sortedRecord(rejectedByPhase), rejectedDetail: sortedRecord(rejectedDetail), byMethod: sortedRecord(byMethodCodes), validatorNewErrorIssues: sortedRecord(newErrorIssues), planWarningCases: sortedRecord(planWarnings), paragraphIdDuplicateCases: paragraphIdDup },
     defects,
+    formatCombination: formatReport,
+    inheritedPlan,
+    createdLists,
+    cellMayClip,
     resources: resourceStats,
     fragmentListNeeds: { basis: "쌍마다 통째 조각이 요구하는 자원 종류와 대상 header의 목록 유무", ...sortedRecord(r.listNeeds) },
     toolCoverage: sortedRecord(toolNotes),

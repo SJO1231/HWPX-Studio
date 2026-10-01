@@ -767,6 +767,14 @@ test("M5 본문 참조를 끊으면 예외가 아니라 Issue다 (charPr·paraPr
   }
 });
 
+test("M5 빈 binaryItemIDRef는 참조 없음이다(없는 참조로 세지 않는다). 비어 있지 않은 없는 id는 지금처럼 센다", () => {
+  const empty = loadMutated("D2", SECTION, (t) => t.replace("<hp:grid ", '<hp:grid binaryItemIDRef="" '));
+  assert.deepEqual(empty.issues.filter((i) => i.code === "MODEL_REF_MISSING"), []);
+  assert.deepEqual(empty.issues.filter((i) => i.code === "MODEL_UNKNOWN_REF"), []);
+  const missing = loadMutated("D2", SECTION, (t) => t.replace("<hp:grid ", '<hp:grid binaryItemIDRef="image9" '));
+  assert.equal(missing.issues.filter((i) => i.code === "MODEL_REF_MISSING").length, 1);
+});
+
 test("M5 binaryItemIDRef의 대상은 manifest 항목 id다", () => {
   const ok = loadMutated("D2", SECTION, (t) => t.replace("<hp:grid ", '<hp:grid binaryItemIDRef="section0" '));
   assert.deepEqual(ok.issues.filter((i) => i.code === "MODEL_REF_MISSING"), []);

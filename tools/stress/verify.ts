@@ -1,9 +1,9 @@
 // 건마다 하는 검증 V-a ~ V-i. 전부 메모리에서 한다. 결과에는 항목과 코드만 남기고 문서의 글·이름은 남기지 않는다.
 import {
   collectBodyRefs,
+  type CountSlot,
   walkElements,
   walkParagraphs,
-  type EditPlan,
   type Fragment,
   type FragmentSelection,
   type HwpxDocument,
@@ -11,7 +11,9 @@ import {
   type ParagraphNode,
   type XElement,
 } from "../../packages/hwpx-engine/src/index.ts";
+import { explainInherited } from "../../packages/hwpx-engine/src/fill/index.ts";
 import { createFingerprinter, makeLookup } from "../../packages/hwpx-engine/src/fragment/resources.ts";
+import type { ImportPlan, InheritedProblems } from "../../packages/hwpx-engine/src/fragment/types.ts";
 import { compareToBaseline, validateDocument, type ValidationReport } from "../../packages/hwpx-engine/src/validate/index.ts";
 import { binaryRefsIn, bodyRefsOf, makeCanon, textRuns, type Canon } from "./canon.ts";
 
@@ -22,7 +24,7 @@ export type Step = {
   base: HwpxDocument;
   fragment: Fragment;
   point: InsertPoint;
-  plan: EditPlan;
+  plan: ImportPlan;
   bytes: Uint8Array;
   result: HwpxDocument;
   /** 삽입된 문단들의 (삽입 지점과 같은 목록 안) 첫 서수와 개수 */
@@ -88,6 +90,7 @@ export function census5(doc: HwpxDocument): Census5 {
   return c;
 }
 
+const sumKeyOf = (steps: readonly Step[], key: string): number => steps.reduce((n, s) => n + (s.plan.summary[key] ?? 0), 0);
 const resourceCount = (doc: HwpxDocument): number => Object.values(doc.header.resources).reduce((n, items) => n + items.length, 0);
 
 // ── 독립 기준의 캐시 ────────────────────────────────────────────
@@ -261,11 +264,15 @@ export type DocCheckInput = {
   bytes: Uint8Array;
   /** 이 문서를 만든 단계들의 summary 합(검사기 census와 대조) */
   steps: Step[];
-  /** 소스에서 없는 대상을 가리키던 참조의 열쇠 `<공간>:<id>`(상속된 없는 참조를 가리는 데 쓴다) */
-  danglingKeys: Set<string>;
-  headerDangling: boolean;
+  /** 이 문서를 만든 단계들의 계획이 기록한 상속(조각이 소스에서부터 갖고 있던 문제). 이것으로 설명되는 새 오류만 상속이고 나머지는 결함이다. */
+  inherited: InheritedProblems;
   /** 이 문서를 만든 단계들의 조각(문단 id 중복이 소스 조각 안의 중복에서 온 것인지 가르는 데 쓴다) */
   fragments?: Fragment[];
+  /**
+   * 서식 변경(M10)을 마친 문서다. 서식 변경은 그 구역의 줄 배치 캐시를 전부 지우고(명세 7.7) 파생 자원을 header에 더하므로,
+   * 대상의 기존 문단 원문 비교는 줄 배치 캐시를 뺀 원문으로 하고, 대상에서 없던 참조를 새 자원이 채우는 일은 결함이 아니라 참고 수량으로 센다.
+   */
+  afterFormat?: boolean;
   /** 삽입 지점이 든 최상위 문단(표 셀에 넣은 경우 그 문단은 원문 비교에서 뺀다) */
   hostParagraph?: { sectionIndex: number; index: number };
 };
@@ -367,18 +374,25 @@ function idCounts(doc: HwpxDocument): IdCounts {
   return counts;
 }
 
-/** 개수 속성(itemCnt·fontCnt): 원본에서 맞던 목록이 결과에서 어긋나지 않는다. */
-function checkCounts(base: HwpxDocument, result: HwpxDocument, fails: Fail[]): void {
-  const b = base.header.counts;
-  const r = result.header.counts;
-  if (b.length !== r.length) {
-    fails.push({ item: "V-f", code: "COUNT_SLOTS_CHANGED" });
-    return;
+/**
+ * 개수 속성(itemCnt·fontCnt): 원본에서 맞던 목록이 결과에서 어긋나지 않는다. 가져오기가 새로 만든 목록(`createdLists`)은 개수 속성이
+ * 새로 생기므로 그 수만큼 슬롯이 늘고, 새 목록의 개수 속성도 실제 항목 수와 맞아야 한다. 슬롯은 (목록 요소, 글꼴 언어)별 순서로 짝짓는다.
+ */
+function checkCounts(base: HwpxDocument, result: HwpxDocument, createdLists: number, fails: Fail[]): void {
+  const keyOf = (s: CountSlot): string => `${s.list} ${s.lang ?? ""}`;
+  const was = new Map<string, CountSlot[]>();
+  for (const s of base.header.counts) was.set(keyOf(s), [...(was.get(keyOf(s)) ?? []), s]);
+  const seen = new Map<string, number>();
+  let fresh = 0;
+  for (const slot of result.header.counts) {
+    const k = keyOf(slot);
+    const i = seen.get(k) ?? 0;
+    seen.set(k, i + 1);
+    const old = was.get(k)?.[i];
+    if (old === undefined) fresh++;
+    if ((old === undefined || old.value === old.actual) && slot.value !== slot.actual) fails.push({ item: "V-f", code: "ITEMCNT_MISMATCH" });
   }
-  r.forEach((slot, i) => {
-    const old = b[i];
-    if (old !== undefined && old.value === old.actual && slot.value !== slot.actual) fails.push({ item: "V-f", code: "ITEMCNT_MISMATCH" });
-  });
+  if (fresh !== createdLists || base.header.counts.length !== result.header.counts.length - fresh) fails.push({ item: "V-f", code: "COUNT_SLOTS_CHANGED" });
 }
 
 /** 스타일 이름 규칙: 이름이 겹치는 새 스타일은 이름을 바꿔 가져오므로 같은 이름의 중복이 원본보다 늘지 않는다. */
@@ -425,18 +439,20 @@ export function verifyDocument(input: DocCheckInput, notes: Notes): DocCheckOutp
   const fails: Fail[] = [];
   const inherited: Fail[] = [];
   const report = validateDocument(bytes);
+  const danglingKeys = danglingKeysOf(input.inherited);
 
   // V-a: 다시 파싱한 모델이 새 오류를 내지 않는다
   const beforeKeys = new Set(base.doc.issues.filter((i) => i.severity === "error").map((i) => modelKey(i.code, i.message, i.where ?? "")));
   for (const i of result.issues) {
     if (i.severity !== "error" || beforeKeys.has(modelKey(i.code, i.message, i.where ?? ""))) continue;
     const target = danglingTarget(i.message);
-    if (target !== undefined && input.danglingKeys.has(target)) inherited.push({ item: "V-a", code: i.code });
+    if (target !== undefined && danglingKeys.has(target)) inherited.push({ item: "V-a", code: i.code });
     else fails.push({ item: "V-a", code: i.code });
   }
 
   // V-b: 검사기 기준선 대비 새 오류
   const cmp = compareToBaseline(base.baseline, report);
+  const explained = new Set(explainInherited(cmp.newErrors, input.inherited).explained);
   for (const e of cmp.newErrors) {
     let code = e.code;
     if (code === "INST_DUP_ID") {
@@ -448,13 +464,7 @@ export function verifyDocument(input: DocCheckInput, notes: Notes): DocCheckOutp
         code = `${code}:${sub}`;
       }
     }
-    let inheritedDangling = false;
-    if (e.code === "RES_DANGLING") {
-      const m = /^\w+='([^']*)' 가 가리키는 (\w+) 가 없음/.exec(e.message);
-      if (m !== null && input.danglingKeys.has(`${m[2]}:${m[1]}`)) inheritedDangling = true;
-      else if (input.headerDangling && (e.where ?? "").startsWith(result.pkg.headerEntry)) inheritedDangling = true;
-    }
-    (inheritedDangling ? inherited : fails).push({ item: "V-b", code });
+    (explained.has(e) ? inherited : fails).push({ item: "V-b", code });
     note(notes, `vb.newErrors.${code}`, e.count);
   }
 
@@ -466,10 +476,12 @@ export function verifyDocument(input: DocCheckInput, notes: Notes): DocCheckOutp
       return;
     }
     let from = 0;
+    const lineSeg = /<(?:[\w.-]+:)?linesegarray>[\s\S]*?<\/(?:[\w.-]+:)?linesegarray>/g;
+    const haystack = input.afterFormat === true ? rs.text.replace(lineSeg, "") : rs.text;
     for (const [pi, p] of bs.paragraphs.entries()) {
       if (input.hostParagraph?.sectionIndex === si && input.hostParagraph.index === pi) continue;
-      const raw = bs.text.slice(p.element.start, p.element.end);
-      const found = rs.text.indexOf(raw, from);
+      const raw = input.afterFormat === true ? bs.text.slice(p.element.start, p.element.end).replace(lineSeg, "") : bs.text.slice(p.element.start, p.element.end);
+      const found = haystack.indexOf(raw, from);
       if (found < from) {
         fails.push({ item: "V-e", code: "PARAGRAPH_MISSING" });
         return;
@@ -525,16 +537,18 @@ export function verifyDocument(input: DocCheckInput, notes: Notes): DocCheckOutp
     }
   }
 
-  checkCounts(base.doc, result, fails);
+  checkCounts(base.doc, result, sumKeyOf(steps, "createdLists"), fails);
   checkStyleNames(base.doc, result, fails);
-  checkSilentFill(base.doc, result, steps, notes, fails);
+  if (input.afterFormat !== true) checkSilentFill(base.doc, result, steps, notes, fails);
 
   // V-g, V-i
-  checkBinaries(base.doc, result, input.danglingKeys, fails, inherited, notes);
+  checkBinaries(base.doc, result, danglingKeys, fails, inherited, notes);
   const idBefore = idCounts(base.doc);
   const idAfter = idCounts(result);
   for (const space of ["objectId", "instId", "fieldId"] as const) {
-    const grown = [...idAfter[space]].filter(([v, n]) => n > 1 && n - 1 > Math.max(0, (idBefore[space].get(v) ?? 0) - 1));
+    const role = ROLE_OF_SPACE[space];
+    const recorded = new Set(input.inherited.duplicateIds.filter((d) => d.role === role).map((d) => d.value));
+    const grown = [...idAfter[space]].filter(([v, n]) => n > 1 && n - 1 > Math.max(0, (idBefore[space].get(v) ?? 0) - 1) && !recorded.has(v));
     if (grown.length === 0) continue;
     const inFragment = grown.some(([v]) => repeatedInFragment(input.fragments, space, v));
     fails.push({ item: "V-i", code: inFragment ? `${space}.inFragment` : space });
@@ -542,17 +556,7 @@ export function verifyDocument(input: DocCheckInput, notes: Notes): DocCheckOutp
   return { fails, inherited, report };
 }
 
-/** 조각 경고에서 소스가 이미 없는 대상을 가리키던 참조의 열쇠를 모은다. */
-export function danglingKeysOf(fragments: readonly Fragment[]): { keys: Set<string>; headerDangling: boolean } {
-  const keys = new Set<string>();
-  let headerDangling = false;
-  for (const f of fragments) {
-    for (const issue of f.issues) {
-      if (issue.code !== "FRAG_DANGLING_SOURCE") continue;
-      const key = danglingTarget(issue.message);
-      if (key !== undefined) keys.add(key);
-      if (/^\w+\(\w+\) /.test(issue.message) || (issue.where ?? "").endsWith("header.xml")) headerDangling = true;
-    }
-  }
-  return { keys, headerDangling };
+/** 계획이 기록한 상속(소스에서 없던 대상을 가리키던 참조)의 열쇠 `<공간>:<id>`. 공간 이름은 검사기·모델의 메시지와 같다(이진 자료는 `binItem`). */
+export function danglingKeysOf(inherited: InheritedProblems): Set<string> {
+  return new Set(inherited.danglingRefs.map((d) => `${d.kind === "binaryItem" ? "binItem" : d.kind}:${d.id}`));
 }

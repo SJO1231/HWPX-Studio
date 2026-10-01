@@ -7,7 +7,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import {
   applyPlan,
-  elementChildren,
+  subElements,
   walkParagraphs,
   type HwpxDocument,
   type ParagraphNode,
@@ -66,7 +66,7 @@ function hwpPos(p: ParagraphNode, logical: number): number {
     if (piece.logicalEnd <= logical && piece.logicalEnd > piece.logicalStart) {
       if (piece.kind === "object") {
         const obj = p.objects.find((o) => o.pieceIndex === p.pieces.indexOf(piece));
-        pos += obj?.type === "ctrl" ? 8 * Math.max(1, elementChildren(obj.element).length) : 8;
+        pos += obj?.type === "ctrl" ? 8 * Math.max(1, subElements(obj.element).length) : 8;
       } else if (piece.kind === "inline") {
         pos += p.logicalText.slice(piece.logicalStart, piece.logicalEnd) === "\t" ? 8 : piece.logicalEnd - piece.logicalStart;
       } else pos += piece.logicalEnd - piece.logicalStart;

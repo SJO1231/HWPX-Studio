@@ -1,7 +1,7 @@
 import { makeIssue } from "../errors.ts";
 import { escapeAttr } from "../xml/chars.ts";
 import type { XAttr } from "../xml/tokenizer.ts";
-import { attrValue, elementChildren, walkElements } from "../xml/tree.ts";
+import { attrValue, subElements, walkElements } from "../xml/tree.ts";
 import { attrEdit, attrLocal, isNsDecl, HEADER_ENTRY, type EntryDoc } from "./entries.ts";
 import { emptyPart, type PlanPart } from "./types.ts";
 
@@ -52,13 +52,13 @@ function collectSpaces(header: EntryDoc): Spaces {
   const out: Spaces = { ids: new Map(), fonts: new Map() };
   for (const space of LIST_OF.values()) out.ids.set(space, []);
   const refList = [...walkElements(header.root)].find((e) => e.local === "refList");
-  for (const grp of refList === undefined ? [] : elementChildren(refList)) {
+  for (const grp of refList === undefined ? [] : subElements(refList)) {
     if (grp.local === "fontfaces") {
-      for (const face of elementChildren(grp)) {
+      for (const face of subElements(grp)) {
         const lang = attrValue(face, "lang") ?? "";
         const list = out.fonts.get(lang) ?? [];
         out.fonts.set(lang, list);
-        for (const f of elementChildren(face)) {
+        for (const f of subElements(face)) {
           const id = attrValue(f, "id");
           if (id !== undefined) list.push(id);
         }
@@ -68,7 +68,7 @@ function collectSpaces(header: EntryDoc): Spaces {
     const space = LIST_OF.get(grp.local);
     if (space === undefined) continue;
     const list = out.ids.get(space) ?? [];
-    for (const it of elementChildren(grp)) {
+    for (const it of subElements(grp)) {
       const id = attrValue(it, "id");
       if (it.local === space && id !== undefined) list.push(id);
     }

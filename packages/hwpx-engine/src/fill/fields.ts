@@ -2,7 +2,7 @@ import { listFields } from "../model/fields.ts";
 import type { FieldInfo, FieldMark, FieldShape, HwpxDocument, ParagraphNode, SectionModel } from "../model/types.ts";
 import { escapeText } from "../xml/chars.ts";
 import { attrNode } from "../xml/tree.ts";
-import { paragraphAtPath, isTextPiece, prefixOf } from "./doc.ts";
+import { paragraphAtPath, isTextPiece, nsPrefixOf } from "./doc.ts";
 import { encodeValue, span, type Ctx, type Fail, type TextPlan } from "./text.ts";
 
 /** 누름틀 하나: 시작·끝 표식과 그 문단. */
@@ -69,7 +69,7 @@ export function planFieldFill(ctx: Ctx, target: FieldTarget, value: string, reas
       plan.repls.push({ start: piece.logicalStart, end: piece.logicalEnd, text });
     });
   } else if (value !== "") {
-    const tag = `${prefixOf(begin.element)}t`;
+    const tag = `${nsPrefixOf(begin.element)}t`;
     plan.edits.push(span(ctx, beginPiece.end, beginPiece.end, `<${tag}>${escapeText(value)}</${tag}>`, reason));
     plan.repls.push({ start: beginPiece.logicalEnd, end: beginPiece.logicalEnd, text: value });
   }

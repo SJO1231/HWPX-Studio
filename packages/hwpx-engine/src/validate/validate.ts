@@ -3,7 +3,7 @@ import { readArchive, type Archive } from "../package/zip-read.ts";
 import { attrValue } from "../xml/tree.ts";
 import { checkPackage, HEADER_ENTRY, parseEntry, PREVIEW_TEXT_ENTRY, type Ctx } from "./package.ts";
 import { checkRefs, collectResources, emptySpaces } from "./resources.ts";
-import { checkInstances, newAcc, walkSection } from "./structure.ts";
+import { checkInstances, newAcc, scanSectionBody } from "./structure.ts";
 import {
   emptyCensus,
   emptyStats,
@@ -56,7 +56,7 @@ function run(bytes: Uint8Array, strict: boolean, log: IssueLog, stats: Validatio
     const parsed = parseEntry(ctx, s);
     if (parsed === null) continue;
     checkRefs(parsed.root, s, idSpaces, manifestIds, log, counters, strict);
-    walkSection(parsed.root, s, log, acc);
+    scanSectionBody(parsed.root, s, log, acc);
   }
   checkInstances(acc, log, strict);
 

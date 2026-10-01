@@ -8,7 +8,8 @@ import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { run } from "../src/cli.ts";
-import { listFields, openPackage, parseDocument, readArchive, readEntry, validateDocument } from "../../../packages/hwpx-engine/src/index.ts";
+import { extractFragment, listFields, openPackage, parseDocument, readArchive, readEntry, serializeFragment, validateDocument } from "../../../packages/hwpx-engine/src/index.ts";
+import { parseSynthetic } from "../../../packages/hwpx-engine/test/helpers.ts";
 
 const FIXTURES = fileURLToPath(new URL("../../../packages/hwpx-engine/test/fixtures/", import.meta.url));
 const MAIN = fileURLToPath(new URL("../src/main.ts", import.meta.url));
@@ -103,6 +104,27 @@ test("G5 fragment extract·import: 조각을 뜨고 다른 문서에 가져온�
   const inCell = await cli("fragment", "import", p("hancom-blocks.hwpx"), frag, "--section", "0", "--parent", "4.0", "--index", "0", "-o", cell);
   assert.equal(inCell.code, 0, inCell.err);
   assert.equal(doc("blocks-cell.hwpx").sections[0]?.paragraphs[4]?.subLists[0]?.paragraphs.length, 2);
+});
+
+test("G5 fragment import: 조각이 소스에서 갖고 있던 id 중복·없는 참조는 상속으로 보고하고 통과한다(종료 코드 0). strict는 막는다(1)", async () => {
+  // 소스가 이미 가진 문제: 같은 id의 도형 둘, 없는 글자모양 9번
+  const run = (id: string, inner: string, ref = "0"): string =>
+    `<hp:p id="${id}" paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="${ref}">${inner}<hp:t>x</hp:t></hp:run></hp:p>`;
+  const src = parseSynthetic([run("11", '<hp:rect id="2"/><hp:rect id="2"/>') + run("12", "", "9")]);
+  const frag = write("inherited-frag.json", serializeFragment(extractFragment(src, { sectionIndex: 0, parentPath: [], from: 0, to: 1 })));
+  const out = p("blocks-inherited.hwpx");
+  const r = await cli("fragment", "import", p("hancom-blocks.hwpx"), frag, "--section", "0", "--index", "3", "-o", out);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /상속한 문제\(조각이 소스에서 갖고 있던 것\): 겹치는 id 1종, 없는 참조 1종, 그로 설명되는 검사 오류 2종/);
+  assert.match(r.out, /경고 \[FRAG_INHERITED_DUP\]/);
+  assert.match(r.out, /경고 \[GATE_INHERITED\]/);
+  assert.equal(validateDocument(read("blocks-inherited.hwpx")).errors.length, 2, "출력 문서에는 소스에서 온 오류가 그대로 있다");
+
+  // strict: 상속한 오류도 막는다. 출력 파일은 만들지 않는다
+  const strict = p("blocks-inherited-strict.hwpx");
+  const s = await cli("fragment", "import", p("hancom-blocks.hwpx"), frag, "--section", "0", "--index", "3", "-o", strict, "--mode", "strict");
+  assert.equal(s.code, 1);
+  assert.ok(!existsSync(strict));
 });
 
 test("G5 fill: 생성·보고서·모의 실행·누락 정책·템플릿과 조각 경로, 종료 코드 0", async () => {

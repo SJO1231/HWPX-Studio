@@ -187,6 +187,12 @@ function printResult(out: Out, result: GenerateResult): void {
   for (const s of plan.skipped) out.log(`건너뜀 [${s.code}] ${s.ruleId} ${s.anchor}: ${s.message}`);
   const expected = Object.entries(plan.expected);
   if (expected.length > 0) out.log(`예상 수량 증감: ${expected.map(([k, v]) => `${k} ${v > 0 ? "+" : ""}${v}`).join(", ")}`);
+  const inherited = r.inherited;
+  if (inherited.duplicateIds.length + inherited.danglingRefs.length > 0) {
+    out.log(
+      `상속한 문제(조각이 소스에서 갖고 있던 것): 겹치는 id ${inherited.duplicateIds.length}종, 없는 참조 ${inherited.danglingRefs.length}종, 그로 설명되는 검사 오류 ${inherited.errors.length}종(새 오류로 세지 않음)`,
+    );
+  }
   printIssues(out, r.issues);
 }
 

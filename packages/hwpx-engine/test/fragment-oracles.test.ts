@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { applyPlan, extractFragment, planImport } from "../src/index.ts";
-import { loadDoc } from "./helpers.ts";
+import { loadDoc, mutateEntryText, readFixture, reparse } from "./helpers.ts";
 
 const ROOT = new URL("../../../", import.meta.url);
 const RHWP = fileURLToPath(new URL("hwpx-edit/.cargo-root/bin/rhwp.exe", ROOT));
@@ -123,4 +123,53 @@ test("오라클 Python 검사기: id가 있는 문단을 자기 자신에게 가
   assert.deepEqual(added.map((e) => `${e.code} ${e.msg}`), [], "새 오류가 없다(문단 id 중복 포함)");
   const paragraphDups = (r: PyReport): number => r.errors.filter((e) => e.msg.startsWith("paragraph id 중복")).reduce((n, e) => n + e.count, 0);
   assert.ok(paragraphDups(after) <= paragraphDups(before), `문단 id 중복 ${paragraphDups(before)} → ${paragraphDups(after)}`);
+});
+
+// 대상 header에 글머리표 목록이 없을 때 목록을 만들어 가져온 결과(명세 7.8 "캠페인에 따른 수정" 1). 한컴 저장본(글머리표 목록 없음)에
+// 글머리표를 쓰는 문단 하나를 가져온다. 소스는 한컴 저장본에 글머리표 목록과 그것을 쓰는 문단모양을 더해 만든다(시험 안에서 메모리로만).
+function bulletCase(): { result: string; original: string; targetParagraphs: number } {
+  let newId = "";
+  const withHeader = mutateEntryText(readFixture("hancom/ph-single"), "Contents/header.xml", (t) => {
+    const count = /<hh:paraProperties itemCnt="(\d+)">/.exec(t)?.[1] ?? "";
+    const clone = /<hh:paraPr id="0".*?<\/hh:paraPr>/s.exec(t)?.[0] ?? "";
+    const bullet =
+      '<hh:bullets itemCnt="1"><hh:bullet id="1" char="&#9679;" useImage="0"><hh:paraHead level="0" align="LEFT" useInstWidth="0" autoIndent="1" widthAdjust="0" textOffsetType="PERCENT" textOffset="50" numFormat="DIGIT" charPrIDRef="4294967295" checkable="0"/></hh:bullet></hh:bullets>';
+    newId = count;
+    const para = clone.replace('<hh:paraPr id="0"', `<hh:paraPr id="${count}"`).replace('<hh:heading type="NONE" idRef="0" level="0"/>', '<hh:heading type="BULLET" idRef="1" level="0"/>');
+    return t.replace(`<hh:paraProperties itemCnt="${count}">`, `${bullet}<hh:paraProperties itemCnt="${Number(count) + 1}">`).replace("</hh:paraProperties>", `${para}</hh:paraProperties>`);
+  });
+  const bytes = mutateEntryText(withHeader, "Contents/section0.xml", (t) => {
+    let n = 0;
+    return t.replace(/(<hp:p id="[^"]*" paraPrIDRef=")0(")/g, (m, a: string, b: string) => (n++ === 1 ? `${a}${newId}${b}` : m));
+  });
+  const src = reparse(bytes);
+  assert.ok(src.header.resources["bullet"]?.length === 1 && src.sections[0]?.paragraphs[1]?.attrs.paraPrIDRef === newId, "전제: 소스 문단이 글머리표 문단모양을 쓴다");
+  const target = loadDoc("hancom/blocks");
+  assert.ok(!target.header.text.includes("<hh:bullets"), "전제: 대상에 글머리표 목록이 없다");
+  const fragment = extractFragment(src, { sectionIndex: 0, parentPath: [], from: 1, to: 1 });
+  const plan = planImport(target, fragment, { sectionIndex: 0, parentPath: [], index: (target.sections[0]?.paragraphs.length ?? 1) - 1, position: "after" });
+  const result = join(tmp, "bullet-list-created.hwpx");
+  const original = join(tmp, "bullet-list-created.orig.hwpx");
+  writeFileSync(result, applyPlan(target.pkg, plan));
+  writeFileSync(original, target.pkg.bytes);
+  return { result, original, targetParagraphs: target.sections[0]?.paragraphs.length ?? 0 };
+}
+
+test("오라클 rhwp: 없던 글머리표 목록을 만들어 가져온 결과를 종료 코드 0으로 파싱한다", { skip: skipRhwp }, () => {
+  const { result, original, targetParagraphs } = bulletCase();
+  const before = rhwpInfo(original);
+  assert.equal(before.status, 0, `대상 원본: ${before.stderr}`);
+  const after = rhwpInfo(result);
+  assert.equal(after.status, 0, `결과: ${after.stderr}`);
+  assert.equal(after.info?.paraCount, targetParagraphs + 1);
+  assert.ok((after.info?.warnings.length ?? 0) <= (before.info?.warnings.length ?? 0), "rhwp 경고가 늘지 않는다");
+});
+
+test("오라클 Python 검사기: 없던 글머리표 목록을 만들어 가져와도 새 오류가 없다", { skip: skipPython }, () => {
+  const { result, original } = bulletCase();
+  const before = validate(original);
+  const after = validate(result);
+  const known = new Set(before.errors.map((e) => `${e.code}|${e.msg}|${e.where}`));
+  for (const e of after.errors) assert.ok(known.has(`${e.code}|${e.msg}|${e.where}`), `새 오류 ${e.code} ${e.msg}`);
+  assert.deepEqual(after.warnings.filter((w) => (w as { code?: string }).code === "RES_ITEMCNT"), [], "개수 속성 불일치 경고가 없다");
 });

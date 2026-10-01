@@ -10,6 +10,7 @@
 - 구현은 [엔진 명세](engine-spec.md)에서 출발한다. 명세에 없는 이름을 참고 소스에서 따오지 않는다.
 - 런타임에 넣는 제3자 코드는 rhwp(뷰어·편집창)뿐이다. 나머지는 개발·검증에서 결과를 대조하는 오라클로만 쓰고 배포물에 넣지 않는다.
 - AGPL·LGPL·라이선스 미표기 저장소는 원리 참고 대상에서도 뺀다.
+- 식별자 대조 점검(2026-10-01): 우리 코드의 선언 이름 1,875개를 kordoc(1,280개), python-hwpx(518개), rhwp WASM API(907개)의 이름과 기계 대조했다. rhwp와는 겹침 0. kordoc 18개, python-hwpx 27개가 겹쳤고 대부분 흔한 낱말(`anchors`, `compare`, `header`, `fields`)이나 HWPX 요소 이름(`charPr`, `tc`)이다. kordoc의 함수 이름과 같던 넷은 바꿨다. `HwpxDocument`, `HwpxPackage`, `HwpxError`, `EditPlan`, `ValidationReport`, `ValidationIssue`는 python-hwpx의 클래스 이름과 겹치지만 형식 이름에서 나온 설명적 이름이라 그대로 뒀다. 우리 코드에 제3자 저작권·라이선스 문구는 없고 런타임 의존성도 없다.
 
 ## 1. rhwp (edwardkim/rhwp, MIT)
 

@@ -10,9 +10,11 @@ export {
   type GenerateOptions,
   type GenerateReport,
   type GenerateResult,
+  type InheritedReport,
   type Ledger,
   type LedgerAction,
   type ValidationSummary,
 } from "./gate.ts";
+export { explainInherited, mergeInherited, noInherited } from "./inherited.ts";
 export { planCompile, compileDocument, type CompileTarget, type CompileResult, type CompileReport } from "./compile.ts";
 export { findCandidates, type Candidate, type CandidateKind, type AnchorDraft } from "./candidates.ts";

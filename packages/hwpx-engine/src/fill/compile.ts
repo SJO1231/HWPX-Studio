@@ -11,7 +11,7 @@ import { compareToBaseline, validateDocument, type ValidationIssue } from "../va
 import { escapeAttr, escapeText } from "../xml/chars.ts";
 import { walkElements, type XElement } from "../xml/tree.ts";
 import { censusOfDoc, verifyCensus, zeroDelta } from "./census.ts";
-import { paragraphAtPath, prefixOf } from "./doc.ts";
+import { paragraphAtPath, nsPrefixOf } from "./doc.ts";
 import { span } from "./text.ts";
 import { verifyPreservation } from "./verify.ts";
 
@@ -109,7 +109,7 @@ export function planCompile(doc: HwpxDocument, anchors?: CompileTarget[]): EditP
       continue;
     }
     const id = String(nextId++);
-    const prefix = prefixOf(t);
+    const prefix = nsPrefixOf(t);
     const open = text.slice(t.start, t.openEnd);
     const close = `</${t.qname}>`;
     const rawStart = piece.start + (f.start - piece.logicalStart);

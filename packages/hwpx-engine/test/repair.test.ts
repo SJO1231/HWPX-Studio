@@ -218,7 +218,7 @@ test("P1 reissueIds: 객체 id·instId가 0으로 겹치는 경우는 기본으�
   assert.equal(count(entryText(all.output, SEC), /<hp:(?:tbl|pic|rect|container)\b[^>]*?\sid="0"/g), 1);
 });
 
-test("P1 fixCounts: 자원 목록 itemCnt, 글꼴 목록·언어별 개수, 구역 수 선언", () => {
+test("P1 fixCounts: 자원 목록 itemCnt와 글꼴 목록·언어별 개수만 고친다(구역 수 선언은 fixSectionCount의 몫)", () => {
   const itemCnt = withText(D1, HDR, (s) => s.replace('<hh:charProperties itemCnt="11"', '<hh:charProperties itemCnt="12"'));
   const a = assertFixed(itemCnt, {}, [{ code: "RES_ITEMCNT", severity: "warning" }]);
   assert.match(entryText(a.output, HDR), /<hh:charProperties itemCnt="11"/);
@@ -234,20 +234,49 @@ test("P1 fixCounts: 자원 목록 itemCnt, 글꼴 목록·언어별 개수, 구�
   assert.deepEqual(b.repaired.map((n) => [n.what, n.count]), [["itemCnt", 1], ["fontCnt", 1]]);
   assert.ok(bytesEqual(b.output, repairDocument(b.output).output), "고친 뒤에는 더 고칠 것이 없다");
 
+  // 같은 header에 구역 수 선언 불일치가 함께 있어도 fixCounts는 개수 속성만 고친다
+  const both = withText(itemCnt, HDR, (s) => s.replace('secCnt="1"', 'secCnt="3"'));
+  const c = repairDocument(both, { fixCounts: true });
+  assert.match(entryText(c.output, HDR), /secCnt="3"/, "구역 수 선언은 그대로다");
+  assert.match(entryText(c.output, HDR), /<hh:charProperties itemCnt="11"/);
+  assert.deepEqual(c.repaired.map((n) => n.what), ["itemCnt"]);
+});
+
+test("P1 fixSectionCount: 구역 수 선언은 옵션을 켰을 때만 고친다. 기본(끔)에서는 PKG_SECCNT_MISMATCH가 unrepaired에 남는다", () => {
+  // 근거: 한컴은 선언한 수만큼만 구역을 보여 주므로 선언을 고치면 숨어 있던 구역이 드러나 보이는 내용이 바뀐다(쪽 수가 1쪽씩 늘어남을 실측)
   const secCnt = withText(D1, HDR, (s) => s.replace('secCnt="1"', 'secCnt="3"'));
-  const c = assertFixed(secCnt, {}, [{ code: "PKG_SECCNT_MISMATCH", severity: "error" }, { code: "PKG_SECCNT", severity: "warning" }]);
+  const byDefault = planRepair(secCnt);
+  assert.deepEqual(byDefault.plan.edits, []);
+  assert.deepEqual(byDefault.repaired, []);
+  assert.ok(byDefault.unrepaired.some((i) => i.code === "PKG_SECCNT_MISMATCH"), "unrepaired에 남는다");
+  const r = repairDocument(secCnt);
+  assert.ok(bytesEqual(r.output, secCnt), "출력이 입력과 바이트 동일");
+  assert.equal(total(r.after.errors, "PKG_SECCNT_MISMATCH"), 1);
+  assert.ok(r.unrepaired.some((i) => i.code === "PKG_SECCNT_MISMATCH"));
+  // fixCounts를 켜도 고치지 않는다
+  assert.deepEqual(planRepair(secCnt, { fixCounts: true }).plan.edits, []);
+
+  // 켜면 고친다
+  const c = assertFixed(secCnt, { fixSectionCount: true }, [{ code: "PKG_SECCNT_MISMATCH", severity: "error" }, { code: "PKG_SECCNT", severity: "warning" }]);
   assert.match(entryText(c.output, HDR), /secCnt="1"/);
+  assert.deepEqual(c.repaired.map((n) => [n.kind, n.entry, n.what, n.count]), [["fixSectionCount", HDR, "secCnt", 1]]);
+  assert.ok(!bytesEqual(c.output, secCnt));
+  // 다른 보정 옵션과 독립이다
+  assert.equal(planRepair(secCnt, { fixSectionCount: true, fixCounts: false }).plan.edits.length, 1);
+  assert.deepEqual(planRepair(secCnt, { fixSectionCount: false }).plan.edits, []);
 
   // 구역 항목이 실제로 둘이면 선언을 2로 맞춘다
   const extra = buildZip([...entriesOf(D1), { name: "Contents/section1.xml", data: readEntry(readArchive(D1), D1, SEC), method: 8 }]);
-  const d = repairDocument(extra);
+  assert.match(entryText(repairDocument(extra).output, HDR), /secCnt="1"/, "기본에서는 그대로");
+  const d = repairDocument(extra, { fixSectionCount: true });
   assert.match(entryText(d.output, HDR), /secCnt="2"/);
   assert.equal(total(d.after.errors, "PKG_SECCNT_MISMATCH"), 0);
 });
 
-test("P1 fixCounts: 숫자가 아닌 선언은 건드리지 않는다", () => {
+test("P1 fixCounts·fixSectionCount: 숫자가 아닌 선언은 건드리지 않는다", () => {
   const bytes = withText(D1, HDR, (s) => s.replace('secCnt="1"', 'secCnt="x"').replace('<hh:styles itemCnt="1"', '<hh:styles itemCnt="many"'));
   assert.deepEqual(planRepair(bytes).plan.edits, []);
+  assert.deepEqual(planRepair(bytes, { fixSectionCount: true }).plan.edits, []);
 });
 
 /** hancom-merged의 첫 문단(여러 줄)의 글을 짧게 줄여 줄 배치 캐시가 글 밖을 가리키게 한다. */
@@ -549,6 +578,7 @@ test("P1 대조군: 정상 문서는 계획이 비어 있고 출력이 입력과
   const everything: RepairOptions = {
     reissueIds: true,
     fixCounts: true,
+    fixSectionCount: true,
     dropStaleLineSeg: true,
     stripIllegalChars: true,
     renameBookmarks: true,
@@ -592,7 +622,8 @@ test("P1 보정 옵션을 끄면 그 보정은 하지 않는다", () => {
   const bm = withText(D1, SEC, addRun(bookmark("bm") + bookmark("bm")));
   assert.deepEqual(planRepair(bm, { renameBookmarks: false }).plan.edits, []);
   assert.ok(planRepair(bm).plan.edits.length > 0);
-  assert.deepEqual(planRepair(withText(D1, HDR, (s) => s.replace('secCnt="1"', 'secCnt="3"')), { fixCounts: false }).plan.edits, []);
+  assert.deepEqual(planRepair(withText(D1, HDR, (s) => s.replace('<hh:charProperties itemCnt="11"', '<hh:charProperties itemCnt="12"')), { fixCounts: false }).plan.edits, []);
+  assert.deepEqual(planRepair(withText(D1, HDR, (s) => s.replace('secCnt="1"', 'secCnt="3"')), { fixSectionCount: false }).plan.edits, []);
   assert.deepEqual(planRepair(STALE, { dropStaleLineSeg: false }).plan.edits, []);
   const illegal = withText(D1, SEC, (s) => s.replace("<hp:t>", `<hp:t>${CTL}`));
   const noStrip = planRepair(illegal, { stripIllegalChars: false });
@@ -772,11 +803,12 @@ test("P5 보고서에는 종류·위치·건수가 있고 문서의 글·이름 
       bookmark(SECRET_NAME) + bookmark(SECRET_NAME) + field("570", SECRET_FIELD) + field("570", SECRET_FIELD) + `<hp:t>${SECRET_TEXT}${CTL}</hp:t>`,
     )(s.replace(/<hp:tbl id="\d+"/g, '<hp:tbl id="424242"'));
   const bytes = withText(withText(D1, SEC, sectionDefect), HDR, (s) => s.replace('secCnt="1"', 'secCnt="3"'));
-  const plan = planRepair(bytes);
-  const r = repairDocument(bytes);
+  const options: RepairOptions = { fixSectionCount: true };
+  const plan = planRepair(bytes, options);
+  const r = repairDocument(bytes, options);
   assert.deepEqual(plan.repaired, r.repaired);
 
-  assert.deepEqual(new Set(r.repaired.map((n) => n.kind)), new Set(["reissueIds", "fixCounts", "stripIllegalChars", "renameBookmarks"]));
+  assert.deepEqual(new Set(r.repaired.map((n) => n.kind)), new Set(["reissueIds", "fixSectionCount", "stripIllegalChars", "renameBookmarks"]));
   for (const n of r.repaired as RepairNote[]) {
     assert.match(n.entry, /^(Contents\/(header|section\d+)\.xml|mimetype)$/, "위치: ZIP 항목 이름");
     assert.ok(n.what.length > 0);
@@ -788,8 +820,10 @@ test("P5 보고서에는 종류·위치·건수가 있고 문서의 글·이름 
   assert.equal(sum("reissueIds", "object id") + sum("reissueIds", "field id"), 2);
   assert.equal(sum("renameBookmarks", "bookmark name"), 1);
   assert.equal(sum("stripIllegalChars", "control char"), 1);
-  assert.equal(sum("fixCounts", "secCnt"), 1);
-  assert.deepEqual(plan.plan.summary, { reissuedIds: 2, fixedCounts: 1, strippedChars: 1, renamedBookmarks: 1 });
+  assert.equal(sum("fixSectionCount", "secCnt"), 1);
+  assert.deepEqual(plan.plan.summary, { reissuedIds: 2, fixedSectionCounts: 1, strippedChars: 1, renamedBookmarks: 1 });
+  // 기본에서는 구역 수 선언을 고치지 않는다
+  assert.deepEqual(new Set(repairDocument(bytes).repaired.map((n) => n.kind)), new Set(["reissueIds", "stripIllegalChars", "renameBookmarks"]));
 
   // 값 원문(책갈피·누름틀 이름, 본문 글)은 어디에도 없다
   const dump = JSON.stringify({ repaired: r.repaired, unrepaired: r.unrepaired, summary: plan.plan.summary, issues: plan.plan.issues });

@@ -2,7 +2,7 @@ import type { SpanEdit } from "../edit/plan.ts";
 import type { ParagraphNode, Piece } from "../model/types.ts";
 import { escapeText } from "../xml/chars.ts";
 import { childEls } from "../xml/tree.ts";
-import { isTextPiece, prefixOf, type Repl } from "./doc.ts";
+import { isTextPiece, nsPrefixOf, type Repl } from "./doc.ts";
 
 /** 편집 대상 구역 파일 하나: 항목 이름과 그 텍스트(편집 오프셋의 기준). */
 export type Ctx = { entry: string; text: string };
@@ -89,7 +89,7 @@ function placeNewText(ctx: Ctx, par: ParagraphNode, value: string, reason: strin
   const run = par.runs[0];
   if (run === undefined) return { fail: { code: "FILL_NO_RUN", message: "문단에 run이 없어 글을 넣을 곳이 없습니다." } };
   const el = run.element;
-  const tag = `${prefixOf(el)}t`;
+  const tag = `${nsPrefixOf(el)}t`;
   const body = escapeText(value);
   if (el.end === el.openEnd) {
     // 자기닫힘 run은 펼친다

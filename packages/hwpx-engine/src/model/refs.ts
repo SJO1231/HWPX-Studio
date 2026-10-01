@@ -92,6 +92,8 @@ export function checkReferences(pkg: HwpxPackage, header: HeaderModel, sections:
           const label = `memoShape ${ref.id}`;
           tally(missing, `${sec.entryName}\u0000${label}`, (n) => `${label}이(가) 없는데 ${n}곳에서 가리킵니다.`);
         }
+      } else if (ref.kind === "binaryItem" && ref.id === "") {
+        continue; // 빈 이진 자료 참조는 참조 없음이다(검사기도 오류가 아닌 경고 RES_EMPTY_REF로 낸다)
       } else if (!exists(ref.kind, undefined, ref.id)) {
         const label = `${ref.kind} ${ref.id}`;
         tally(missing, `${sec.entryName}\u0000${label}`, (n) => `${label}이(가) 없는데 ${n}곳에서 가리킵니다.`);

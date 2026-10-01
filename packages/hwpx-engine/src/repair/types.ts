@@ -5,6 +5,7 @@ import type { ValidationReport } from "../validate/index.ts";
 export type RepairKind =
   | "reissueIds"
   | "fixCounts"
+  | "fixSectionCount"
   | "dropStaleLineSeg"
   | "stripIllegalChars"
   | "renameBookmarks"
@@ -13,11 +14,14 @@ export type RepairKind =
 
 /**
  * 보정 옵션. `reissueIds`, `fixCounts`, `dropStaleLineSeg`, `stripIllegalChars`, `renameBookmarks`는 기본으로 켜고
- * `fallbackRefs`, `normalizePackage`는 기본으로 끈다. `reissueIds: "all"`은 객체 id·instId가 `0`으로 겹치는 경우도 재발급한다.
+ * `fixSectionCount`, `fallbackRefs`, `normalizePackage`는 기본으로 끈다. `reissueIds: "all"`은 객체 id·instId가 `0`으로 겹치는 경우도 재발급한다.
+ * `fixCounts`는 자원 목록의 개수 속성(`itemCnt`·`fontCnt`)만 고친다. 구역 수 선언은 `fixSectionCount`가 고치는데, 한컴은 선언한 수만큼만
+ * 구역을 보여 주므로 고치면 숨어 있던 구역이 드러나 보이는 내용이 바뀐다(그래서 기본 끔).
  */
 export type RepairOptions = {
   reissueIds?: boolean | "all";
   fixCounts?: boolean;
+  fixSectionCount?: boolean;
   dropStaleLineSeg?: boolean;
   stripIllegalChars?: boolean;
   renameBookmarks?: boolean;
@@ -28,6 +32,7 @@ export type RepairOptions = {
 export type ResolvedOptions = {
   reissueIds: false | true | "all";
   fixCounts: boolean;
+  fixSectionCount: boolean;
   dropStaleLineSeg: boolean;
   stripIllegalChars: boolean;
   renameBookmarks: boolean;
@@ -39,6 +44,7 @@ export function resolveOptions(options: RepairOptions = {}): ResolvedOptions {
   return {
     reissueIds: options.reissueIds ?? true,
     fixCounts: options.fixCounts ?? true,
+    fixSectionCount: options.fixSectionCount ?? false,
     dropStaleLineSeg: options.dropStaleLineSeg ?? true,
     stripIllegalChars: options.stripIllegalChars ?? true,
     renameBookmarks: options.renameBookmarks ?? true,

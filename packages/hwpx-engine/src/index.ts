@@ -11,7 +11,7 @@ export {
   elIs,
   isEl,
   isElement,
-  elementChildren,
+  subElements,
   childEl,
   childEls,
   walkElements,
@@ -53,6 +53,10 @@ export type {
   FragmentSelection,
   InsertPoint,
   InstanceIdRole,
+  ImportPlan,
+  InheritedProblems,
+  InheritedDuplicate,
+  FragmentDangling,
 } from "./fragment/types.ts";
 export { selectTable } from "./fragment/select.ts";
 export { extractFragment } from "./fragment/extract.ts";

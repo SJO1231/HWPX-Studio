@@ -3,7 +3,7 @@ import {
   attrValue,
   childEl,
   childEls,
-  elementChildren,
+  subElements,
   elIs,
   isElement,
   nsRole,
@@ -43,7 +43,7 @@ function intAttr(el: XElement | undefined, name: string, fallback: number): numb
 /** 문단 요소 안에서 하위 목록(subList) 요소를 문서 순서로 찾는다. subList 안쪽은 들어가지 않는다. */
 function findSubListElements(paragraph: XElement): XElement[] {
   const found: XElement[] = [];
-  const stack: XElement[] = elementChildren(paragraph).reverse();
+  const stack: XElement[] = subElements(paragraph).reverse();
   while (stack.length > 0) {
     const el = stack.pop();
     if (el === undefined) break;
@@ -51,7 +51,7 @@ function findSubListElements(paragraph: XElement): XElement[] {
       found.push(el);
       continue;
     }
-    const kids = elementChildren(el);
+    const kids = subElements(el);
     for (let i = kids.length - 1; i >= 0; i--) {
       const k = kids[i];
       if (k !== undefined) stack.push(k);
@@ -159,7 +159,7 @@ export function parseParagraph(element: XElement, path: number[]): ParagraphNode
     objects.push(elIs(el, "paragraph", "tbl") ? buildTable(el, base, subListOf) : base);
 
     if (elIs(el, "paragraph", "ctrl")) {
-      for (const c of elementChildren(el)) {
+      for (const c of subElements(el)) {
         if (elIs(c, "paragraph", "fieldBegin")) {
           const mark: FieldMark = { kind: "begin", id: attrValue(c, "id") ?? "", element: c, pieceIndex };
           const name = attrValue(c, "name");

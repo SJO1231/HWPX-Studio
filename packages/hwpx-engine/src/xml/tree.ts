@@ -67,7 +67,7 @@ export function isElement(node: XElement | XText): node is XElement {
   return "local" in node;
 }
 
-export function elementChildren(el: XElement): XElement[] {
+export function subElements(el: XElement): XElement[] {
   const out: XElement[] = [];
   for (const c of el.children) if (isElement(c)) out.push(c);
   return out;

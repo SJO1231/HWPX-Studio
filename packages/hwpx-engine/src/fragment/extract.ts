@@ -6,8 +6,8 @@ import { findEntry, readEntry } from "../package/zip-read.ts";
 import { attrNode, elIs, walkElements, type XElement } from "../xml/tree.ts";
 import { createFingerprinter, makeLookup, resourceRefs } from "./resources.ts";
 import { resolveSelection } from "./select.ts";
-import type { Fragment, FragmentBinary, FragmentRef, FragmentResource, FragmentSelection } from "./types.ts";
-import { collectPrefixes, isNoRef, scanInstanceAttrs, sha256Hex } from "./util.ts";
+import type { Fragment, FragmentBinary, FragmentDangling, FragmentRef, FragmentResource, FragmentSelection } from "./types.ts";
+import { collectPrefixes, isNoRefOf, scanInstanceAttrs, sha256Hex } from "./util.ts";
 
 const SCHEMA = "hwpx-studio/fragment@1";
 
@@ -54,6 +54,14 @@ export function extractFragment(doc: HwpxDocument, selection: FragmentSelection)
   const fingerprint = createFingerprinter(lookup);
   const tally = makeTally();
   const headerEntry = doc.pkg.headerEntry;
+  // 소스에서 없는 대상을 가리키던 참조의 구조화된 기록(경고 FRAG_DANGLING_SOURCE와 같은 자리에서 센다)
+  const dangling = new Map<string, FragmentDangling>();
+  const noteDangling = (kind: string, id: string): void => {
+    const key = JSON.stringify([kind, id]);
+    const found = dangling.get(key);
+    if (found === undefined) dangling.set(key, { kind, id, count: 1 });
+    else found.count++;
+  };
 
   // 이진 자료: manifest 항목 → 내용
   const binaries = new Map<string, FragmentBinary>();
@@ -62,6 +70,7 @@ export function extractFragment(doc: HwpxDocument, selection: FragmentSelection)
     const item = doc.pkg.manifestItems.find((m) => m.id === itemId);
     if (item === undefined || findEntry(doc.pkg.archive, item.href) === undefined) {
       tally.add("FRAG_DANGLING_SOURCE", `binaryItem ${itemId}`, where, (n) => `이진 자료 ${itemId}이(가) 없는데 ${n}곳에서 가리킵니다.`);
+      noteDangling("binaryItem", itemId);
       return false;
     }
     const bytes = readEntry(doc.pkg.archive, doc.pkg.bytes, item.href);
@@ -81,7 +90,7 @@ export function extractFragment(doc: HwpxDocument, selection: FragmentSelection)
   const roots: ResourceItem[] = [];
   for (const p of paragraphs) {
     for (const ref of collectBodyRefs(p.element)) {
-      if (ref.kind === "memoShape" || isNoRef(ref.id)) continue;
+      if (ref.kind === "memoShape" || isNoRefOf(ref.kind, ref.id)) continue;
       if (ref.kind === "unknown") {
         const name = ref.attr.qname;
         tally.add("FRAG_UNKNOWN_REF", name, section.entryName, (n) => `자원 참조로 해석하지 못한 ${name} 속성이 ${n}곳 있어 조각이 옮기지 않습니다.`);
@@ -95,6 +104,7 @@ export function extractFragment(doc: HwpxDocument, selection: FragmentSelection)
       const target = lookup.resource(ref.kind, undefined, ref.id);
       if (target === undefined) {
         tally.add("FRAG_DANGLING_SOURCE", `${ref.kind} ${ref.id}`, section.entryName, (n) => `${ref.kind} ${ref.id}이(가) 없는데 ${n}곳에서 가리킵니다.`);
+        noteDangling(ref.kind, ref.id);
         prints.push(`missing:${ref.id}`);
         continue;
       }
@@ -122,6 +132,7 @@ export function extractFragment(doc: HwpxDocument, selection: FragmentSelection)
       }
       const label = ref.lang === undefined ? `${ref.kind} ${ref.id}` : `${ref.kind}(${ref.lang}) ${ref.id}`;
       tally.add("FRAG_DANGLING_SOURCE", label, headerEntry, (n) => `${label}이(가) 없는데 자원 ${item.kind} ${item.id} 등 ${n}곳에서 가리킵니다.`);
+      noteDangling(ref.kind, ref.id);
     }
     order.push(item);
   };
@@ -192,6 +203,7 @@ export function extractFragment(doc: HwpxDocument, selection: FragmentSelection)
     lineSegSpans,
     texts: all.map((p) => p.logicalText),
     prints,
+    dangling: [...dangling.values()],
     census: {
       paragraphs: all.length,
       tables: elements.filter((el) => elIs(el, "paragraph", "tbl")).length,

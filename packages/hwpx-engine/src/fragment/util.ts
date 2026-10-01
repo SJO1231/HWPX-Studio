@@ -14,6 +14,11 @@ export function isNoRef(id: string): boolean {
   return NO_REF.has(id);
 }
 
+/** 종류까지 보는 "참조 없음": 관례값에 더해, 빈 `binaryItemIDRef`(이진 자료가 없다는 뜻)도 참조가 아니다. 검사기도 빈 값은 오류가 아닌 경고(RES_EMPTY_REF)로 낸다. */
+export function isNoRefOf(kind: string, id: string): boolean {
+  return NO_REF.has(id) || (kind === "binaryItem" && id === "");
+}
+
 export type Rep = { start: number; end: number; text: string };
 
 /** 구간 치환 목록을 적용한다. 구간이 겹치거나 범위를 벗어나면 조각이 일관되지 않은 것이다. */

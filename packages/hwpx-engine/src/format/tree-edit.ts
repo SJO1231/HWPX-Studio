@@ -1,7 +1,7 @@
 import { HwpxError } from "../errors.ts";
 import { escapeAttr } from "../xml/chars.ts";
 import { tokenize, type XAttr } from "../xml/tokenizer.ts";
-import { buildTree, elementChildren, elIs, nsRole, type XElement } from "../xml/tree.ts";
+import { buildTree, subElements, elIs, nsRole, type XElement } from "../xml/tree.ts";
 import { CHILD_ORDER } from "./order.ts";
 import type { FormatOp } from "./types.ts";
 
@@ -31,7 +31,7 @@ export function makeEditEnv(headerRoot: XElement): EditEnv {
 
 type Splice = { start: number; end: number; text: string };
 
-function applySplices(full: string, splices: Splice[]): string {
+function spliceSpans(full: string, splices: Splice[]): string {
   const sorted = [...splices].sort((a, b) => a.start - b.start || a.end - b.end);
   let out = "";
   let pos = 0;
@@ -49,7 +49,7 @@ function parseResource(text: string, env: EditEnv): Parsed {
   const open = `<w${env.decls}>`;
   const full = `${open}${text}</w>`;
   const wrapper = buildTree(full, tokenize(full));
-  const resource = elementChildren(wrapper)[0];
+  const resource = subElements(wrapper)[0];
   if (resource === undefined) throw new HwpxError("FMT_PATH", "자원 원문에 요소가 없습니다.");
   return { full, shift: open.length, resource };
 }
@@ -71,10 +71,10 @@ const isBranchEl = (el: XElement): boolean => elIs(el, "paragraph", "case") || e
 function named(parent: Target, name: string): Target[] {
   const out: Target[] = [];
   const visit = (el: XElement, branch: Branch): void => {
-    for (const c of elementChildren(el)) {
+    for (const c of subElements(el)) {
       if (c.local === name && !isSwitch(c) && !isBranchEl(c)) out.push({ el: c, branch });
       else if (isSwitch(c)) {
-        for (const b of elementChildren(c)) if (isBranchEl(b)) visit(b, b.local === "default" ? "default" : "case");
+        for (const b of subElements(c)) if (isBranchEl(b)) visit(b, b.local === "default" ? "default" : "case");
       }
     }
   };
@@ -137,8 +137,8 @@ function prefixFor(role: string, parent: XElement, env: EditEnv): string {
 /** 자식의 관측 순서 위치. 알 수 없으면 -1. `switch`는 첫 갈래 안의 자식들 가운데 가장 앞선 위치를 쓴다. */
 function orderIndex(order: { name: string }[], el: XElement): number {
   if (isSwitch(el)) {
-    const branch = elementChildren(el).find(isBranchEl);
-    const inner = (branch === undefined ? [] : elementChildren(branch)).map((c) => order.findIndex((o) => o.name === c.local)).filter((i) => i >= 0);
+    const branch = subElements(el).find(isBranchEl);
+    const inner = (branch === undefined ? [] : subElements(branch)).map((c) => order.findIndex((o) => o.name === c.local)).filter((i) => i >= 0);
     return inner.length === 0 ? -1 : Math.min(...inner);
   }
   return order.findIndex((o) => o.name === el.local);
@@ -162,7 +162,7 @@ function childSplice(full: string, parent: XElement, name: string, attrs: Record
     return { start: parent.openEnd - 2, end: parent.openEnd, text: `>${child}</${parent.qname}>` };
   }
   const idx = order.findIndex((c) => c.name === name);
-  const kids = elementChildren(parent);
+  const kids = subElements(parent);
   const after = kids.find((c) => orderIndex(order, c) > idx);
   const at = after !== undefined ? after.start : kids.length > 0 ? (kids.at(-1)?.end ?? parent.openEnd) : parent.openEnd;
   return { start: at, end: at, text: child };
@@ -179,7 +179,7 @@ function ensurePath(text: string, env: EditEnv, path: string[]): string {
       const lacking = resolve(p.resource, path.slice(0, i)).filter((t) => named(t, name).length === 0);
       if (lacking.length === 0) break;
       if (guard > 0) throw new HwpxError("FMT_PATH", `경로 '${path.join("/")}'의 '${name}'을(를) 만들지 못했습니다.`);
-      cur = unwrap(p, applySplices(p.full, lacking.map((t) => childSplice(p.full, t.el, name, undefined, env))));
+      cur = unwrap(p, spliceSpans(p.full, lacking.map((t) => childSplice(p.full, t.el, name, undefined, env))));
     }
   }
   return cur;
@@ -204,7 +204,7 @@ export function applyOp(text: string, env: EditEnv, op: FormatOp): string {
         const s = setAttrSplice(p.full, t.el, op.name, pickValue(op, t));
         if (s !== undefined) splices.push(s);
       }
-      return unwrap(p, applySplices(p.full, splices));
+      return unwrap(p, spliceSpans(p.full, splices));
     }
     case "addChild": {
       checkName(op.name, "자식 요소");
@@ -225,7 +225,7 @@ export function applyOp(text: string, env: EditEnv, op: FormatOp): string {
           }
         }
       }
-      return unwrap(p, applySplices(p.full, splices));
+      return unwrap(p, spliceSpans(p.full, splices));
     }
     case "removeChild": {
       checkName(op.name, "자식 요소");
@@ -233,7 +233,7 @@ export function applyOp(text: string, env: EditEnv, op: FormatOp): string {
       const splices = resolve(p.resource, op.path).flatMap((parent) =>
         named(parent, op.name).map((t): Splice => ({ start: t.el.start, end: t.el.end, text: "" })),
       );
-      return unwrap(p, applySplices(p.full, splices));
+      return unwrap(p, spliceSpans(p.full, splices));
     }
     case "removeAttr": {
       checkAttr(op.name, undefined);
@@ -243,7 +243,7 @@ export function applyOp(text: string, env: EditEnv, op: FormatOp): string {
         const s = removeAttrSplice(p.full, t.el, op.name);
         if (s !== undefined) splices.push(s);
       }
-      return unwrap(p, applySplices(p.full, splices));
+      return unwrap(p, spliceSpans(p.full, splices));
     }
     default:
       throw new HwpxError("FMT_BAD_OP", `알 수 없는 서식 변경 연산입니다: ${JSON.stringify(op)}`);
@@ -254,5 +254,5 @@ export function applyOp(text: string, env: EditEnv, op: FormatOp): string {
 export function withId(text: string, env: EditEnv, newId: string): string {
   const p = parseResource(text, env);
   const s = setAttrSplice(p.full, p.resource, "id", newId);
-  return s === undefined ? text : unwrap(p, applySplices(p.full, [s]));
+  return s === undefined ? text : unwrap(p, spliceSpans(p.full, [s]));
 }

@@ -5,7 +5,7 @@ import { readArchive, type Archive } from "../package/zip-read.ts";
 import { validateDocument, type ValidationIssue, type ValidationReport } from "../validate/index.ts";
 import { mimetypeViolation, normalizeArchive } from "./archive.ts";
 import { planRenameBookmarks } from "./bookmarks.ts";
-import { planFixCounts } from "./counts.ts";
+import { planFixCounts, planFixSectionCount } from "./counts.ts";
 import { HEADER_ENTRY, loadEntries, spanEdit, type EntryDoc, type Loaded } from "./entries.ts";
 import { planReissueIds } from "./ids.ts";
 import { planDropStaleLineSeg } from "./lineseg.ts";
@@ -23,6 +23,7 @@ import {
 const KIND_ORDER: RepairKind[] = [
   "reissueIds",
   "fixCounts",
+  "fixSectionCount",
   "dropStaleLineSeg",
   "stripIllegalChars",
   "renameBookmarks",
@@ -34,6 +35,7 @@ const KIND_ORDER: RepairKind[] = [
 const SUMMARY_KEY: Record<RepairKind, string> = {
   reissueIds: "reissuedIds",
   fixCounts: "fixedCounts",
+  fixSectionCount: "fixedSectionCounts",
   dropStaleLineSeg: "droppedLineSegs",
   stripIllegalChars: "strippedChars",
   renameBookmarks: "renamedBookmarks",
@@ -173,7 +175,8 @@ export function execute(bytes: Uint8Array, report: ValidationReport | undefined,
   const loaded = loadEntries(bytes, archive, opts.stripIllegalChars);
   const parts: PlanPart[] = [];
   if (opts.reissueIds !== false) parts.push(planReissueIds(loaded.sections, opts.reissueIds));
-  if (opts.fixCounts) parts.push(planFixCounts(loaded.header, loaded.sectionNames.length));
+  if (opts.fixCounts) parts.push(planFixCounts(loaded.header));
+  if (opts.fixSectionCount) parts.push(planFixSectionCount(loaded.header, loaded.sectionNames.length));
   if (opts.dropStaleLineSeg) parts.push(planDropStaleLineSeg(loaded.sections));
   if (opts.renameBookmarks) parts.push(planRenameBookmarks(loaded.sections));
   if (opts.fallbackRefs) parts.push(planFallbackRefs(loaded.header, loaded.sections));

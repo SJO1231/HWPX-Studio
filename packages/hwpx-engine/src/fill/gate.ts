@@ -1,10 +1,12 @@
 import { makeIssue, type Issue } from "../errors.ts";
 import { parseDocument } from "../model/document.ts";
+import type { InheritedProblems } from "../fragment/types.ts";
 import { openPackage } from "../package/open.ts";
 import { canonicalJson, sha256Hex } from "../template/hash.ts";
 import type { Dataset, FillReport, Template } from "../template/types.ts";
 import { compareToBaseline, validateDocument, type ValidationIssue, type ValidationReport } from "../validate/index.ts";
 import { executeFillPlan, type ExecuteHooks } from "./execute.ts";
+import { explainInherited, noInherited } from "./inherited.ts";
 import { buildFillPlan, type FillOptions } from "./plan.ts";
 import { verifyChain } from "./verify.ts";
 
@@ -26,11 +28,19 @@ export type GenerateOptions = FillOptions & {
 
 export type ValidationSummary = { errors: number; warnings: number };
 
+/**
+ * 상속: 주입한 조각들이 소스에서부터 갖고 있던 문제(조각 안에서 겹치는 id, 소스에서 없던 참조)와, 그로 설명되는 검사기 오류.
+ * `baseline`·`repair` 방식은 이 오류를 대상의 새 오류로 세지 않고 경고(`GATE_INHERITED`)로 보고한다. `strict`는 가리지 않고 막는다.
+ */
+export type InheritedReport = InheritedProblems & { errors: ValidationIssue[] };
+
 export type GenerateReport = {
   mode: GateMode;
   dryRun: boolean;
   /** 채움 계획 보고서(값 원문 없음) */
   plan: FillReport;
+  /** 상속한 문제와 그것으로 설명되는 검사 오류(`validation.newErrors`에는 들어 있지 않다) */
+  inherited: InheritedReport;
   /** 검사 결과 요약과 기준선 대조(계획 단계에서 막혔으면 비어 있다) */
   validation: {
     before: ValidationSummary;
@@ -97,6 +107,7 @@ export function generate(bytes: Uint8Array, template: Template, dataset: Dataset
     mode,
     dryRun,
     plan: { actions: [], skipped: [], dropped: [], relocated: [], kept: [], requiredPaths: [], missingPaths: [], inactiveRules: [], expected: {}, issues: [] },
+    inherited: { ...noInherited(), errors: [] },
     validation: null,
     repaired: null,
     stages: [],
@@ -139,6 +150,7 @@ export function generate(bytes: Uint8Array, template: Template, dataset: Dataset
   issues.push(...exec.issues);
   report.stages = exec.stages.map((s) => ({ label: s.label, edits: s.plan.edits.length, additions: s.plan.additions.length }));
   report.reread = exec.checked;
+  report.inherited = { ...exec.inherited, errors: [] };
   if (!exec.ok || exec.output === undefined) return failed();
   const output = exec.output;
   issues.push(...verifyChain(source, output, exec.stages.map((s) => s.plan), "최종 출력"));
@@ -147,22 +159,26 @@ export function generate(bytes: Uint8Array, template: Template, dataset: Dataset
   // 4. 검사와 판정
   const after = validateDocument(output, { strict: mode === "strict" });
   const cmp = compareToBaseline(before, after);
+  // 조각이 소스에서부터 갖고 있던 문제로 설명되는 새 오류는 새 오류로 세지 않고 상속으로 따로 보고한다(strict는 가리지 않는다)
+  const { explained, unexplained } = mode === "strict" ? { explained: [], unexplained: cmp.newErrors } : explainInherited(cmp.newErrors, exec.inherited);
+  report.inherited.errors = explained;
   report.validation = {
     before: summary(before),
     after: summary(after),
-    newErrors: cmp.newErrors,
+    newErrors: unexplained,
     preexisting: cmp.preexisting,
     resolved: cmp.resolved,
   };
   for (const v of cmp.preexisting) issues.push(toIssue(v, "warning", "원래 있던 오류: "));
+  for (const v of explained) issues.push(makeIssue("warning", "GATE_INHERITED", `조각이 소스에서 갖고 있던 문제로 설명되는 오류[${v.code}]: ${v.message}${v.count > 1 ? ` (${v.count}건)` : ""}`, v.where));
   if (mode === "strict") {
     if (after.errors.length > 0) {
       for (const v of after.errors) issues.push(toIssue(v, "error"));
       issues.push(makeIssue("error", "GATE_ERRORS", `엄격 방식: 검사 오류가 ${after.errors.length}종 있습니다.`));
     }
-  } else if (cmp.newErrors.length > 0) {
-    for (const v of cmp.newErrors) issues.push(toIssue(v, "error", "편집이 만든 오류: "));
-    issues.push(makeIssue("error", "GATE_NEW_ERRORS", `기준선 방식: 편집이 새로 만든 오류가 ${cmp.newErrors.length}종 있습니다.`));
+  } else if (unexplained.length > 0) {
+    for (const v of unexplained) issues.push(toIssue(v, "error", "편집이 만든 오류: "));
+    issues.push(makeIssue("error", "GATE_NEW_ERRORS", `기준선 방식: 편집이 새로 만든 오류가 ${unexplained.length}종 있습니다.`));
   }
   if (errorsOf(issues).length > 0) return failed();
 

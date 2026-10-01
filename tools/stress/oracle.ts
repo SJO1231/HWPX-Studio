@@ -24,11 +24,17 @@ export type Candidate = {
   meta: Record<string, number>;
 };
 
-type Held = { caseId: string; method: string; risk: number; baseId: string; baseBytes: Uint8Array; file: string; meta: Record<string, number> };
+type Held = { caseId: string; method: string; risk: number; baseId: string; baseFile: string; file: string; meta: Record<string, number> };
 
-/** 위험이 큰 결과를 임시 폴더에 모아 두는 제한 크기 풀. 넘치면 위험이 가장 낮은 것을 지운다. */
+/** 표본을 고를 때의 묶음: 서식 변경 조합(M10), 셀 안 삽입(M6), 없던 목록을 만들어 새로 통과하게 된 건, 그 밖 */
+type Group = "M10" | "M6" | "listCreated" | "other";
+
+const groupOf = (c: { method: string; meta: Record<string, number> }): Group =>
+  c.method === "M10" ? "M10" : c.method === "M6" ? "M6" : (c.meta["createdLists"] ?? 0) > 0 ? "listCreated" : "other";
+
+/** 위험이 큰 결과를 임시 폴더에 모아 두는 제한 크기 풀. 묶음마다 넘치면 위험이 가장 낮은 것을 지운다. */
 export class OraclePool {
-  private held: Held[] = [];
+  private held: Record<Group, Held[]> = { M10: [], M6: [], listCreated: [], other: [] };
   private cap: number;
   constructor(cap: number) {
     this.cap = cap;
@@ -44,42 +50,61 @@ export class OraclePool {
 
   offer(c: Candidate): void {
     if (this.cap <= 0) return;
-    if (this.held.length >= this.cap && c.risk <= (this.held[this.held.length - 1]?.risk ?? 0)) return;
+    const list = this.held[groupOf(c)];
+    if (list.length >= this.cap && c.risk <= (list[list.length - 1]?.risk ?? 0)) return;
     const file = join(STRESS_DIR, "out", `${c.caseId}.hwpx`);
     writeFileSync(file, c.bytes);
-    this.held.push({ caseId: c.caseId, method: c.method, risk: c.risk, baseId: c.baseId, baseBytes: c.baseBytes, file, meta: c.meta });
-    this.held.sort((a, b) => b.risk - a.risk);
-    while (this.held.length > this.cap) {
-      const drop = this.held.pop();
+    // 대상 원본 사본은 디스크에만 둔다(같은 문서는 한 번만 쓴다)
+    const baseFile = join(STRESS_DIR, "base", `${c.baseId}.hwpx`);
+    if (!existsSync(baseFile)) writeFileSync(baseFile, c.baseBytes);
+    list.push({ caseId: c.caseId, method: c.method, risk: c.risk, baseId: c.baseId, baseFile, file, meta: c.meta });
+    list.sort((a, b) => b.risk - a.risk);
+    while (list.length > this.cap) {
+      const drop = list.pop();
       if (drop !== undefined) rmSync(drop.file, { force: true });
     }
   }
 
-  /** 위험 순으로 `n`개를 고른다. 한 방식이 표본을 독차지하지 않게 방식마다 상한(n의 40%)을 두고, 모자라면 상한 없이 채운다. */
+  /**
+   * 표본 `n`개를 고른다. 서식 변경 조합(M10)과 셀 안 삽입(M6)에 각각 `n`의 20%, 없던 목록을 만들어 새로 통과하게 된 건에 10%를 먼저 배정하고
+   * (M6는 `FRAG_CELL_MAY_CLIP` 경고가 난 건을 절반까지 먼저 담는다), 나머지는 위험 순으로 채운다. 그 밖의 방식은 방식마다 상한(n의 40%)을 두고, 모자라면 상한 없이 채운다.
+   */
   select(n: number): { caseId: string; method: string; risk: number; file: string; baseId: string; baseFile: string; meta: Record<string, number> }[] {
     const cap = Math.max(1, Math.ceil(n * 0.4));
-    const perMethod: Record<string, number> = {};
     const picked: Held[] = [];
-    for (const h of this.held) {
+    const take = (list: Held[], k: number): void => {
+      for (const h of list) {
+        if (k <= 0 || picked.length >= n) break;
+        if (picked.includes(h)) continue;
+        picked.push(h);
+        k--;
+      }
+    };
+    const share = (p: number): number => Math.max(1, Math.round(n * p));
+    take(this.held.M10, share(0.2));
+    const clip = this.held.M6.filter((h) => (h.meta["cellClip"] ?? 0) > 0);
+    take(clip, Math.ceil(share(0.2) / 2));
+    take(this.held.M6, share(0.2) - picked.filter((h) => h.method === "M6").length);
+    take(this.held.listCreated, share(0.1));
+    const perMethod: Record<string, number> = {};
+    for (const h of picked) perMethod[h.method] = (perMethod[h.method] ?? 0) + 1;
+    const rest = Object.values(this.held).flat().sort((a, b) => b.risk - a.risk);
+    for (const h of rest) {
       if (picked.length >= n) break;
-      if ((perMethod[h.method] ?? 0) >= cap) continue;
+      if (picked.includes(h) || h.method === "M10" || h.method === "M6" || (perMethod[h.method] ?? 0) >= cap) continue;
       perMethod[h.method] = (perMethod[h.method] ?? 0) + 1;
       picked.push(h);
     }
-    for (const h of this.held) {
+    for (const h of rest) {
       if (picked.length >= n) break;
       if (!picked.includes(h)) picked.push(h);
     }
-    for (const h of this.held) if (!picked.includes(h)) rmSync(h.file, { force: true });
-    return picked.map((h) => {
-      const baseFile = join(STRESS_DIR, "base", `${h.baseId}.hwpx`);
-      if (!existsSync(baseFile)) writeFileSync(baseFile, h.baseBytes);
-      return { caseId: h.caseId, method: h.method, risk: h.risk, file: h.file, baseId: h.baseId, baseFile, meta: h.meta };
-    });
+    for (const h of rest) if (!picked.includes(h)) rmSync(h.file, { force: true });
+    return picked.map((h) => ({ caseId: h.caseId, method: h.method, risk: h.risk, file: h.file, baseId: h.baseId, baseFile: h.baseFile, meta: h.meta }));
   }
 
   size(): number {
-    return this.held.length;
+    return Object.values(this.held).reduce((n, l) => n + l.length, 0);
   }
 }
 
@@ -168,6 +193,9 @@ const histogram = (deltas: number[]): Record<string, number> => {
   return sortedRecord(h);
 };
 
+/** 쪽 수 변화(결과 - 원본)의 분포를 건 묶음마다 낸다. 열리지 않았거나 쪽 수를 읽지 못한 건은 뺀다. */
+type DeltaSplit = { cases: number; rhwpOpened: number; hancomOpened: number; rhwpPagesDelta: Record<string, number>; hancomPagesDelta: Record<string, number> };
+
 export type OracleSummary = {
   sample: number;
   methods: Record<string, number>;
@@ -176,6 +204,11 @@ export type OracleSummary = {
   windowLen: Dist;
   /** 건별 수량(식별자·쪽 수·문단 수만) */
   rows: Record<string, unknown>[];
+  /** 셀 안 삽입(M6) 표본을 계획이 `FRAG_CELL_MAY_CLIP` 경고를 낸 건과 아닌 건으로 갈라 본 쪽 수 변화 */
+  cellMayClip: { flagged: DeltaSplit; notFlagged: DeltaSplit };
+  /** 없던 목록을 만들어 새로 통과하게 된 건(plan.summary.createdLists > 0)과 서식 변경 조합(M10) */
+  listCreated: DeltaSplit;
+  formatCombination: DeltaSplit;
   /** rhwp가 센 문단 수의 증가가 계획이 예고한 문단 증가(최상위 문단 수, 하위 목록 포함 전체)와 같은 건 수 */
   rhwpParagraphDelta: { equalsTopLevel: number; equalsAll: number; equalsEither: number; neither: number } | null;
   rhwp: { ran: boolean; ok: number; fail: number; failures: { case: string; exit: number | null }[]; baseFail: number; warningsIncreased: number; pagesDelta: Record<string, number>; shrink: string[]; pages: Dist; deltas: Dist; ms: Dist } | null;
@@ -196,6 +229,22 @@ export type OracleSummary = {
   } | null;
 };
 
+function split(list: OracleEntry[]): DeltaSplit {
+  const rhwp: number[] = [];
+  const hancom: number[] = [];
+  for (const e of list) {
+    if (e.rhwp?.exit === 0 && e.rhwp.pages !== null && e.rhwp.basePages !== null) rhwp.push(e.rhwp.pages - e.rhwp.basePages);
+    if (e.hancom?.opened === true && e.hancom.pages !== null && e.hancom.basePages !== null) hancom.push(e.hancom.pages - e.hancom.basePages);
+  }
+  return {
+    cases: list.length,
+    rhwpOpened: list.filter((e) => e.rhwp?.exit === 0).length,
+    hancomOpened: list.filter((e) => e.hancom?.opened === true).length,
+    rhwpPagesDelta: histogram(rhwp),
+    hancomPagesDelta: histogram(hancom),
+  };
+}
+
 export function summarizeOracle(entries: OracleEntry[], rhwpRan: boolean, com: ComRun | null, pdfRequested: boolean): OracleSummary {
   const methods: Record<string, number> = {};
   for (const e of entries) bump(methods, e.method);
@@ -210,12 +259,17 @@ export function summarizeOracle(entries: OracleEntry[], rhwpRan: boolean, com: C
     withHeaderFooter: has("headerFooter"),
     windowLenAtLeast100: entries.filter((e) => (e.meta["windowLen"] ?? 0) >= 100).length,
     splitOrChainOrCell: entries.filter((e) => ["M4", "M5", "M6", "M8"].includes(e.method)).length,
+    formatCombination: entries.filter((e) => e.method === "M10").length,
+    cellMayClipWarned: entries.filter((e) => e.method === "M6" && (e.meta["cellClip"] ?? 0) > 0).length,
+    listCreated: entries.filter((e) => (e.meta["createdLists"] ?? 0) > 0).length,
   };
   const rows = entries.map((e) => ({
     case: e.caseId,
     method: e.method,
     windowLen: e.meta["windowLen"] ?? null,
     expectedParagraphs: { topLevel: e.meta["insertedTop"] ?? null, all: e.meta["insertedAll"] ?? null },
+    cellMayClip: e.method === "M6" ? (e.meta["cellClip"] ?? 0) > 0 : null,
+    createdLists: e.meta["createdLists"] ?? 0,
     rhwp: e.rhwp === undefined ? null : { exit: e.rhwp.exit, pages: e.rhwp.pages, basePages: e.rhwp.basePages, paras: e.rhwp.paras, baseParas: e.rhwp.baseParas, warnings: e.rhwp.warnings, baseWarnings: e.rhwp.baseWarnings },
     hancom: e.hancom === undefined ? null : { opened: e.hancom.opened, pages: e.hancom.pages, basePages: e.hancom.basePages, pdfSaved: e.hancom.pdf?.saved ?? null },
   }));
@@ -240,6 +294,12 @@ export function summarizeOracle(entries: OracleEntry[], rhwpRan: boolean, com: C
     windowLen: dist(entries.map((e) => e.meta["windowLen"] ?? 0)),
     rows,
     rhwpParagraphDelta: paraDelta,
+    cellMayClip: {
+      flagged: split(entries.filter((e) => e.method === "M6" && (e.meta["cellClip"] ?? 0) > 0)),
+      notFlagged: split(entries.filter((e) => e.method === "M6" && (e.meta["cellClip"] ?? 0) === 0)),
+    },
+    listCreated: split(entries.filter((e) => (e.meta["createdLists"] ?? 0) > 0)),
+    formatCombination: split(entries.filter((e) => e.method === "M10")),
     rhwp: null,
     hancom: null,
   };

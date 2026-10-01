@@ -1,4 +1,4 @@
-import { attrValue, elementChildren, elIs, isElement, walkElements, type XElement } from "../xml/tree.ts";
+import { attrValue, subElements, elIs, isElement, walkElements, type XElement } from "../xml/tree.ts";
 import { spanEdit, type EntryDoc } from "./entries.ts";
 import { emptyPart, type PlanPart } from "./types.ts";
 
@@ -10,14 +10,14 @@ import { emptyPart, type PlanPart } from "./types.ts";
  */
 export function maxLineStart(paragraph: XElement): number {
   let n = 1;
-  for (const run of elementChildren(paragraph)) {
+  for (const run of subElements(paragraph)) {
     if (!elIs(run, "paragraph", "run")) continue;
     for (const part of run.children) {
       if (!isElement(part)) continue;
       if (elIs(part, "paragraph", "t")) {
         for (const c of part.children) n += isElement(c) ? 8 : c.value.length;
       } else if (elIs(part, "paragraph", "ctrl")) {
-        n += 8 * Math.max(1, elementChildren(part).length);
+        n += 8 * Math.max(1, subElements(part).length);
       } else {
         n += 8;
       }
@@ -31,10 +31,10 @@ function countStaleParagraphs(doc: EntryDoc): number {
   let stale = 0;
   for (const p of walkElements(doc.root)) {
     if (!elIs(p, "paragraph", "p")) continue;
-    const array = elementChildren(p).find((c) => elIs(c, "paragraph", "linesegarray"));
+    const array = subElements(p).find((c) => elIs(c, "paragraph", "linesegarray"));
     if (array === undefined) continue;
     const limit = maxLineStart(p);
-    const beyond = elementChildren(array).some((seg) => {
+    const beyond = subElements(array).some((seg) => {
       const pos = attrValue(seg, "textpos");
       return pos !== undefined && /^\d+$/.test(pos) && Number(pos) > limit;
     });

@@ -1,4 +1,4 @@
-import { attrValue, elementChildren, type XElement } from "../xml/tree.ts";
+import { attrValue, subElements, type XElement } from "../xml/tree.ts";
 import type { IssueLog } from "./types.ts";
 
 // 개체(표·도형 등) 요소: id/instId 검사 대상
@@ -83,11 +83,11 @@ function instIdOf(el: XElement): string | undefined {
 }
 
 function firstChild(el: XElement, local: string): XElement | undefined {
-  return elementChildren(el).find((c) => c.local === local);
+  return subElements(el).find((c) => c.local === local);
 }
 
 function checkTable(tbl: XElement, fname: string, log: IssueLog): void {
-  const rows = elementChildren(tbl).filter((c) => c.local === "tr");
+  const rows = subElements(tbl).filter((c) => c.local === "tr");
   const rowAttr = attrValue(tbl, "rowCnt");
   const colAttr = attrValue(tbl, "colCnt");
   const rowCnt = toInt(rowAttr);
@@ -101,7 +101,7 @@ function checkTable(tbl: XElement, fname: string, log: IssueLog): void {
   }
   let maxcol = 0;
   for (const tr of rows) {
-    for (const tc of elementChildren(tr)) {
+    for (const tc of subElements(tr)) {
       if (tc.local !== "tc") continue;
       const addr = firstChild(tc, "cellAddr");
       const span = firstChild(tc, "cellSpan");
@@ -128,7 +128,7 @@ function checkTable(tbl: XElement, fname: string, log: IssueLog): void {
 }
 
 /** 구역 XML을 문서 순서로 훑어 인스턴스 ID·필드·책갈피·표 구조를 모은다. */
-export function walkSection(root: XElement, fname: string, log: IssueLog, acc: Acc): void {
+export function scanSectionBody(root: XElement, fname: string, log: IssueLog, acc: Acc): void {
   const anc: string[] = [];
   const rec = (el: XElement, tdepth: number): void => {
     const tag = el.local;
@@ -164,7 +164,7 @@ export function walkSection(root: XElement, fname: string, log: IssueLog, acc: A
     // 모르는 컨트롤
     const known = tag === "run" ? RUN_KNOWN : tag === "ctrl" ? CTRL_KNOWN : tag === "t" ? T_KNOWN : undefined;
     if (known !== undefined) {
-      for (const c of elementChildren(el)) {
+      for (const c of subElements(el)) {
         if (!known.has(c.local)) bump(acc.unknown, `${tag}/${c.local}`);
       }
     }
@@ -177,7 +177,7 @@ export function walkSection(root: XElement, fname: string, log: IssueLog, acc: A
       checkTable(el, fname, log);
     }
     anc.push(tag);
-    for (const c of elementChildren(el)) rec(c, depth);
+    for (const c of subElements(el)) rec(c, depth);
     anc.pop();
   };
   rec(root, 0);

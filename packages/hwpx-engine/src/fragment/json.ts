@@ -3,6 +3,7 @@ import { decodeEntities } from "../xml/chars.ts";
 import type {
   Fragment,
   FragmentBinary,
+  FragmentDangling,
   FragmentRef,
   FragmentResource,
   InstanceIdRole,
@@ -140,6 +141,12 @@ export function parseFragment(json: string): Fragment {
     lineSegSpans: list(o, "lineSegSpans", "조각").map((v, i) => span(obj(v, `lineSegSpans[${i}]`), `lineSegSpans[${i}]`)),
     texts: list(o, "texts", "조각").map((t) => (typeof t === "string" ? t : fail("texts가 문자열 배열이 아닙니다"))),
     prints: list(o, "prints", "조각").map((t) => (typeof t === "string" ? t : fail("prints가 문자열 배열이 아닙니다"))),
+    // 이전 형식 조각에는 없다(없으면 빈 목록: 상속한 없는 참조를 모르는 채로 읽는다)
+    dangling: o["dangling"] === undefined ? [] : list(o, "dangling", "조각").map((v, i): FragmentDangling => {
+      const p = `dangling[${i}]`;
+      const x = obj(v, p);
+      return { kind: str(x, "kind", p), id: str(x, "id", p), count: int(x, "count", p) };
+    }),
     census: {
       paragraphs: int(census, "paragraphs", "census"),
       tables: int(census, "tables", "census"),

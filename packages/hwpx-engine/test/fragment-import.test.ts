@@ -16,6 +16,8 @@ import {
   rewriteArchive,
   selectTable,
   serializeFragment,
+  compareToBaseline,
+  validateDocument,
   walkParagraphs,
   type EditPlan,
   type Fragment,
@@ -836,15 +838,26 @@ test("7.5-1 header 쪽 접두사도 확인한다: 추가할 자원의 접두사�
   assert.equal(r.result.issues.filter((i) => i.severity === "error").length, 0);
 });
 
-test("7.5-2 대상 header에 해당 목록 요소가 없으면 FRAG_NO_LIST이다", () => {
+test("7.5-2 대상 header에 해당 목록 요소가 없으면 만든다(캠페인에 따른 수정 1). refList가 없을 때만 FRAG_NO_LIST이다", () => {
   const f = extractFragment(loadDoc("D5"), sel(4, 6));
-  // 합성 최소 header에는 tabProperties·numberings·bullets가 없고 글꼴은 HANGUL만 있다
+  // 합성 최소 header에는 tabProperties·numberings·bullets가 없고 글꼴은 HANGUL만 있다: 이전에는 이 때문에 거절했다
   const target = parseSynthetic(['<hp:p paraPrIDRef="0" styleIDRef="0"/>']);
+  const r = runDocs(loadDoc("D5"), 4, 6, target, endOf(target));
+  assert.ok(f.resources.some((x) => x.kind === "tabPr"), "조각이 탭 정의를 쓴다");
+  assert.ok(r.result.header.text.includes("<hh:tabProperties itemCnt="), "tabProperties를 만들었다");
+  const latin = f.resources.filter((x) => x.kind === "font" && x.lang === "LATIN").length;
+  assert.ok(latin > 0, "조각이 LATIN 글꼴을 쓴다");
+  assert.equal(r.result.header.resources["font"]?.filter((x) => x.lang === "LATIN").length, latin, "없던 LATIN 글꼴 목록도 만들었다");
+  assert.deepEqual(validateDocument(r.bytes).warnings.filter((w) => w.code === "RES_ITEMCNT"), [], "개수 속성이 맞다");
+  assertSameTextAndFormat(r, "목록 만들기");
+  assert.deepEqual(compareToBaseline(validateDocument(target.pkg.bytes), validateDocument(r.bytes)).newErrors, [], "검사기 새 오류 0");
+  assert.doesNotThrow(() => planImport(loadDoc("D1"), f, at(0)));
+  // 만들 자리(refList)가 없는 header는 지금처럼 거절한다
+  const noRefList = parseSynthetic(['<hp:p paraPrIDRef="0" styleIDRef="0"/>'], MINIMAL_HEADER.replace(/<hh:refList>[\s\S]*<\/hh:refList>/, ""));
   assert.throws(
-    () => planImport(target, f, at(0)),
+    () => planImport(noRefList, f, at(0)),
     (e: unknown) => e instanceof HwpxError && e.code === "FRAG_NO_LIST" && e.where === HEADER,
   );
-  assert.doesNotThrow(() => planImport(loadDoc("D1"), f, at(0)));
 });
 
 test("7.5-2 자기 닫힘 목록(<hh:tabProperties itemCnt=\"0\"/>)은 펼치고 개수를 추가한 만큼으로 한다. 새 id는 0부터 준다", () => {

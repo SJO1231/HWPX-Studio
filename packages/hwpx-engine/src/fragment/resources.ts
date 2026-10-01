@@ -2,7 +2,7 @@ import type { HwpxDocument, ResourceItem, ResourceRef } from "../model/types.ts"
 import { findEntry, readEntry } from "../package/zip-read.ts";
 import type { XAttr } from "../xml/tokenizer.ts";
 import { attrNode, isElement, walkElements, type XElement } from "../xml/tree.ts";
-import { isNoRef, sha256Hex } from "./util.ts";
+import { isNoRefOf, sha256Hex } from "./util.ts";
 
 /** 지문 계산이 다른 자원과 이진 자료를 찾는 방법 */
 export type FingerprintLookup = {
@@ -43,7 +43,7 @@ export function makeLookup(doc: HwpxDocument): FingerprintLookup {
 
 /**
  * 자원이 가리키는 다른 자원·이진 자료. 모델의 ResourceRef에 더해, 이진 자료를 가리키는 `binaryItemIDRef`(예: 이미지 채우기)와
- * 번호·글머리표 모양이 가리키는 글자모양(`charPrIDRef`)도 의존으로 본다. "참조 없음" 관례값은 뺀다.
+ * 번호·글머리표 모양이 가리키는 글자모양(`charPrIDRef`)도 의존으로 본다. "참조 없음"(관례값, 빈 이진 자료 참조)은 뺀다.
  */
 export function resourceRefs(item: ResourceItem): ResourceRef[] {
   const refs: ResourceRef[] = [...item.refs];
@@ -55,7 +55,7 @@ export function resourceRefs(item: ResourceItem): ResourceRef[] {
       }
     }
   }
-  return refs.filter((r) => !isNoRef(r.id));
+  return refs.filter((r) => !isNoRefOf(r.kind, r.id));
 }
 
 // ── 지문 ────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 import type { XElement } from "../xml/tree.ts";
-import { attrNode, attrValue, childEl, elementChildren, elIs, nsRole, walkElements } from "../xml/tree.ts";
+import { attrNode, attrValue, childEl, subElements, elIs, nsRole, walkElements } from "../xml/tree.ts";
 import {
   FONT_LANGS,
   type CountSlot,
@@ -87,7 +87,7 @@ function countSlot(list: XElement, kind: ResourceKind, attrName: string, lang?: 
     element: list,
     attr,
     value: Number(attr.value),
-    actual: elementChildren(list).length,
+    actual: subElements(list).length,
   };
   if (lang !== undefined) slot.lang = lang;
   return slot;
@@ -105,16 +105,16 @@ export function parseHeader(text: string, root: XElement): HeaderModel {
   }
 
   const refList = childEl(root, "head", "refList");
-  for (const list of refList === undefined ? [] : elementChildren(refList)) {
+  for (const list of refList === undefined ? [] : subElements(refList)) {
     if (elIs(list, "head", "fontfaces")) {
       const slot = countSlot(list, "font", "itemCnt");
       if (slot !== null) counts.push(slot);
-      for (const face of elementChildren(list)) {
+      for (const face of subElements(list)) {
         if (!elIs(face, "head", "fontface")) continue;
         const lang = attrValue(face, "lang") ?? "";
         const faceSlot = countSlot(face, "font", "fontCnt", lang);
         if (faceSlot !== null) counts.push(faceSlot);
-        for (const font of elementChildren(face)) {
+        for (const font of subElements(face)) {
           if (!elIs(font, "head", "font")) continue;
           add({ kind: "font", lang, id: attrValue(font, "id") ?? "", element: font, refs: [] });
         }
@@ -125,7 +125,7 @@ export function parseHeader(text: string, root: XElement): HeaderModel {
     const kind = known === undefined ? `other:${list.local}` : known[0];
     const slot = countSlot(list, kind, "itemCnt");
     if (slot !== null) counts.push(slot);
-    const items = elementChildren(list);
+    const items = subElements(list);
     items.forEach((item, index) => {
       if (known !== undefined && !elIs(item, "head", known[1])) return;
       add({ kind, id: attrValue(item, "id") ?? String(index), element: item, refs: refsOf(kind, item) });

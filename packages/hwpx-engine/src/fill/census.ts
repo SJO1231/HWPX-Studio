@@ -1,6 +1,6 @@
 import { makeIssue, type Issue } from "../errors.ts";
 import type { HwpxDocument } from "../model/types.ts";
-import { newAcc, walkSection } from "../validate/structure.ts";
+import { newAcc, scanSectionBody } from "../validate/structure.ts";
 import { IssueLog, type Census } from "../validate/types.ts";
 import type { XElement } from "../xml/tree.ts";
 
@@ -42,7 +42,7 @@ export function addDelta(a: Delta, b: Delta): Delta {
 function censusOfRoots(roots: Iterable<XElement>, entry: string): Census {
   const acc = newAcc();
   const log = new IssueLog();
-  for (const root of roots) walkSection(root, entry, log, acc);
+  for (const root of roots) scanSectionBody(root, entry, log, acc);
   return {
     paragraphs: acc.paragraphs,
     tables: acc.tables,

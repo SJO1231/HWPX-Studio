@@ -1,16 +1,16 @@
 import { deflateRawSync } from "node:zlib";
 import type { EditPlan, SpanEdit } from "../edit/plan.ts";
 import { HwpxError, makeIssue, type Issue } from "../errors.ts";
-import type { HeaderModel, HwpxDocument } from "../model/types.ts";
+import { FONT_LANGS, type HeaderModel, type HwpxDocument } from "../model/types.ts";
 import type { HwpxPackage } from "../package/open.ts";
 import { findEntry, readEntry } from "../package/zip-read.ts";
 import { decodeEntities, escapeAttr } from "../xml/chars.ts";
 import { parseXmlBytes } from "../xml/parse.ts";
-import { attrNode, attrValue, childEl, childEls, elementChildren, elIs, nsRole, walkElements, type XElement } from "../xml/tree.ts";
+import { attrNode, attrValue, childEl, childEls, subElements, elIs, nsRole, walkElements, type XElement } from "../xml/tree.ts";
 import { validateFragment } from "./json.ts";
 import { createFingerprinter, makeLookup, resourceRefs } from "./resources.ts";
 import { paragraphsAt, sectionAt } from "./select.ts";
-import type { Fragment, FragmentResource, InsertPoint } from "./types.ts";
+import type { Fragment, FragmentResource, ImportOptions, ImportPlan, InheritedDuplicate, InsertPoint } from "./types.ts";
 import { applyReps, isNoRef, missingDeclarations, scanInstanceAttrs, sha256Hex, type Rep } from "./util.ts";
 
 // 자원 종류 → header의 목록 요소(local 이름)
@@ -24,6 +24,17 @@ const LIST_NAME: Record<string, string> = {
   style: "styles",
 };
 
+// refList 안에서 관측한 목록 순서(한컴 저장본·합성 시험 문서 공통). 새 목록은 자기보다 순서가 뒤인 첫 목록 앞에 둔다. 그 밖의 목록(메모 모양 등)은 맨 뒤다.
+const LIST_ORDER = ["fontfaces", "borderFills", "charProperties", "tabProperties", "numberings", "bullets", "paraProperties", "styles"];
+const listRank = (local: string): number => {
+  const i = LIST_ORDER.indexOf(local);
+  return i < 0 ? LIST_ORDER.length : i;
+};
+const langRank = (lang: string | undefined): number => {
+  const i = FONT_LANGS.findIndex((l) => l === lang);
+  return i < 0 ? FONT_LANGS.length : i;
+};
+
 const MAX_ID = 4294967295;
 const isNumericId = (v: string): boolean => /^\d+$/.test(v) && Number(v) < MAX_ID;
 const refKey = (kind: string, lang: string | undefined, id: string): string => JSON.stringify([kind, lang ?? "", id]);
@@ -31,7 +42,7 @@ const refKey = (kind: string, lang: string | undefined, id: string): string => J
 export function findList(header: HeaderModel, kind: string, lang: string | undefined): XElement | undefined {
   const refList = childEl(header.root, "head", "refList");
   if (refList === undefined) return undefined;
-  for (const list of elementChildren(refList)) {
+  for (const list of subElements(refList)) {
     if (kind === "font") {
       if (!elIs(list, "head", "fontfaces")) continue;
       const face = childEls(list, "head", "fontface").find((f) => attrValue(f, "lang") === lang);
@@ -45,8 +56,30 @@ export function findList(header: HeaderModel, kind: string, lang: string | undef
 
 // ── 자원 대응 ───────────────────────────────────────────────────
 
-type AddedResource = { res: FragmentResource; newId: string; newName?: string; list: XElement };
+/**
+ * 대상 header에 없어 새로 만들 목록. 글꼴은 `fontfaces` 안의 언어별 `fontface`, 그 밖은 `refList` 안의 목록 요소다.
+ * 요소 이름은 종류별로 정해져 있고(`LIST_NAME`) 접두사는 가져오는 항목 원문의 것을 따른다.
+ */
+type NewList = { create: true; kind: string; lang: string | undefined; qname: string; parent: XElement };
+type TargetList = XElement | NewList;
+type AddedResource = { res: FragmentResource; newId: string; newName?: string; list: TargetList };
 type ResourcePlan = { ids: Map<string, string>; added: AddedResource[] };
+
+const isNewList = (list: TargetList): list is NewList => "create" in list;
+
+/** 새 목록을 만든다. 만들 자리(`refList`, 글꼴은 `fontfaces`)가 대상에 없으면 `FRAG_NO_LIST`. */
+function makeNewList(target: HwpxDocument, res: FragmentResource): NewList {
+  const refList = childEl(target.header.root, "head", "refList");
+  const parent = res.kind === "font" && refList !== undefined ? childEl(refList, "head", "fontfaces") : refList;
+  const name = res.kind === "font" ? "fontface" : LIST_NAME[res.kind];
+  if (parent === undefined || name === undefined) {
+    const where = res.lang === undefined ? res.kind : `${res.kind}(${res.lang})`;
+    throw new HwpxError("FRAG_NO_LIST", `대상 header에 ${where} 목록이 없고 만들 자리도 없어 자원 ${res.id}을(를) 넣을 수 없습니다.`, target.pkg.headerEntry);
+  }
+  const itemName = /^<([^\s/>]+)/.exec(res.xml)?.[1] ?? "";
+  const prefix = itemName.includes(":") ? itemName.slice(0, itemName.indexOf(":") + 1) : "";
+  return { create: true, kind: res.kind, lang: res.lang, qname: `${prefix}${name}`, parent };
+}
 
 /** 조각 자원을 대상의 같은 지문 자원에 대응시키거나 새 id를 준다. */
 function mapResources(target: HwpxDocument, fragment: Fragment): ResourcePlan {
@@ -78,6 +111,7 @@ function mapResources(target: HwpxDocument, fragment: Fragment): ResourcePlan {
   };
 
   const styleNames = new Set((target.header.resources["style"] ?? []).flatMap((s) => attrValue(s.element, "name") ?? []));
+  const created = new Map<string, NewList>();
   const ids = new Map<string, string>();
   const added: AddedResource[] = [];
   for (const res of fragment.resources) {
@@ -87,10 +121,11 @@ function mapResources(target: HwpxDocument, fragment: Fragment): ResourcePlan {
     if (known !== undefined && known.length > 0) {
       newId = known.includes(res.id) ? res.id : (known[0] ?? res.id);
     } else {
-      const list = findList(target.header, res.kind, res.lang);
+      const key = refKey(res.kind, res.lang, "");
+      let list: TargetList | undefined = findList(target.header, res.kind, res.lang) ?? created.get(key);
       if (list === undefined) {
-        const where = res.lang === undefined ? res.kind : `${res.kind}(${res.lang})`;
-        throw new HwpxError("FRAG_NO_LIST", `대상 header에 ${where} 목록이 없어 자원 ${res.id}을(를) 넣을 수 없습니다.`, target.pkg.headerEntry);
+        list = makeNewList(target, res);
+        created.set(key, list);
       }
       newId = String(group.next++);
       group.byFp.set(res.fingerprint, [newId]);
@@ -188,7 +223,7 @@ export function listEdits(header: HeaderModel, headerEntry: string, list: XEleme
       reason,
     });
   } else {
-    const last = elementChildren(list).at(-1);
+    const last = subElements(list).at(-1);
     const at = last === undefined ? list.openEnd : last.end;
     edits.push({ entry: headerEntry, start: at, end: at, expected: "", replacement: text, reason });
   }
@@ -202,6 +237,51 @@ export function listEdits(header: HeaderModel, headerEntry: string, list: XEleme
       replacement: String(slot.actual + items.length),
       reason: `${list.local} 개수 속성 갱신`,
     });
+  }
+  return edits;
+}
+
+/**
+ * 대상에 없던 목록을 만드는 편집들. 목록은 부모(`refList`, 글꼴은 `fontfaces`) 안에서 자기보다 순서가 뒤인 첫 목록 앞에 놓고,
+ * 없으면 맨 뒤에 놓는다. 같은 자리의 삽입은 계획 순서를 지키므로 순서가 앞선 목록부터 낸다. 새 `fontface`를 만들면 `fontfaces`의 개수 속성도 고친다.
+ * 개수 속성(`itemCnt`, 글꼴은 `fontCnt`)은 새로 넣는다.
+ */
+function newListEdits(header: HeaderModel, headerEntry: string, groups: { list: NewList; items: string[]; reason: string }[]): SpanEdit[] {
+  const rankOf = (nl: NewList): number => (nl.kind === "font" ? langRank(nl.lang) : listRank(LIST_NAME[nl.kind] ?? ""));
+  const edits: SpanEdit[] = [];
+  const byParent = new Map<XElement, { list: NewList; text: string; reason: string }[]>();
+  for (const g of [...groups].sort((a, b) => rankOf(a.list) - rankOf(b.list))) {
+    const nl = g.list;
+    const attrs = nl.kind === "font" ? ` lang="${escapeAttr(nl.lang ?? "")}" fontCnt="${g.items.length}"` : ` itemCnt="${g.items.length}"`;
+    const text = `<${nl.qname}${attrs}>${g.items.join("")}</${nl.qname}>`;
+    byParent.set(nl.parent, [...(byParent.get(nl.parent) ?? []), { list: nl, text, reason: g.reason }]);
+  }
+  for (const [parent, news] of byParent) {
+    const font = news[0]?.list.kind === "font";
+    if (parent.end === parent.openEnd) {
+      // 자식이 없는 `<부모/>`는 펼쳐 새 목록들을 순서대로 넣는다
+      const reason = news.map((n) => n.reason).join(", ");
+      edits.push({ entry: headerEntry, start: parent.openEnd - 2, end: parent.openEnd, expected: "/>", replacement: `>${news.map((n) => n.text).join("")}</${parent.qname}>`, reason });
+    } else {
+      const kids = subElements(parent);
+      for (const n of news) {
+        const own = rankOf(n.list);
+        const next = kids.find((k) => (font ? langRank(attrValue(k, "lang")) : listRank(k.local)) > own);
+        const at = next === undefined ? (kids.at(-1)?.end ?? parent.openEnd) : next.start;
+        edits.push({ entry: headerEntry, start: at, end: at, expected: "", replacement: n.text, reason: n.reason });
+      }
+    }
+    const slot = font ? header.counts.find((c) => c.element === parent) : undefined;
+    if (slot !== undefined) {
+      edits.push({
+        entry: headerEntry,
+        start: slot.attr.valueStart,
+        end: slot.attr.valueEnd,
+        expected: header.text.slice(slot.attr.valueStart, slot.attr.valueEnd),
+        replacement: String(slot.actual + news.length),
+        reason: `${parent.local} 개수 속성 갱신`,
+      });
+    }
   }
   return edits;
 }
@@ -247,7 +327,7 @@ function planBinaries(target: HwpxDocument, fragment: Fragment, edits: SpanEdit[
   const addedBySha = new Map<string, string>();
   const items: string[] = [];
   const located = locateManifest(pkg);
-  const lastItem = elementChildren(located.manifest).filter((el) => elIs(el, "opf", "item")).at(-1);
+  const lastItem = subElements(located.manifest).filter((el) => elIs(el, "opf", "item")).at(-1);
   if (lastItem === undefined) throw new HwpxError("PKG_MISSING", "content.hpf의 manifest에 항목이 없습니다.", located.entry);
 
   for (const b of fragment.binaries) {
@@ -301,8 +381,10 @@ const PARAGRAPH_PLACEHOLDERS = new Set(["", "0", "2147483648", "4294967295"]);
 /**
  * 객체·instId·누름틀 id(대상과 조각을 합친 가장 큰 숫자 + 1부터)와 문단 id(문단 id끼리의 최댓값 + 1부터)를 재발급한다.
  * 객체 계열은 대상에 있거나 자리값(0, 빈 값)이면 바꾸고, 문단 id는 자리값이 아니고 대상에 이미 있을 때만 바꾼다.
+ * `internal`이면 조각 안에서 겹치는 값도 첫 등장만 두고 바꾼다. 누름틀 끝은 짝인 시작(같은 id가 겹쳐 열렸으면 안쪽 시작이 먼저 닫히는 짝)이
+ * 새 id를 받았을 때 함께 바꾼다. `finals`는 `fragment.instanceIds`마다 가져온 뒤의 값이다.
  */
-function reissueIds(target: HwpxDocument, fragment: Fragment, reps: Rep[]): number {
+function reissueIds(target: HwpxDocument, fragment: Fragment, reps: Rep[], internal: boolean): { reissued: number; finals: string[] } {
   const used = { object: new Set<string>(), inst: new Set<string>(), fieldBegin: new Set<string>(), paragraph: new Set<string>() };
   let max = 0;
   let paragraphMax = 0;
@@ -325,31 +407,43 @@ function reissueIds(target: HwpxDocument, fragment: Fragment, reps: Rep[]): numb
   }
   for (const x of fragment.instanceIds) (x.role === "paragraph" ? noteParagraph : note)(x.value);
 
+  const finals = fragment.instanceIds.map((x) => x.value);
   let counter = max + 1;
   let reissued = 0;
-  const fieldIds = new Map<string, string>();
-  for (const x of fragment.instanceIds) {
-    if (x.role === "fieldEndRef" || x.role === "paragraph") continue;
+  const seen = { object: new Set<string>(), inst: new Set<string>(), fieldBegin: new Set<string>() };
+  const open = new Map<string, number[]>(); // 원래 id → 아직 닫히지 않은 시작의 서수(문서 순서)
+  const latest = new Map<string, string>(); // 원래 id → 가장 최근에 새 id를 받은 시작의 값(짝을 찾지 못한 끝용)
+  fragment.instanceIds.forEach((x, i) => {
+    if (x.role === "paragraph") return;
+    if (x.role === "fieldEndRef") {
+      const begin = open.get(x.value)?.pop();
+      const next = begin === undefined ? latest.get(x.value) : finals[begin];
+      if (next !== undefined && next !== x.value) {
+        reps.push({ start: x.start, end: x.end, text: next });
+        finals[i] = next;
+      }
+      return;
+    }
     const placeholder = x.role !== "fieldBegin" && (x.value === "0" || x.value === "");
-    if (!placeholder && !used[x.role].has(x.value)) continue;
+    const repeated = internal && seen[x.role].has(x.value);
+    seen[x.role].add(x.value);
+    if (x.role === "fieldBegin") open.set(x.value, [...(open.get(x.value) ?? []), i]);
+    if (!placeholder && !repeated && !used[x.role].has(x.value)) return;
     const next = String(counter++);
     reps.push({ start: x.start, end: x.end, text: next });
+    finals[i] = next;
     reissued++;
-    if (x.role === "fieldBegin") fieldIds.set(x.value, next);
-  }
-  // 누름틀의 끝은 짝인 시작이 새 id를 받았을 때 함께 바꾼다
-  for (const x of fragment.instanceIds) {
-    const next = x.role === "fieldEndRef" ? fieldIds.get(x.value) : undefined;
-    if (next !== undefined) reps.push({ start: x.start, end: x.end, text: next });
-  }
-  return reissued + reissueParagraphIds(fragment, used.paragraph, paragraphMax, reps);
+    if (x.role === "fieldBegin") latest.set(x.value, next);
+  });
+  return { reissued: reissued + reissueParagraphIds(fragment, used.paragraph, paragraphMax, reps, internal, finals), finals };
 }
 
 /**
- * 조각 문단의 id가 자리값이 아니고 대상에 이미 있으면 새 값으로 바꾼다(같은 문서에 다시 넣을 때 문단 id가 겹치지 않게).
- * 새 값은 `paragraphMax + 1`부터 문서 순서로 주되 자리값과 이미 쓰인 값은 건너뛴다. 4294967295에 닿으면 1부터 빈 값을 찾는다.
+ * 조각 문단의 id가 자리값이 아니고 대상에 이미 있으면(`internal`이면 조각 안에서 앞서 나온 값과 같을 때도) 새 값으로 바꾼다
+ * (같은 문서에 다시 넣을 때 문단 id가 겹치지 않게). 새 값은 `paragraphMax + 1`부터 문서 순서로 주되 자리값과 이미 쓰인 값은 건너뛴다.
+ * 4294967295에 닿으면 1부터 빈 값을 찾는다.
  */
-function reissueParagraphIds(fragment: Fragment, inTarget: Set<string>, paragraphMax: number, reps: Rep[]): number {
+function reissueParagraphIds(fragment: Fragment, inTarget: Set<string>, paragraphMax: number, reps: Rep[], internal: boolean, finals: string[]): number {
   const taken = new Set(inTarget);
   for (const x of fragment.instanceIds) if (x.role === "paragraph") taken.add(x.value);
   let counter = paragraphMax + 1;
@@ -364,12 +458,56 @@ function reissueParagraphIds(fragment: Fragment, inTarget: Set<string>, paragrap
     }
   };
   let reissued = 0;
-  for (const x of fragment.instanceIds) {
-    if (x.role !== "paragraph" || PARAGRAPH_PLACEHOLDERS.has(x.value) || !inTarget.has(x.value)) continue;
-    reps.push({ start: x.start, end: x.end, text: take() });
+  const seen = new Set<string>();
+  fragment.instanceIds.forEach((x, i) => {
+    if (x.role !== "paragraph" || PARAGRAPH_PLACEHOLDERS.has(x.value)) return;
+    const repeated = internal && seen.has(x.value);
+    seen.add(x.value);
+    if (!repeated && !inTarget.has(x.value)) return;
+    const next = take();
+    reps.push({ start: x.start, end: x.end, text: next });
+    finals[i] = next;
     reissued++;
-  }
+  });
   return reissued;
+}
+
+/**
+ * 가져온 뒤에도 조각 안에서 겹치는 id(대상과 부딪쳐 재발급한 것은 이미 갈라져 있어 없다)를 센다. 검사기가 세지 않는 값(빈 값, 문단 id의 자리값)은 뺀다.
+ */
+function inheritedDuplicates(fragment: Fragment, finals: string[]): InheritedDuplicate[] {
+  const counts = new Map<string, InheritedDuplicate>();
+  fragment.instanceIds.forEach((x, i) => {
+    if (x.role === "fieldEndRef") return;
+    const value = finals[i] ?? x.value;
+    if (value === "" || (x.role === "paragraph" && PARAGRAPH_PLACEHOLDERS.has(value))) return;
+    const key = JSON.stringify([x.role, value]);
+    const found = counts.get(key);
+    if (found === undefined) counts.set(key, { role: x.role, value, count: 1 });
+    else found.count++;
+  });
+  return [...counts.values()].filter((d) => d.count > 1);
+}
+
+const ROLE_LABEL: Record<InheritedDuplicate["role"], string> = { paragraph: "문단 id", object: "객체 id", inst: "instId", fieldBegin: "누름틀 id" };
+
+/**
+ * 삽입 지점이 표 셀 안이고 그 표가 글자처럼 취급(`treatAsChar="1"`)이거나 쪽 나눔이 없으면(`pageBreak="NONE"`) 그 사유를 돌려준다.
+ * 이런 표는 셀 높이가 늘지 않아 넣은 내용이 잘릴 수 있다(동작은 바꾸지 않고 경고만 한다).
+ */
+function cellClipReasons(anchor: XElement): string[] {
+  // 문단 → subList → tc → tr → tbl
+  const up = (el: XElement | null, n: number): XElement | null => (n === 0 || el === null ? el : up(el.parent, n - 1));
+  const subList = up(anchor, 1);
+  const tc = up(anchor, 2);
+  const table = up(anchor, 4);
+  if (subList === null || tc === null || table === null) return [];
+  if (!elIs(subList, "paragraph", "subList") || !elIs(tc, "paragraph", "tc") || !elIs(table, "paragraph", "tbl")) return [];
+  const reasons: string[] = [];
+  const pos = childEl(table, "paragraph", "pos");
+  if ((attrValue(table, "treatAsChar") ?? (pos === undefined ? undefined : attrValue(pos, "treatAsChar"))) === "1") reasons.push('treatAsChar="1"(글자처럼 취급)');
+  if (attrValue(table, "pageBreak") === "NONE") reasons.push('pageBreak="NONE"(쪽 나눔 없음)');
+  return reasons;
 }
 
 function renameBookmarks(target: HwpxDocument, fragment: Fragment, reps: Rep[]): number {
@@ -400,9 +538,11 @@ function renameBookmarks(target: HwpxDocument, fragment: Fragment, reps: Rep[]):
 /**
  * 조각을 대상 문서의 삽입 지점에 넣는 편집 계획을 만든다. 대상 문서를 바꾸지 않고, 적용은 `applyPlan`이 한다.
  * 자원은 지문이 같은 것을 재사용하고 없으면 header 목록 끝에 추가한다. 조각 본문은 원문 그대로 옮기되
- * 참조 id·인스턴스 id·책갈피 이름의 속성값 구간만 바꾸고 줄 배치 캐시는 지운다.
+ * 참조 id·인스턴스 id·책갈피 이름의 속성값 구간만 바꾸고 줄 배치 캐시는 지운다. 대상에 없는 목록(글머리표 목록 등)은 만든다.
+ * 소스에서부터 조각이 갖고 있던 문제(조각 안에서 겹치는 id, 없는 대상을 가리키던 참조)는 계획의 `inherited`에 기록한다.
+ * `options.reissueInternalDuplicates`를 켜면 조각 안에서 겹치는 id도 첫 등장만 두고 새 값으로 바꾼다(기본은 끔: 소스 원문 그대로).
  */
-export function planImport(target: HwpxDocument, fragment: Fragment, at: InsertPoint): EditPlan {
+export function planImport(target: HwpxDocument, fragment: Fragment, at: InsertPoint, options: ImportOptions = {}): ImportPlan {
   validateFragment(fragment);
   const section = sectionAt(target, at.sectionIndex, "FRAG_INSERT_POINT");
   const siblings = paragraphsAt(section, at.parentPath, "FRAG_INSERT_POINT");
@@ -435,23 +575,32 @@ export function planImport(target: HwpxDocument, fragment: Fragment, at: InsertP
   // 2. 자원 대응과 header 편집
   const resources = mapResources(target, fragment);
   issues.push(...fillsDangling(target, resources.added));
-  const byList = new Map<XElement, { items: string[]; reason: string }>();
+  const byList = new Map<TargetList, { items: string[]; reason: string }>();
   const headerDeclarations = new Map<string, string>();
   for (const entry of resources.added) {
     const what = `자원 ${entry.res.kind} ${entry.res.id}`;
-    for (const [prefix, uri] of missingDeclarations(entry.res.prefixes, entry.res.namespaces, entry.list, headerEntry, what)) {
+    const scope = isNewList(entry.list) ? entry.list.parent : entry.list;
+    for (const [prefix, uri] of missingDeclarations(entry.res.prefixes, entry.res.namespaces, scope, headerEntry, what)) {
       const known = headerDeclarations.get(prefix);
       if (known !== undefined && nsRole(known) !== nsRole(uri)) {
         throw new HwpxError("FRAG_NS_MISMATCH", `${what}: 접두사 '${prefix}'가 자원마다 다른 역할입니다.`, headerEntry);
       }
       if (known === undefined) headerDeclarations.set(prefix, uri);
     }
-    const group = byList.get(entry.list) ?? { items: [], reason: `${entry.list.local}에 자원 추가` };
+    const group = byList.get(entry.list) ?? {
+      items: [],
+      reason: isNewList(entry.list) ? `${entry.list.qname} 목록을 만들고 자원 추가` : `${entry.list.local}에 자원 추가`,
+    };
     group.items.push(rewriteResource(entry, resources.ids, binaries.ids));
     byList.set(entry.list, group);
   }
   edits.push(...declarationEdit(headerEntry, target.header.root, headerDeclarations));
-  for (const [list, group] of byList) edits.push(...listEdits(target.header, headerEntry, list, group.items, group.reason));
+  const created: { list: NewList; items: string[]; reason: string }[] = [];
+  for (const [list, group] of byList) {
+    if (isNewList(list)) created.push({ list, ...group });
+    else edits.push(...listEdits(target.header, headerEntry, list, group.items, group.reason));
+  }
+  edits.push(...newListEdits(target.header, headerEntry, created));
 
   // 3~5. 본문 재작성
   const reps: Rep[] = [];
@@ -461,8 +610,32 @@ export function planImport(target: HwpxDocument, fragment: Fragment, at: InsertP
     if (to !== r.id) reps.push({ start: r.start, end: r.end, text: to });
   }
   for (const s of fragment.lineSegSpans) reps.push({ start: s.start, end: s.end, text: "" });
-  const reissuedIds = reissueIds(target, fragment, reps);
+  const reissue = reissueIds(target, fragment, reps, options.reissueInternalDuplicates === true);
   const renamedBookmarks = renameBookmarks(target, fragment, reps);
+
+  // 소스에서부터 있던 문제의 기록과 경고
+  const inherited = { duplicateIds: inheritedDuplicates(fragment, reissue.finals), danglingRefs: fragment.dangling.map((d) => ({ ...d })) };
+  for (const d of inherited.duplicateIds) {
+    issues.push(
+      makeIssue(
+        "warning",
+        "FRAG_INHERITED_DUP",
+        `${ROLE_LABEL[d.role]} ${d.value}이(가) 조각 안에서 ${d.count}번 쓰입니다. 소스에서 이미 겹쳐 있던 것을 그대로 옮깁니다.`,
+        section.entryName,
+      ),
+    );
+  }
+  const clip = cellClipReasons(anchor.element);
+  if (clip.length > 0) {
+    issues.push(
+      makeIssue(
+        "warning",
+        "FRAG_CELL_MAY_CLIP",
+        `표 셀 안에 넣습니다. 그 표가 ${clip.join(", ")}라 셀 높이가 늘지 않으면 넣은 내용이 잘릴 수 있습니다.`,
+        section.entryName,
+      ),
+    );
+  }
 
   // 7. 삽입
   const position = at.position === "before" ? anchor.element.start : anchor.element.end;
@@ -481,9 +654,10 @@ export function planImport(target: HwpxDocument, fragment: Fragment, at: InsertP
     summary: {
       reusedResources: fragment.resources.length - resources.added.length,
       addedResources: resources.added.length,
+      createdLists: created.length,
       reusedBinaries: binaries.reused,
       addedBinaries: binaries.added,
-      reissuedIds,
+      reissuedIds: reissue.reissued,
       renamedStyles: resources.added.filter((a) => a.newName !== undefined).length,
       renamedBookmarks,
       insertedParagraphs: fragment.census.paragraphs,
@@ -493,5 +667,6 @@ export function planImport(target: HwpxDocument, fragment: Fragment, at: InsertP
       insertedBookmarks: fragment.census.bookmarks,
     },
     issues,
+    inherited,
   };
 }

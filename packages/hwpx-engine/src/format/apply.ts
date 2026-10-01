@@ -1,7 +1,7 @@
 import type { EditPlan, SpanEdit } from "../edit/plan.ts";
 import { HwpxError } from "../errors.ts";
 import type { HwpxDocument, ParagraphNode, Piece, SectionModel } from "../model/types.ts";
-import { attrNode, elementChildren, elIs, walkElements, type XElement } from "../xml/tree.ts";
+import { attrNode, subElements, elIs, walkElements, type XElement } from "../xml/tree.ts";
 import { createDeriver } from "./derive.ts";
 import type { CharTarget, FormatDelta, ParaTarget } from "./types.ts";
 
@@ -72,7 +72,7 @@ type Split = {
 };
 
 function containerOf(run: XElement, piece: Piece): XElement {
-  const found = elementChildren(run).find((c) => c.start <= piece.start && piece.end <= c.end);
+  const found = subElements(run).find((c) => c.start <= piece.start && piece.end <= c.end);
   if (found === undefined) throw new HwpxError("FMT_INTERNAL", "조각을 담은 run의 자식 요소를 찾지 못했습니다.");
   return found;
 }

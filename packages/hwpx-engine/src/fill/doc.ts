@@ -1,6 +1,6 @@
 import { walkParagraphs } from "../model/paragraph.ts";
 import type { HwpxDocument, ObjectNode, ParagraphNode, Piece, SectionModel } from "../model/types.ts";
-import { elementChildren, elIs, walkElements, type XElement } from "../xml/tree.ts";
+import { subElements, elIs, walkElements, type XElement } from "../xml/tree.ts";
 
 /** 문단 주소 `[문단, 하위목록, 문단, ...]`(홀수 길이)가 가리키는 문단. */
 export function paragraphAtPath(section: SectionModel, path: number[]): ParagraphNode | undefined {
@@ -50,7 +50,7 @@ export const isTextPiece = (p: Piece): boolean => p.kind === "text" || p.kind ==
 function isStructural(o: ObjectNode): boolean {
   if (elIs(o.element, "paragraph", "secPr")) return true;
   if (!elIs(o.element, "paragraph", "ctrl")) return false;
-  const kids = elementChildren(o.element);
+  const kids = subElements(o.element);
   return kids.length > 0 && kids.every((k) => elIs(k, "paragraph", "colPr"));
 }
 
@@ -65,7 +65,7 @@ export function hasSecPr(p: ParagraphNode): boolean {
 }
 
 /** 요소 `el`의 이름 앞 접두사 표기(`hp:`). 접두사가 없으면 빈 문자열. */
-export const prefixOf = (el: XElement): string => (el.prefix === "" ? "" : `${el.prefix}:`);
+export const nsPrefixOf = (el: XElement): string => (el.prefix === "" ? "" : `${el.prefix}:`);
 
 /** 구역 최상위 문단들에서 그 종류의 객체가 나타나는 순서대로 모은다. */
 export function topLevelObjects(section: SectionModel, type: string): { paragraph: ParagraphNode; object: ObjectNode }[] {

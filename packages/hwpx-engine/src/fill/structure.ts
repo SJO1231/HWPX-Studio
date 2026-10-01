@@ -2,7 +2,7 @@ import type { SpanEdit } from "../edit/plan.ts";
 import type { ParagraphNode } from "../model/types.ts";
 import { escapeAttr, escapeText } from "../xml/chars.ts";
 import { attrNode, childEl, childEls, type XElement } from "../xml/tree.ts";
-import { prefixOf } from "./doc.ts";
+import { nsPrefixOf } from "./doc.ts";
 import { span, type Ctx, type Fail } from "./text.ts";
 
 // ── 표 행 삭제 ──────────────────────────────────────────────────
@@ -93,7 +93,7 @@ export function buildParagraphs(anchor: ParagraphNode, lines: string[], style: P
   if (!names.has("styleIDRef")) attrs.push(`styleIDRef="${escapeAttr(style.styleIDRef)}"`);
 
   const p = anchor.element.qname;
-  const prefix = prefixOf(anchor.element);
+  const prefix = nsPrefixOf(anchor.element);
   const run = `${prefix}run`;
   const t = `${prefix}t`;
   const open = `<${p} ${attrs.join(" ")}>`;
