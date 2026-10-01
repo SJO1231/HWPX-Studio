@@ -1,0 +1,19 @@
+# 의존성·산출물
+node_modules/
+dist/
+*.tsbuildinfo
+
+# 로컬 전용 검토 폴더(이전 실측 자료, 바이너리 포함)와 참고 자료
+hwpx-edit/
+참고자료/
+
+# 임시·검증 데이터, 원장, 로그
+.tmp/
+.verify-data/
+evidence/
+*.log
+ledger-*.json
+
+# 로컬 설정
+.claude/settings.local.json
+.env
