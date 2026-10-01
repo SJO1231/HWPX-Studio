@@ -1,0 +1,17 @@
+{
+  "name": "hwpx-studio",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "node --test \"packages/*/test/**/*.test.ts\" \"apps/*/test/**/*.test.ts\""
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.0",
+    "typescript": "^7.0.2"
+  }
+}

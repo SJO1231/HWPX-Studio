@@ -1,0 +1,1436 @@
+{
+  "generator": "tools/com/make_fixtures.py",
+  "hancom_version": "13, 0, 0, 711",
+  "documents": [
+    {
+      "file": "ph-single.hwpx",
+      "bytes": 14663,
+      "sha256": "d82f67ea02c5926a27b6e44f0a60f0739b676c82e8e497fcf252b8e8d57df52b",
+      "zip_entries": [
+        "mimetype",
+        "version.xml",
+        "Contents/header.xml",
+        "Contents/section0.xml",
+        "Preview/PrvText.txt",
+        "settings.xml",
+        "Preview/PrvImage.png",
+        "META-INF/container.rdf",
+        "Contents/content.hpf",
+        "META-INF/container.xml",
+        "META-INF/manifest.xml"
+      ],
+      "bindata_entries": [],
+      "section0": {
+        "paragraphs": 3,
+        "top_level_paragraphs": 3,
+        "runs": 4,
+        "text_nodes": 3,
+        "field_begin": 0,
+        "field_end": 0,
+        "tables": 0,
+        "pictures": 0,
+        "tabs": 0,
+        "headers": 0,
+        "footers": 0
+      },
+      "text_checks": {
+        "{{project.name}}": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "{{project.start}}": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "{{project.end}}": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        }
+      },
+      "top_level_paragraphs_detail": [
+        {
+          "text": "합성 시험 문서 (단일 서식)",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": []
+            },
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "합성 시험 문서 (단일 서식)"
+              ]
+            }
+          ]
+        },
+        {
+          "text": "사업명: {{project.name}} 입니다.",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "사업명: {{project.name}} 입니다."
+              ]
+            }
+          ]
+        },
+        {
+          "text": "기간: {{project.start}} ~ {{project.end}}",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "기간: {{project.start}} ~ {{project.end}}"
+              ]
+            }
+          ]
+        }
+      ],
+      "privacy_clean": true,
+      "observations": {
+        "placeholders": {
+          "{{project.name}}": {
+            "in_single_t": true,
+            "paragraphs_t_texts": [
+              [
+                "사업명: {{project.name}} 입니다."
+              ]
+            ]
+          },
+          "{{project.start}}": {
+            "in_single_t": true,
+            "paragraphs_t_texts": [
+              [
+                "기간: {{project.start}} ~ {{project.end}}"
+              ]
+            ]
+          },
+          "{{project.end}}": {
+            "in_single_t": true,
+            "paragraphs_t_texts": [
+              [
+                "기간: {{project.start}} ~ {{project.end}}"
+              ]
+            ]
+          }
+        }
+      },
+      "exact_text_mismatches": [],
+      "reopen": {
+        "ok": true,
+        "page_count": 1
+      }
+    },
+    {
+      "file": "ph-mixed.hwpx",
+      "bytes": 14423,
+      "sha256": "d9ba286a103802e9d1bbcd203b4cfc51b23f5807f144f2dd78ac7d46c2c9f6c6",
+      "zip_entries": [
+        "mimetype",
+        "version.xml",
+        "Contents/header.xml",
+        "Contents/section0.xml",
+        "Preview/PrvText.txt",
+        "settings.xml",
+        "Preview/PrvImage.png",
+        "META-INF/container.rdf",
+        "Contents/content.hpf",
+        "META-INF/container.xml",
+        "META-INF/manifest.xml"
+      ],
+      "bindata_entries": [],
+      "section0": {
+        "paragraphs": 3,
+        "top_level_paragraphs": 3,
+        "runs": 5,
+        "text_nodes": 4,
+        "field_begin": 0,
+        "field_end": 0,
+        "tables": 0,
+        "pictures": 0,
+        "tabs": 1,
+        "headers": 0,
+        "footers": 0
+      },
+      "text_checks": {
+        "{{project.name}}": {
+          "in_raw_section_xml": false,
+          "in_joined_paragraph_text": true
+        },
+        "{{company.name}}": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "{{manager.name}}": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "{{manager.phone}}": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        }
+      },
+      "top_level_paragraphs_detail": [
+        {
+          "text": "사업명: {{project.name}}",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": []
+            },
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "사업명: {{project."
+              ]
+            },
+            {
+              "charPrIDRef": "7",
+              "bold": true,
+              "content": [
+                "name}}"
+              ]
+            }
+          ]
+        },
+        {
+          "text": "회사명: {{company.name}}",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "회사명: {{company.name}}"
+              ]
+            }
+          ]
+        },
+        {
+          "text": "담당: {{manager.name}}\t{{manager.phone}}",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "담당: {{manager.name}}\t{{manager.phone}}"
+              ]
+            }
+          ]
+        }
+      ],
+      "privacy_clean": true,
+      "observations": {
+        "placeholders": {
+          "{{project.name}}": {
+            "in_single_t": false,
+            "paragraphs_t_texts": [
+              [
+                "사업명: {{project.",
+                "name}}"
+              ]
+            ]
+          },
+          "{{company.name}}": {
+            "in_single_t": true,
+            "paragraphs_t_texts": [
+              [
+                "회사명: {{company.name}}"
+              ]
+            ]
+          },
+          "{{manager.name}}": {
+            "in_single_t": true,
+            "paragraphs_t_texts": [
+              [
+                "담당: {{manager.name}}\t{{manager.phone}}"
+              ]
+            ]
+          },
+          "{{manager.phone}}": {
+            "in_single_t": true,
+            "paragraphs_t_texts": [
+              [
+                "담당: {{manager.name}}\t{{manager.phone}}"
+              ]
+            ]
+          }
+        },
+        "summary": {
+          "{{project.name}}": "여러 hp:t 로 쪼개짐",
+          "{{company.name}}": "한 hp:t 안에 통째로 있음",
+          "{{manager.name}}{탭}{{manager.phone}}": "탭은 hp:t 안의 hp:tab 요소"
+        }
+      },
+      "exact_text_mismatches": [],
+      "reopen": {
+        "ok": true,
+        "page_count": 1
+      }
+    },
+    {
+      "file": "ph-table.hwpx",
+      "bytes": 15346,
+      "sha256": "52c401901c664b9cea5b478fae01f53298f55d2970fc5488904b54b2fb206561",
+      "zip_entries": [
+        "mimetype",
+        "version.xml",
+        "Contents/header.xml",
+        "Contents/section0.xml",
+        "Preview/PrvText.txt",
+        "settings.xml",
+        "Preview/PrvImage.png",
+        "META-INF/container.rdf",
+        "Contents/content.hpf",
+        "META-INF/container.xml",
+        "META-INF/manifest.xml"
+      ],
+      "bindata_entries": [],
+      "section0": {
+        "paragraphs": 9,
+        "top_level_paragraphs": 3,
+        "runs": 10,
+        "text_nodes": 8,
+        "field_begin": 0,
+        "field_end": 0,
+        "tables": 1,
+        "pictures": 0,
+        "tabs": 0,
+        "headers": 0,
+        "footers": 0
+      },
+      "text_checks": {
+        "신청서": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "성명": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "{{applicant.name}}": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "연락처": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "비고": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "{{note}}": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "위와 같이 신청합니다.": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        }
+      },
+      "top_level_paragraphs_detail": [
+        {
+          "text": "신청서",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": []
+            },
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "신청서"
+              ]
+            }
+          ]
+        },
+        {
+          "text": "",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                {
+                  "el": "tbl"
+                },
+                ""
+              ]
+            }
+          ]
+        },
+        {
+          "text": "위와 같이 신청합니다.",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "위와 같이 신청합니다."
+              ]
+            }
+          ]
+        }
+      ],
+      "privacy_clean": true,
+      "observations": {
+        "placeholders": {
+          "{{applicant.name}}": {
+            "in_single_t": true,
+            "paragraphs_t_texts": [
+              [
+                "{{applicant.name}}"
+              ]
+            ]
+          },
+          "{{note}}": {
+            "in_single_t": true,
+            "paragraphs_t_texts": [
+              [
+                "{{note}}"
+              ]
+            ]
+          }
+        },
+        "tables": [
+          {
+            "rowCnt": "3",
+            "colCnt": "2",
+            "cells": [
+              {
+                "row": 0,
+                "col": 0,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "성명",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "성명"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "row": 0,
+                "col": 1,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "{{applicant.name}}",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "{{applicant.name}}"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "row": 1,
+                "col": 0,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "연락처",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "연락처"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "row": 1,
+                "col": 1,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": []
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "row": 2,
+                "col": 0,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "비고",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "비고"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "row": 2,
+                "col": 1,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "{{note}}",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "{{note}}"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "exact_text_mismatches": [],
+      "reopen": {
+        "ok": true,
+        "page_count": 1
+      }
+    },
+    {
+      "file": "field-states.hwpx",
+      "bytes": 14158,
+      "sha256": "3992770d4ddc5ff2607a88519b0ddfed10c779cb80690fdf00786421c839f9aa",
+      "zip_entries": [
+        "mimetype",
+        "version.xml",
+        "Contents/header.xml",
+        "Contents/section0.xml",
+        "Preview/PrvText.txt",
+        "settings.xml",
+        "Preview/PrvImage.png",
+        "META-INF/container.rdf",
+        "Contents/content.hpf",
+        "META-INF/container.xml",
+        "META-INF/manifest.xml"
+      ],
+      "bindata_entries": [],
+      "section0": {
+        "paragraphs": 3,
+        "top_level_paragraphs": 3,
+        "runs": 8,
+        "text_nodes": 9,
+        "field_begin": 3,
+        "field_end": 3,
+        "tables": 0,
+        "pictures": 0,
+        "tabs": 0,
+        "headers": 0,
+        "footers": 0
+      },
+      "text_checks": {
+        "성명: ": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "소속: ": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "확인자 성명: ": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "합성기관": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "이름을 입력": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "소속 입력": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": false
+        }
+      },
+      "top_level_paragraphs_detail": [
+        {
+          "text": "성명: 이름을 입력",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": []
+            },
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "성명: ",
+                {
+                  "el": "fieldBegin"
+                }
+              ]
+            },
+            {
+              "charPrIDRef": "7",
+              "bold": false,
+              "content": [
+                "이름을 입력"
+              ]
+            },
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                {
+                  "el": "fieldEnd"
+                },
+                ""
+              ]
+            }
+          ]
+        },
+        {
+          "text": "소속: 합성기관",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "소속: ",
+                {
+                  "el": "fieldBegin"
+                },
+                "합성기관",
+                {
+                  "el": "fieldEnd"
+                },
+                ""
+              ]
+            }
+          ]
+        },
+        {
+          "text": "확인자 성명: 이름을 입력",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "확인자 성명: ",
+                {
+                  "el": "fieldBegin"
+                }
+              ]
+            },
+            {
+              "charPrIDRef": "7",
+              "bold": false,
+              "content": [
+                "이름을 입력"
+              ]
+            },
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                {
+                  "el": "fieldEnd"
+                },
+                ""
+              ]
+            }
+          ]
+        }
+      ],
+      "privacy_clean": true,
+      "observations": {
+        "fields": [
+          {
+            "name": "성명",
+            "type": "CLICK_HERE",
+            "dirty": "0",
+            "editable": "1",
+            "params": {
+              "Prop": "9",
+              "Command": "Clickhere:set:48:Direction:wstring:6:이름을 입력 HelpState:wstring:0:  ",
+              "Direction": "이름을 입력"
+            },
+            "t_between": [
+              {
+                "text": "이름을 입력",
+                "charPrIDRef": "7",
+                "charPr": {
+                  "textColor": "#FF0000",
+                  "children": [
+                    "fontRef",
+                    "ratio",
+                    "spacing",
+                    "relSz",
+                    "offset",
+                    "italic",
+                    "underline",
+                    "strikeout",
+                    "outline",
+                    "shadow"
+                  ]
+                }
+              }
+            ],
+            "has_t_between": true,
+            "has_t_element_between": true
+          },
+          {
+            "name": "소속",
+            "type": "CLICK_HERE",
+            "dirty": "1",
+            "editable": "1",
+            "params": {
+              "Prop": "9",
+              "Command": "Clickhere:set:47:Direction:wstring:5:소속 입력 HelpState:wstring:0:  ",
+              "Direction": "소속 입력"
+            },
+            "t_between": [
+              {
+                "text": "합성기관",
+                "charPrIDRef": "0",
+                "charPr": {
+                  "textColor": "#000000",
+                  "children": [
+                    "fontRef",
+                    "ratio",
+                    "spacing",
+                    "relSz",
+                    "offset",
+                    "underline",
+                    "strikeout",
+                    "outline",
+                    "shadow"
+                  ]
+                }
+              }
+            ],
+            "has_t_between": true,
+            "has_t_element_between": true
+          },
+          {
+            "name": "성명",
+            "type": "CLICK_HERE",
+            "dirty": "0",
+            "editable": "1",
+            "params": {
+              "Prop": "9",
+              "Command": "Clickhere:set:48:Direction:wstring:6:이름을 입력 HelpState:wstring:0:  ",
+              "Direction": "이름을 입력"
+            },
+            "t_between": [
+              {
+                "text": "이름을 입력",
+                "charPrIDRef": "7",
+                "charPr": {
+                  "textColor": "#FF0000",
+                  "children": [
+                    "fontRef",
+                    "ratio",
+                    "spacing",
+                    "relSz",
+                    "offset",
+                    "italic",
+                    "underline",
+                    "strikeout",
+                    "outline",
+                    "shadow"
+                  ]
+                }
+              }
+            ],
+            "has_t_between": true,
+            "has_t_element_between": true
+          }
+        ]
+      },
+      "exact_text_mismatches": [],
+      "reopen": {
+        "ok": true,
+        "page_count": 1,
+        "field_list": [
+          "성명",
+          "소속",
+          "성명"
+        ],
+        "field_text": {
+          "성명": "",
+          "소속": "합성기관"
+        }
+      }
+    },
+    {
+      "file": "picture.hwpx",
+      "bytes": 13993,
+      "sha256": "6c296b69bd14acb5032d9deeaeb61f1a780298b5af47c3d736724fa9ede32929",
+      "zip_entries": [
+        "mimetype",
+        "version.xml",
+        "Contents/header.xml",
+        "BinData/image1.png",
+        "Contents/section0.xml",
+        "Preview/PrvText.txt",
+        "settings.xml",
+        "Preview/PrvImage.png",
+        "META-INF/container.rdf",
+        "Contents/content.hpf",
+        "META-INF/container.xml",
+        "META-INF/manifest.xml"
+      ],
+      "bindata_entries": [
+        "BinData/image1.png"
+      ],
+      "section0": {
+        "paragraphs": 3,
+        "top_level_paragraphs": 3,
+        "runs": 4,
+        "text_nodes": 3,
+        "field_begin": 0,
+        "field_end": 0,
+        "tables": 0,
+        "pictures": 1,
+        "tabs": 0,
+        "headers": 0,
+        "footers": 0
+      },
+      "text_checks": {
+        "그림 앞 문단": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "그림 뒤 문단": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        }
+      },
+      "top_level_paragraphs_detail": [
+        {
+          "text": "그림 앞 문단",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": []
+            },
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "그림 앞 문단"
+              ]
+            }
+          ]
+        },
+        {
+          "text": "",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                {
+                  "el": "pic"
+                },
+                ""
+              ]
+            }
+          ]
+        },
+        {
+          "text": "그림 뒤 문단",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "그림 뒤 문단"
+              ]
+            }
+          ]
+        }
+      ],
+      "privacy_clean": true,
+      "observations": {
+        "content_hpf_bindata_items": [
+          {
+            "id": "image1",
+            "href": "BinData/image1.png",
+            "media-type": "image/png",
+            "isEmbeded": "1",
+            "hashkey": "wJlEA7xJa9OFnirGfAdynw=="
+          }
+        ],
+        "pics": [
+          {
+            "binaryItemIDRef": "image1",
+            "sz": {
+              "width": "4800",
+              "widthRelTo": "ABSOLUTE",
+              "height": "4800",
+              "heightRelTo": "ABSOLUTE",
+              "protect": "0"
+            },
+            "orgSz": {
+              "width": "4800",
+              "height": "4800"
+            },
+            "treatAsChar": "1",
+            "shapeComment": [
+              "그림입니다.",
+              "원본 그림의 이름: synthetic-64x64.png",
+              "원본 그림의 크기: 가로 64pixel, 세로 64pixel"
+            ]
+          }
+        ]
+      },
+      "exact_text_mismatches": [],
+      "reopen": {
+        "ok": true,
+        "page_count": 1
+      }
+    },
+    {
+      "file": "blocks.hwpx",
+      "bytes": 16127,
+      "sha256": "415c0ad2a19da33a90b65a8f64a7118b7e13750c85207e78273eaefc5b7bb3ef",
+      "zip_entries": [
+        "mimetype",
+        "version.xml",
+        "Contents/header.xml",
+        "Contents/section0.xml",
+        "Preview/PrvText.txt",
+        "settings.xml",
+        "Preview/PrvImage.png",
+        "META-INF/container.rdf",
+        "Contents/content.hpf",
+        "META-INF/container.xml",
+        "META-INF/manifest.xml"
+      ],
+      "bindata_entries": [],
+      "section0": {
+        "paragraphs": 15,
+        "top_level_paragraphs": 6,
+        "runs": 16,
+        "text_nodes": 15,
+        "field_begin": 0,
+        "field_end": 0,
+        "tables": 1,
+        "pictures": 0,
+        "tabs": 0,
+        "headers": 0,
+        "footers": 0
+      },
+      "text_checks": {
+        "1. 개요": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "개요 본문입니다.": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "2. 선택 조항": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "선택 조항 본문입니다. (해당 시)": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "구분": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "내용": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "비고": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "A": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "가": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "B": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "나": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "3. 끝": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        }
+      },
+      "top_level_paragraphs_detail": [
+        {
+          "text": "1. 개요",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": []
+            },
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "1. 개요"
+              ]
+            }
+          ]
+        },
+        {
+          "text": "개요 본문입니다.",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "개요 본문입니다."
+              ]
+            }
+          ]
+        },
+        {
+          "text": "2. 선택 조항",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "2. 선택 조항"
+              ]
+            }
+          ]
+        },
+        {
+          "text": "선택 조항 본문입니다. (해당 시)",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "선택 조항 본문입니다. (해당 시)"
+              ]
+            }
+          ]
+        },
+        {
+          "text": "",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                {
+                  "el": "tbl"
+                },
+                ""
+              ]
+            }
+          ]
+        },
+        {
+          "text": "3. 끝",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "3. 끝"
+              ]
+            }
+          ]
+        }
+      ],
+      "privacy_clean": true,
+      "observations": {
+        "tables": [
+          {
+            "rowCnt": "3",
+            "colCnt": "3",
+            "cells": [
+              {
+                "row": 0,
+                "col": 0,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "구분",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "구분"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "row": 0,
+                "col": 1,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "내용",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "내용"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "row": 0,
+                "col": 2,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "비고",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "비고"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "row": 1,
+                "col": 0,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "A",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "A"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "row": 1,
+                "col": 1,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "가",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "가"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "row": 1,
+                "col": 2,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "-",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "-"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "row": 2,
+                "col": 0,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "B",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "B"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "row": 2,
+                "col": 1,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "나",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "나"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "row": 2,
+                "col": 2,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "-",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "-"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "exact_text_mismatches": [],
+      "reopen": {
+        "ok": true,
+        "page_count": 1
+      }
+    },
+    {
+      "file": "header-footer.hwpx",
+      "bytes": 13649,
+      "sha256": "efbe43f78f0f1cab72eba7bdc4fa4e628441ddcdbc6ea383e63d00e058ec4378",
+      "zip_entries": [
+        "mimetype",
+        "version.xml",
+        "Contents/header.xml",
+        "Contents/section0.xml",
+        "Preview/PrvText.txt",
+        "settings.xml",
+        "Preview/PrvImage.png",
+        "META-INF/container.rdf",
+        "Contents/content.hpf",
+        "META-INF/container.xml",
+        "META-INF/manifest.xml"
+      ],
+      "bindata_entries": [],
+      "section0": {
+        "paragraphs": 4,
+        "top_level_paragraphs": 2,
+        "runs": 5,
+        "text_nodes": 4,
+        "field_begin": 0,
+        "field_end": 0,
+        "tables": 0,
+        "pictures": 0,
+        "tabs": 0,
+        "headers": 1,
+        "footers": 1
+      },
+      "text_checks": {
+        "{{doc.title}}": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "{{doc.owner}}": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "본문 첫째 문단": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "본문 둘째 문단": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        }
+      },
+      "top_level_paragraphs_detail": [
+        {
+          "text": "본문 첫째 문단",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": []
+            },
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                {
+                  "el": "header"
+                },
+                {
+                  "el": "footer"
+                },
+                "본문 첫째 문단"
+              ]
+            }
+          ]
+        },
+        {
+          "text": "본문 둘째 문단",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "본문 둘째 문단"
+              ]
+            }
+          ]
+        }
+      ],
+      "privacy_clean": true,
+      "observations": {
+        "placeholders": {
+          "{{doc.title}}": {
+            "in_single_t": true,
+            "paragraphs_t_texts": [
+              [
+                "{{doc.title}}"
+              ]
+            ]
+          },
+          "{{doc.owner}}": {
+            "in_single_t": true,
+            "paragraphs_t_texts": [
+              [
+                "{{doc.owner}}"
+              ]
+            ]
+          }
+        },
+        "header_footer": [
+          {
+            "kind": "header",
+            "applyPageType": "BOTH",
+            "paragraphs": [
+              {
+                "text": "{{doc.title}}",
+                "runs": [
+                  {
+                    "charPrIDRef": "2",
+                    "bold": false,
+                    "content": [
+                      "{{doc.title}}"
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "kind": "footer",
+            "applyPageType": "BOTH",
+            "paragraphs": [
+              {
+                "text": "{{doc.owner}}",
+                "runs": [
+                  {
+                    "charPrIDRef": "0",
+                    "bold": false,
+                    "content": [
+                      "{{doc.owner}}"
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "exact_text_mismatches": [],
+      "reopen": {
+        "ok": true,
+        "page_count": 1
+      }
+    }
+  ],
+  "failures": [],
+  "hwp_processes_left_by_this_run": 0,
+  "privacy_clean": true,
+  "note": "content.hpf 의 creator·lastsaveby(작성 PC 사용자 이름)만 'synthetic' 으로 바꿔 다시 묶었다. 그 밖은 한컴이 저장한 그대로다."
+}

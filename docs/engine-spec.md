@@ -206,6 +206,24 @@ type HwpxDocument = {
 
 기대값은 명세와 독립 기준에서 정한다. 구현 출력에 맞춰 기대값을 고치지 않는다.
 
+### 6.1 S1 구현에서 확정한 것 (2026-10-01)
+
+구현 상태: 수용 조건 RT1~RT5, M1~M6 통과(테스트 174개). 구현하면서 명세의 빈틈을 다음과 같이 정했다.
+
+- 교체한 항목은 로컬 헤더와 CD 레코드 양쪽에서 데이터 설명자 비트를 끈다.
+- ZIP 구조는 엄격하게 받는다. CD가 EOCD 바로 앞에서 끝나지 않거나 해석하지 못하는 바이트가 있으면 `PKG_TRUNCATED`다.
+- 추가한 코드: `PKG_NAME_ENCODING`, `PKG_INFLATE`, `MODEL_ROOT_ELEMENT`(오류), `PKG_MIMETYPE_MISSING`·`PKG_MIMETYPE_POSITION`·`PKG_MIMETYPE_COMPRESSED`·`PKG_MIMETYPE_CONTENT`·`PKG_SECTION_NOT_IN_SPINE`·`PKG_MANIFEST_ITEM`(경고), `MODEL_REF_MISSING`(오류), `MODEL_UNKNOWN_REF`·`MODEL_UNREACHED_PARAGRAPH`(경고).
+- XML 중첩은 1,000단계까지다. 넘으면 `XML_MALFORMED`.
+- `ParagraphNode`에 `objects`, `fieldMarks`, `bookmarks`가 있고 `SectionModel`에 `bodyRefs`가 있다.
+- `FieldMark`: 시작은 `id` 속성을, 끝은 `fieldid` 속성을 `id`에 담는다. 끝의 `beginIDRef`는 따로 둔다. `dirty`는 문자열이다.
+- `beginIDRef`는 알 수 없는 참조로 세지 않는다.
+- 시작과 끝 사이에 객체 조각이 낀 누름틀의 shape는 `inline`이다. `crossParagraph`·`unpaired`의 `valueText`는 빈 문자열이다.
+- 문단모양의 `heading` 참조는 `type`이 `NUMBER`면 numbering, `BULLET`이면 bullet이다.
+- header 항목은 manifest에서 `id="header"`이거나 href가 `header.xml`로 끝나는 것이다.
+- `escapeText`·`escapeAttr`는 줄바꿈·탭을 바꾸지 않는다. 그런 문자가 든 값은 채움 단계에서 거절한다(`VALUE_CONTROL_CHAR`).
+- 남은 일(S2에서 처리): `linkListIDRef`·`linkListNextIDRef`는 자원 참조가 아니므로 알 수 없는 참조에서 뺀다. `memoShapeIDRef`는 메모 모양 목록이 있으면 그 목록을 가리키는 참조로, 없으면 무시한다.
+- 관측: 합성 문서 D1·D7은 탭 목록이 비어 있는데 문단모양이 `tabPrIDRef="0"`을 가리킨다. 한컴 저장본에는 패키지 메타데이터에 사용자 이름이 들어가므로 시험 자료는 `tools/fixtures/scrub-metadata.ts`로 치환해 넣는다.
+
 ## 7. S2 — 편집 계획과 조각
 
 ### 7.1 편집 계획 (`src/edit/`)
@@ -415,6 +433,9 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 **자리별 채움**
 
 - 누름틀(shape별): `simple` → 시작과 끝 사이 첫 글 조각에 값을 넣고 나머지 글 조각은 비운다. `empty` → 시작 컨트롤 바로 뒤에 `<접두사:t>값</접두사:t>`를 넣는다. 둘 다 시작 요소의 `dirty`를 `"1"`로 한다(없으면 속성 추가). 안내문과 값을 비교하지 않는다. `inline`·`crossParagraph`·`unpaired`는 `FIELD_UNSUPPORTED_SHAPE`.
+  - **안내문 상태**(`dirty`가 `"1"`이 아님) [확인: 한컴 13 저장본]: 시작 컨트롤, 안내문 글, 끝 컨트롤이 서로 다른 run에 있고 안내문 run은 안내문용 글자모양(빨강·기울임)을 쓴다. 값을 넣을 때 시작 run과 끝 run 사이에 있는 run들의 `charPrIDRef`를 **시작 컨트롤이 든 run의 값**으로 바꾼다(한컴이 값을 넣었을 때의 결과와 같은 글자모양). 빈 값을 넣는 경우에는 `dirty`와 글자모양을 건드리지 않는다.
+  - 채운 뒤 `listFields`의 `valueText`가 넣은 값과 같아야 한다(값 재읽기).
+- 자기닫힘 run(`<hp:run charPrIDRef="0"/>`, 한컴의 빈 셀·빈 문단 모양)에 글을 넣을 때는 `<hp:run charPrIDRef="0"><접두사:t>값</접두사:t></hp:run>`로 펼친다.
 - `word`와 `{{}}`: 범위 안에 경계 조각(inline·object)이 있으면 치환하지 않고 `skipped: FILL_CROSSES_MARKUP`. 범위가 글자모양이 다른 run들에 걸치면 `skipped: FILL_MIXED_FORMAT`(옵션 `mixedFormat: "first"`면 첫 run에 넣는다). 통과하면 범위의 첫 글 조각에 값을 넣고 나머지 겹친 구간은 지운다. run·`hp:t` 요소는 지우지 않는다.
 - `line`(fill): 문단에 객체 조각이 있으면 `FILL_HAS_OBJECT`. 없으면 첫 글 조각에 값을 넣고 나머지 글 조각을 비운다. 글 조각이 없으면 첫 run 안에 `hp:t`를 넣는다.
 - `cell`: 셀 안에 객체가 있으면 `FILL_HAS_OBJECT`. 첫 문단을 `line` 방식으로 채우고 나머지 문단의 글은 비운다.
