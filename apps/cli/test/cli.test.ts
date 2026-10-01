@@ -2,6 +2,7 @@
 // 시험은 임시 폴더의 사본으로만 한다(fixtures는 읽기만 한다).
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -21,6 +22,7 @@ before(() => {
   for (const name of ["hancom/ph-single", "hancom/ph-mixed", "hancom/blocks", "hancom/field-states", "hancom/picture", "extra/features-picture", "D1"]) {
     copyFileSync(join(FIXTURES, `${name}.hwpx`), join(dir, `${name.replace("/", "-")}.hwpx`));
   }
+  for (const name of ["notice.md", "memo.txt"]) copyFileSync(join(FIXTURES, "text", name), join(dir, name));
 });
 after(() => rmSync(dir, { recursive: true, force: true }));
 
@@ -296,7 +298,7 @@ test("G5 종료 코드 1: validate는 오류가 있으면 1(원래 오류가 있
 
 // ── 사용법 오류·읽을 수 없는 입력(종료 코드 2) ─────────────────
 
-test("G5 종료 코드 2: 사용법 오류 — 알 수 없는 명령·옵션, 빠진 인자, 잘못된 값, md·txt", async () => {
+test("G5 종료 코드 2: 사용법 오류 — 알 수 없는 명령·옵션, 빠진 인자, 잘못된 값", async () => {
   const data = p("data.json");
   const input = p("hancom-ph-single.hwpx");
   const cases: string[][] = [
@@ -308,8 +310,6 @@ test("G5 종료 코드 2: 사용법 오류 — 알 수 없는 명령·옵션, �
     ["fill", input, "--data", data],
     ["fill", input, "--data", data, "-o", p("x.hwpx"), "--mode", "엄격"],
     ["fill", input, "--data", data, "-o", p("x.hwpx"), "--missing", "무시"],
-    ["fill", p("notes.md"), "--data", data, "-o", p("x.md")],
-    ["fill", p("notes.txt"), "--data", data, "-o", p("x.txt")],
     ["fill", p("data.json"), "--data", data, "-o", p("x.hwpx")],
     ["fragment"],
     ["fragment", "extract", input, "--section", "0", "--from", "1", "-o", p("x.json")],
@@ -386,6 +386,314 @@ test("출력 파일 안전: 입력과 같은 경로 거부, --overwrite 없이�
   // --report도 같은 규칙을 따른다
   assert.equal((await cli("fill", input, "--data", data, "-o", p("rr.hwpx"), "--report", data)).code, 2);
   assert.ok(!existsSync(p("rr.hwpx")));
+});
+
+// ── md·txt와 조각 옵션 (C1~C8) ──────────────────────────────────
+// 기대값은 시험 자료(fixtures/text)의 글에서 자리만 직접 바꿔 만든다. 엔진의 출력에 맞춰 정하지 않는다.
+
+const NOTICE = readFileSync(join(FIXTURES, "text/notice.md"), "utf8");
+const MEMO = readFileSync(join(FIXTURES, "text/memo.txt"), "utf8");
+const TEXT_DATA = {
+  project: { name: "알파", start: "2026-01-01", end: "2026-12-31" },
+  owner: { name: "김하늘" },
+  applicant: { name: "이서연" },
+  table: { a: "가", b: "나" },
+  opt: "선택",
+};
+/** notice.md에서 데이터로 채워지는 자리만 바꾼 글(코드 블록 안의 `{{}}`는 그대로) */
+const noticeFilled = (text: string): string =>
+  text
+    .replace("{{project.name}} 안내", "알파 안내")
+    .replace("{{applicant.name}}", "이서연")
+    .replace("{{project.start}} ~ {{project.end}}", "2026-01-01 ~ 2026-12-31")
+    .replace("{{table.a}}", "가")
+    .replace("{{table.b}}", "나");
+const sha = (text: string): string => createHash("sha256").update(text).digest("hex");
+const lineAnchor = (id: string, ordinal: number, logical: string) => ({
+  id,
+  kind: "line",
+  at: { sectionIndex: 0, path: [ordinal] },
+  print: { text: logical.slice(0, 40), sha256: sha(logical) },
+});
+const fileBytes = (path: string): Buffer => readFileSync(path);
+
+test("C1 fill .md·.txt: 채워서 저장한다(종료 코드 0). BOM·CRLF를 그대로 두고, 보고서·화면에 값 원문이 없다", async () => {
+  const data = write("text-data.json", JSON.stringify(TEXT_DATA));
+  // .md (LF)
+  const out = p("notice-out.md");
+  const report = p("notice-report.json");
+  const r = await cli("fill", p("notice.md"), "--data", data, "-o", out, "--report", report);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(readFileSync(out, "utf8"), noticeFilled(NOTICE));
+  assert.match(r.out, /형식: md/);
+  const raw = readFileSync(report, "utf8");
+  const saved = JSON.parse(raw) as { ok: boolean; dryRun: boolean; report: { kind: string } };
+  assert.deepEqual([saved.ok, saved.dryRun, saved.report.kind], [true, false, "md"]);
+  for (const value of ["알파", "이서연", "2026-01-01", "2026-12-31"]) assert.ok(!raw.includes(value) && !r.out.includes(value), `값 원문이 새어 나왔다: ${value}`);
+
+  // BOM과 CRLF는 그대로(입력이 BOM이면 출력도 BOM, 줄바꿈은 모두 CRLF)
+  write("notice-crlf.md", `﻿${NOTICE.replace(/\n/g, "\r\n")}`);
+  const c = await cli("fill", p("notice-crlf.md"), "--data", data, "-o", p("notice-crlf-out.md"));
+  assert.equal(c.code, 0, c.err);
+  const bytes = fileBytes(p("notice-crlf-out.md"));
+  assert.deepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf], "BOM 유지");
+  assert.ok(bytes.equals(Buffer.from(`﻿${noticeFilled(NOTICE).replace(/\n/g, "\r\n")}`, "utf8")), "내용과 CRLF 보존");
+  assert.equal(bytes.toString("utf8").replace(/\r\n/g, "").includes("\n"), false, "LF만 있는 줄바꿈이 생기지 않았다");
+
+  // .txt
+  const t = await cli("fill", p("memo.txt"), "--data", data, "-o", p("memo-out.txt"));
+  assert.equal(t.code, 0, t.err);
+  assert.equal(readFileSync(p("memo-out.txt"), "utf8"), MEMO.replace("{{project.name}}", "알파").replace("{{owner.name}}", "김하늘").replace("{{opt}}", "선택"));
+  assert.match(t.out, /형식: txt/);
+
+  // 확장자는 대소문자를 가리지 않고, --dry-run은 출력 파일 없이 보고만 한다
+  write("UPPER.MD", "{{project.name}}\n");
+  const dry = await cli("fill", p("UPPER.MD"), "--data", data, "--dry-run");
+  assert.equal(dry.code, 0, dry.err);
+  assert.match(dry.out, /모의 실행/);
+  assert.match(dry.out, /필요한 데이터 경로: project\.name/);
+  assert.equal((await cli("fill", p("UPPER.MD"), "--data", data, "-o", p("upper-out.md"))).code, 0);
+  assert.equal(readFileSync(p("upper-out.md"), "utf8"), "알파\n");
+
+  // --fill-in-code: 코드 블록 안의 {{}}도 채운다(기본은 그대로)
+  const code = await cli("fill", p("notice.md"), "--data", data, "-o", p("notice-code.md"), "--fill-in-code");
+  assert.equal(code.code, 0, code.err);
+  assert.equal(readFileSync(p("notice-code.md"), "utf8"), noticeFilled(NOTICE).replace("코드 안의 {{project.name}}는", "코드 안의 알파는"));
+
+  // 출력 파일 안전 규칙은 텍스트에도 같다
+  const same = await cli("fill", p("notice.md"), "--data", data, "-o", p("notice.md"), "--overwrite");
+  assert.equal(same.code, 2);
+  assert.match(same.err, /입력과 같습니다/);
+  assert.equal(readFileSync(p("notice.md"), "utf8"), NOTICE, "입력이 바뀌지 않았다");
+  const exists = await cli("fill", p("notice.md"), "--data", data, "-o", out);
+  assert.equal(exists.code, 2);
+  assert.match(exists.err, /--overwrite/);
+  assert.equal((await cli("fill", p("notice.md"), "--data", data, "-o", out, "--overwrite")).code, 0);
+  assert.ok(!listing().some((n) => n.endsWith(".tmp")), "임시 파일이 남았다");
+});
+
+test("C2 fill .md: 누락 키는 error면 종료 코드 1(출력 없음), --missing empty·keep은 성공(0)", async () => {
+  const partial = write("text-partial.json", JSON.stringify({ ...TEXT_DATA, project: { name: "알파", start: "2026-01-01" } }));
+  const e = await cli("fill", p("notice.md"), "--data", partial, "-o", p("never-text.md"), "--report", p("text-fail-report.json"));
+  assert.equal(e.code, 1);
+  assert.match(e.err, /DATA_MISSING/);
+  assert.match(e.err, /출력 파일을 만들지 않았습니다/);
+  assert.ok(!existsSync(p("never-text.md")));
+  assert.ok(!listing().some((n) => n.endsWith(".tmp")), "임시 파일이 남았다");
+  const saved = JSON.parse(readFileSync(p("text-fail-report.json"), "utf8")) as { ok: boolean };
+  assert.equal(saved.ok, false, "게이트가 실패해도 보고서는 쓴다");
+
+  const empty = await cli("fill", p("notice.md"), "--data", partial, "-o", p("text-empty.md"), "--missing", "empty");
+  assert.equal(empty.code, 0, empty.err);
+  assert.equal(readFileSync(p("text-empty.md"), "utf8"), noticeFilled(NOTICE).replace("2026-01-01 ~ 2026-12-31", "2026-01-01 ~ "));
+  const keep = await cli("fill", p("notice.md"), "--data", partial, "-o", p("text-keep.md"), "--missing", "keep");
+  assert.equal(keep.code, 0, keep.err);
+  assert.equal(readFileSync(p("text-keep.md"), "utf8"), noticeFilled(NOTICE).replace("2026-01-01 ~ 2026-12-31", "2026-01-01 ~ {{project.end}}"));
+});
+
+test("C3 사용법(종료 코드 2): 텍스트에 --mode·--reissue-internal, .hwpx에 --fill-in-code, md·txt에 .hwpx 전용 명령", async () => {
+  const data = p("text-data.json");
+  const md = p("notice.md");
+  const hwpx = p("hancom-ph-single.hwpx");
+  const cases: { argv: string[]; message: RegExp }[] = [
+    { argv: ["fill", md, "--data", data, "-o", p("c3-out.md"), "--mode", "strict"], message: /--mode/ },
+    { argv: ["fill", md, "--data", data, "-o", p("c3-out.md"), "--reissue-internal"], message: /--reissue-internal/ },
+    { argv: ["fill", p("memo.txt"), "--data", data, "-o", p("c3-out.txt"), "--mode", "baseline"], message: /--mode/ },
+    { argv: ["fill", hwpx, "--data", data, "-o", p("c3-out.hwpx"), "--fill-in-code"], message: /--fill-in-code/ },
+    { argv: ["inspect", md, "--model", p("c3-model.json")], message: /--model/ },
+    { argv: ["validate", md], message: /\.hwpx/ },
+    { argv: ["validate", hwpx, "--baseline", md], message: /\.hwpx/ },
+    { argv: ["candidates", md], message: /\.hwpx/ },
+    { argv: ["diff", md, hwpx], message: /\.hwpx/ },
+    { argv: ["diff", hwpx, p("memo.txt")], message: /\.hwpx/ },
+    { argv: ["compile", md, "-o", p("c3-out.hwpx"), "--experimental"], message: /\.hwpx/ },
+    { argv: ["fragment", "extract", md, "--section", "0", "--from", "0", "--to", "0", "-o", p("c3-frag.json")], message: /\.hwpx/ },
+    { argv: ["fragment", "import", p("memo.txt"), p("data.json"), "--section", "0", "--index", "0", "-o", p("c3-out.hwpx")], message: /\.hwpx/ },
+  ];
+  for (const { argv, message } of cases) {
+    const r = await cli(...argv);
+    assert.equal(r.code, 2, `${argv.join(" ")} → ${r.code}\n${r.out}`);
+    assert.match(r.err, message, argv.join(" "));
+  }
+  const created = listing().filter((n) => n.startsWith("c3-"));
+  assert.deepEqual(created, [], "사용법 오류에서는 아무 파일도 만들지 않는다");
+});
+
+test("C4 fill .md 템플릿: 조건에 따른 블록 삭제와 텍스트 조각 주입(조각 경로는 템플릿 폴더 기준, 조각 파일은 입력으로 보호)", async () => {
+  mkdirSync(p("tpl-text/fragments"), { recursive: true });
+  const fragmentFile = p("tpl-text/fragments/terms.json");
+  const fragmentJson = JSON.stringify({ schema: "hwpx-studio/text-fragment@1", blocks: ["### 용역 조항", "- {{owner.name}}가 수행한다.\n- 기간 내 완료"] });
+  writeFileSync(fragmentFile, fragmentJson);
+  const off = { path: "terms.optional", op: "eq", value: false };
+  const template = write("tpl-text/t.json", JSON.stringify({
+    schema: "hwpx-studio/template@1",
+    anchors: [lineAnchor("head", 3, "## 선택 조항"), lineAnchor("body", 4, "선택 조항 본문입니다. (해당 시)"), lineAnchor("period", 2, "기간: {{project.start}} ~ {{project.end}}")],
+    rules: [
+      { id: "r1", when: off, do: { type: "delete", anchor: "head" } },
+      { id: "r2", when: off, do: { type: "delete", anchor: "body" } },
+      { id: "r3", when: { path: "contract.type", op: "eq", value: "용역" }, do: { type: "inject", anchor: "period", position: "after", fragment: "fragments/terms.json" } },
+    ],
+  }));
+
+  const data = write("text-cond-data.json", JSON.stringify({ ...TEXT_DATA, terms: { optional: false }, contract: { type: "용역" } }));
+  const r = await cli("fill", p("notice.md"), "--data", data, "--template", template, "-o", p("tpl-text-out.md"));
+  assert.equal(r.code, 0, r.err);
+  const expected = noticeFilled(NOTICE)
+    .replace("## 선택 조항\n\n선택 조항 본문입니다. (해당 시)\n\n", "")
+    .replace("기간: 2026-01-01 ~ 2026-12-31\n\n", "기간: 2026-01-01 ~ 2026-12-31\n\n### 용역 조항\n\n- 김하늘가 수행한다.\n- 기간 내 완료\n\n");
+  assert.equal(readFileSync(p("tpl-text-out.md"), "utf8"), expected);
+
+  // 조건이 거짓이면 삭제도 주입도 하지 않는다(채움만)
+  const other = write("text-cond-data2.json", JSON.stringify({ ...TEXT_DATA, terms: { optional: true }, contract: { type: "물품" } }));
+  assert.equal((await cli("fill", p("notice.md"), "--data", other, "--template", template, "-o", p("tpl-text-out2.md"))).code, 0);
+  assert.equal(readFileSync(p("tpl-text-out2.md"), "utf8"), noticeFilled(NOTICE));
+
+  // 조각 파일을 출력으로 지정하면 --overwrite라도 거부하고 조각 파일을 건드리지 않는다
+  const clobber = await cli("fill", p("notice.md"), "--data", data, "--template", template, "-o", fragmentFile, "--overwrite");
+  assert.equal(clobber.code, 2);
+  assert.match(clobber.err, /입력과 같습니다/);
+  assert.equal(readFileSync(fragmentFile, "utf8"), fragmentJson);
+
+  // 조각 파일이 없으면 읽을 수 없는 입력(2)
+  rmSync(fragmentFile);
+  const missing = await cli("fill", p("notice.md"), "--data", data, "--template", template, "-o", p("tpl-text-out3.md"));
+  assert.equal(missing.code, 2);
+  assert.ok(!existsSync(p("tpl-text-out3.md")));
+});
+
+test("C5 inspect .md·.txt: 블록·표·코드 블록 수와 {{}} 목록", async () => {
+  const md = await cli("inspect", p("notice.md"), "--json");
+  assert.equal(md.code, 0, md.err);
+  const summary = JSON.parse(md.out) as { kind: string; blocks: number; tables: number; codeBlocks: number; placeholders: { path: string; count: number }[]; placeholdersInCode: number };
+  // 제목 2, 문단 3, 표 1, 코드 블록 1, 끝맺음 문단 1 = 블록 8개(빈 줄은 블록이 아니다)
+  assert.deepEqual([summary.kind, summary.blocks, summary.tables, summary.codeBlocks], ["md", 8, 1, 1]);
+  assert.deepEqual(summary.placeholders, ["applicant.name", "project.end", "project.name", "project.start", "table.a", "table.b"].map((path) => ({ path, count: 1 })));
+  assert.equal(summary.placeholdersInCode, 1, "코드 블록 안의 {{project.name}}는 따로 센다");
+
+  const text = await cli("inspect", p("notice.md"));
+  assert.equal(text.code, 0, text.err);
+  assert.match(text.out, /블록 8개, 표 1개, 코드 블록 1개/);
+  assert.match(text.out, /\{\{\}\} 표기 6종/);
+  assert.match(text.out, /project\.name x1/);
+  assert.match(text.out, /코드 블록 안의 \{\{\}\} 표기 1곳/);
+
+  // txt: 줄 하나가 블록이다(빈 줄 포함)
+  const txt = JSON.parse((await cli("inspect", p("memo.txt"), "--json")).out) as typeof summary;
+  assert.deepEqual([txt.kind, txt.blocks, txt.tables, txt.codeBlocks, txt.placeholdersInCode], ["txt", 6, 0, 0, 0]);
+  assert.deepEqual(txt.placeholders, [{ path: "opt", count: 1 }, { path: "owner.name", count: 1 }, { path: "project.name", count: 1 }]);
+});
+
+/** 합성 문단 하나(`inner`는 run 안의 개체, `ref`는 글자모양 참조) */
+const synthPara = (id: string, inner: string, ref = "0"): string =>
+  `<hp:p id="${id}" paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="${ref}">${inner}<hp:t>x</hp:t></hp:run></hp:p>`;
+const fragmentOf = (...paragraphs: string[]): string =>
+  serializeFragment(extractFragment(parseSynthetic([paragraphs.join("")]), { sectionIndex: 0, parentPath: [], from: 0, to: paragraphs.length - 1 }));
+type InheritedJson = { duplicateIds: { role: string; value: string; count: number }[]; danglingRefs: { kind: string; id: string; count: number }[]; errors: { code: string }[] };
+const inheritedOf = (name: string): InheritedJson => (JSON.parse(readFileSync(p(name), "utf8")) as { report: { inherited: InheritedJson } }).report.inherited;
+
+test("C6 --reissue-internal: 같은 id의 도형 둘이 든 조각은 옵션 없이는 상속 중복으로 보고되고, 옵션을 주면 없다(fragment import·fill, 종료 코드 0)", async () => {
+  const frag = write("dup-frag.json", fragmentOf(synthPara("1", '<hp:rect id="2"/><hp:rect id="2"/>')));
+  const at = ["--section", "0", "--index", "3"];
+
+  const off = await cli("fragment", "import", p("hancom-blocks.hwpx"), frag, ...at, "-o", p("dup-off.hwpx"), "--report", p("dup-off.json"));
+  assert.equal(off.code, 0, off.err);
+  assert.deepEqual(inheritedOf("dup-off.json").duplicateIds, [{ role: "object", value: "2", count: 2 }]);
+  assert.deepEqual(inheritedOf("dup-off.json").errors.map((e) => e.code), ["INST_DUP_ID"]);
+  assert.deepEqual(validateDocument(read("dup-off.hwpx")).errors.map((e) => e.code), ["INST_DUP_ID"]);
+
+  const on = await cli("fragment", "import", p("hancom-blocks.hwpx"), frag, ...at, "-o", p("dup-on.hwpx"), "--report", p("dup-on.json"), "--reissue-internal");
+  assert.equal(on.code, 0, on.err);
+  assert.deepEqual(inheritedOf("dup-on.json"), { duplicateIds: [], danglingRefs: [], errors: [] });
+  assert.ok(!/상속한 문제/.test(on.out), on.out);
+  assert.deepEqual(validateDocument(read("dup-on.hwpx")).errors, []);
+  assert.equal(doc("dup-on.hwpx").sections[0]?.paragraphs.length, 7, "조각 문단 1개가 앵커 뒤에 들어갔다");
+  // 엄격 방식은 상속한 오류를 막지만, 재발급하면 통과한다
+  assert.equal((await cli("fragment", "import", p("hancom-blocks.hwpx"), frag, ...at, "-o", p("dup-strict-off.hwpx"), "--mode", "strict")).code, 1);
+  assert.ok(!existsSync(p("dup-strict-off.hwpx")));
+  const strictOn = await cli("fragment", "import", p("hancom-blocks.hwpx"), frag, ...at, "-o", p("dup-strict-on.hwpx"), "--mode", "strict", "--reissue-internal");
+  assert.equal(strictOn.code, 0, `${strictOn.out}\n${strictOn.err}`);
+
+  // fill: 템플릿의 inject에 적용한다
+  mkdirSync(p("tpl-dup"), { recursive: true });
+  copyFileSync(frag, p("tpl-dup/dup.json"));
+  const anchorText = "선택 조항 본문입니다. (해당 시)";
+  const template = write("tpl-dup/t.json", JSON.stringify({
+    schema: "hwpx-studio/template@1",
+    anchors: [lineAnchor("l", 3, anchorText)],
+    rules: [{ id: "r", do: { type: "inject", anchor: "l", position: "after", fragment: "dup.json" } }],
+  }));
+  const none = write("empty-data.json", "{}");
+  const fillOff = await cli("fill", p("hancom-blocks.hwpx"), "--data", none, "--template", template, "-o", p("fill-dup-off.hwpx"), "--report", p("fill-dup-off.json"));
+  assert.equal(fillOff.code, 0, fillOff.err);
+  assert.deepEqual(inheritedOf("fill-dup-off.json").duplicateIds, [{ role: "object", value: "2", count: 2 }]);
+  const fillOn = await cli("fill", p("hancom-blocks.hwpx"), "--data", none, "--template", template, "-o", p("fill-dup-on.hwpx"), "--report", p("fill-dup-on.json"), "--reissue-internal");
+  assert.equal(fillOn.code, 0, fillOn.err);
+  assert.deepEqual(inheritedOf("fill-dup-on.json"), { duplicateIds: [], danglingRefs: [], errors: [] });
+  assert.deepEqual(validateDocument(read("fill-dup-on.hwpx")).errors, []);
+  assert.equal(doc("fill-dup-on.hwpx").sections[0]?.paragraphs.length, 7);
+});
+
+test("C7 fragment import --report: 게이트 보고서를 쓴다(상속 항목 포함). 게이트가 실패해도 보고서는 쓰고 출력 파일은 없다", async () => {
+  // 소스가 이미 가진 문제: 같은 id의 도형 둘, 없는 글자모양 9번
+  const frag = write("inherited-frag2.json", fragmentOf(synthPara("11", '<hp:rect id="2"/><hp:rect id="2"/>'), synthPara("12", "", "9")));
+  const args = [p("hancom-blocks.hwpx"), frag, "--section", "0", "--index", "3"];
+  const out = p("c7-out.hwpx");
+  const report = p("c7-report.json");
+  const r = await cli("fragment", "import", ...args, "-o", out, "--report", report);
+  assert.equal(r.code, 0, r.err);
+  const saved = JSON.parse(readFileSync(report, "utf8")) as { ok: boolean; dryRun: boolean; ledger: { output: { sha256: string } }; report: { mode: string; inherited: InheritedJson } };
+  assert.deepEqual([saved.ok, saved.dryRun, saved.report.mode], [true, false, "baseline"]);
+  assert.equal(saved.ledger.output.sha256.length, 64);
+  assert.deepEqual(saved.report.inherited.duplicateIds, [{ role: "object", value: "2", count: 2 }]);
+  assert.deepEqual(saved.report.inherited.danglingRefs, [{ kind: "charPr", id: "9", count: 1 }]);
+  assert.deepEqual(saved.report.inherited.errors.map((e) => e.code).sort(), ["INST_DUP_ID", "RES_DANGLING"]);
+  assert.ok(existsSync(out));
+
+  // 게이트 실패(strict는 상속한 오류도 막는다): 보고서는 쓰고 출력 파일은 없다
+  const failedOut = p("c7-strict.hwpx");
+  const failedReport = p("c7-strict-report.json");
+  const f = await cli("fragment", "import", ...args, "-o", failedOut, "--report", failedReport, "--mode", "strict");
+  assert.equal(f.code, 1);
+  assert.ok(!existsSync(failedOut));
+  assert.ok(!listing().some((n) => n.endsWith(".tmp")), "임시 파일이 남았다");
+  const failed = JSON.parse(readFileSync(failedReport, "utf8")) as { ok: boolean; ledger?: unknown; report: { mode: string; inherited: InheritedJson; issues: { code: string }[] } };
+  assert.equal(failed.ok, false);
+  assert.equal(failed.ledger, undefined);
+  assert.equal(failed.report.mode, "strict");
+  assert.deepEqual(failed.report.inherited.duplicateIds, [{ role: "object", value: "2", count: 2 }], "strict에서도 상속 항목은 기록한다");
+  assert.ok(failed.report.issues.some((i) => i.code === "GATE_ERRORS"));
+
+  // 보고서 경로도 출력 파일 안전 규칙을 따른다
+  const same = await cli("fragment", "import", ...args, "-o", p("c7-same.hwpx"), "--report", p("c7-same.hwpx"));
+  assert.equal(same.code, 2);
+  assert.ok(!existsSync(p("c7-same.hwpx")));
+  assert.equal((await cli("fragment", "import", ...args, "-o", p("c7-again.hwpx"), "--report", frag)).code, 2, "입력 파일을 보고서 경로로 쓸 수 없다");
+  const before = readFileSync(report, "utf8");
+  const exists = await cli("fragment", "import", ...args, "-o", p("c7-again.hwpx"), "--report", report);
+  assert.equal(exists.code, 2);
+  assert.match(exists.err, /--overwrite/);
+  assert.equal(readFileSync(report, "utf8"), before);
+  assert.ok(!existsSync(p("c7-again.hwpx")));
+  assert.equal((await cli("fragment", "import", ...args, "-o", p("c7-again.hwpx"), "--report", report, "--overwrite")).code, 0);
+});
+
+test("C8 UTF-8이 아닌 텍스트 입력은 종료 코드 2(fill·inspect), 출력 파일 없음", async () => {
+  const data = p("text-data.json");
+  // CP949로 저장한 "A가"와 BOM이 있는 UTF-16 글: 둘 다 UTF-8로 읽을 수 없다
+  writeFileSync(p("cp949.txt"), Buffer.from([0x41, 0xb0, 0xa1, 0x0a]));
+  writeFileSync(p("utf16.md"), Buffer.from("﻿안녕 {{project.name}}\n", "utf16le"));
+  for (const name of ["cp949.txt", "utf16.md"]) {
+    const f = await cli("fill", p(name), "--data", data, "-o", p(`c8-${name}`));
+    assert.equal(f.code, 2, `${name}\n${f.out}`);
+    assert.match(f.err, /UTF-8/);
+    assert.ok(!existsSync(p(`c8-${name}`)));
+    const i = await cli("inspect", p(name));
+    assert.equal(i.code, 2, name);
+    assert.match(i.err, /UTF-8/);
+    const d = await cli("fill", p(name), "--data", data, "--dry-run");
+    assert.equal(d.code, 2, name);
+  }
+  assert.ok(!listing().some((n) => n.startsWith("c8-") || n.endsWith(".tmp")));
 });
 
 // ── 실제 프로세스 ──────────────────────────────────────────────

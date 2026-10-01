@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { extractFragment, serializeFragment, validateDocument, type Fragment, type HwpxDocument } from "../src/index.ts";
 import { generate, makeLineAnchor, type GenerateOptions, type GenerateResult } from "../src/fill/index.ts";
 import { emptyTemplate, readDataset, readTemplate } from "../src/template/index.ts";
-import { parseSynthetic, reparse } from "./helpers.ts";
+import { duplicates, objectIdsIn, parseSynthetic, reparse } from "./helpers.ts";
 
 const para = (id: string, inner: string, text = "x"): string =>
   `<hp:p id="${id}" paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0">${inner}<hp:t>${text}</hp:t></hp:run></hp:p>`;
@@ -67,6 +67,31 @@ test("게이트: strict 방식은 상속한 오류도 막는다", () => {
   assert.equal(r.ok, false);
   assert.ok(errorCodes(r).includes("GATE_ERRORS") && errorCodes(r).includes("INST_DUP_ID"), errorCodes(r).join());
   assert.deepEqual(r.report.inherited.errors, [], "strict는 상속으로 가리지 않는다");
+});
+
+test("게이트: reissueInternalDuplicates를 켜면 조각 안 중복 id를 새 값으로 바꿔 상속한 중복이 없다(기본은 끔)", () => {
+  const frag = asJson(fragmentOf(DUP_SRC()));
+  const off = inject(target(), frag);
+  assert.ok(off.ok);
+  assert.deepEqual(off.report.inherited.duplicateIds, [{ role: "object", value: "2", count: 2 }], "기본은 소스 원문 그대로");
+
+  const on = inject(target(), frag, { reissueInternalDuplicates: true });
+  assert.equal(on.ok, true, JSON.stringify(on.report.issues.filter((i) => i.severity === "error")));
+  assert.deepEqual(on.report.inherited, { duplicateIds: [], danglingRefs: [], errors: [] });
+  assert.deepEqual(on.report.validation?.newErrors, []);
+  const codes = on.report.issues.map((i) => i.code);
+  assert.ok(!codes.includes("FRAG_INHERITED_DUP") && !codes.includes("GATE_INHERITED"), codes.join());
+  assert.ok(on.ok && !on.dryRun);
+  if (on.ok && !on.dryRun) {
+    const ids = objectIdsIn(reparse(on.output).sections[0]?.text ?? "");
+    assert.equal(ids.length, 3, "대상의 도형 1개와 조각의 도형 2개");
+    assert.deepEqual(duplicates(ids), [], "겹치는 id가 없다");
+    assert.deepEqual(ids.slice(0, 2), ["100", "2"], "첫 등장은 그대로 둔다");
+    assert.deepEqual(validateDocument(on.output).errors, [], "엄격 검사 기준으로도 오류가 없다");
+  }
+  // 엄격 방식은 상속한 오류를 막지만, 재발급하면 통과한다
+  assert.equal(inject(target(), frag, { mode: "strict" }).ok, false);
+  assert.equal(inject(target(), frag, { mode: "strict", reissueInternalDuplicates: true }).ok, true);
 });
 
 test("게이트 대조군: 상속과 무관한 새 오류(짝 없는 누름틀)는 상속 오류가 함께 있어도 막힌다", () => {

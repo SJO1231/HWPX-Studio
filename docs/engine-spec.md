@@ -501,7 +501,7 @@ type InsertPoint = { sectionIndex: number; parentPath: number[]; index: number; 
 - `planImport`는 `ImportPlan = EditPlan & { inherited }`를 돌려준다. `inherited = { duplicateIds: { role, value, count }[], danglingRefs: { kind, id, count }[] }`. 경고 `FRAG_INHERITED_DUP`.
 - 조각에 `dangling`(소스에서 없던 참조의 기록)이 있다. 이전 형식 조각은 빈 목록으로 읽고, 그 경우 게이트는 상속을 설명하지 못해 막는다.
 - 게이트는 새 오류 가운데 `inherited`로 설명되는 것(`INST_DUP_ID`, `FIELD_MULTI_END`, `RES_DANGLING`)을 `report.inherited`로 옮기고 경고 `GATE_INHERITED`를 낸다. `strict`에서는 막는다.
-- `planImport(…, { reissueInternalDuplicates: true })`. `generate`와 CLI에는 아직 연결하지 않았다.
+- `planImport(…, { reissueInternalDuplicates: true })`. `generate`의 같은 이름 옵션과 CLI의 `--reissue-internal`로 연결돼 있다.
 - 계획 `summary`에 `createdLists`가 있다. 새 글머리표·번호의 id는 빈 목록이면 0부터다(한컴이 0번 글머리표를 정상으로 읽는 것을 확인).
 - 보정: `fixCounts`는 `itemCnt`·`fontCnt`만, `fixSectionCount`(기본 끔)가 구역 수 선언을 고친다.
 - 빈 `binaryItemIDRef`는 조각·모델에서 참조 없음이다. 검사기는 경고 `RES_EMPTY_REF`로 다룬다.
@@ -715,6 +715,12 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | `hwpx diff <원본> <결과> [--json]` | 항목별 동일 여부와 수량 비교 |
 | `hwpx compile <파일> -o 승격본 --experimental` | `{{}}`를 누름틀로 |
 
+- `fill`은 확장자로 형식을 고른다. `.hwpx`는 저장 게이트를 거치고, `.md`·`.txt`는 텍스트 어댑터(9절)를 거친다. 텍스트 전용 옵션 `--fill-in-code`. 텍스트에는 `--mode`·`--reissue-internal`을 줄 수 없다(종료 코드 2).
+- `inspect`도 `.md`·`.txt`를 받는다(블록·표·코드 블록 수와 `{{}}` 목록. 코드 블록 안의 표기는 따로 센다). 그 밖의 명령은 `.hwpx`만 받는다.
+- `fill`과 `fragment import`의 `--reissue-internal`: 조각 안에서 겹치는 id도 새 값으로 바꾼다.
+- `fragment import --report r.json`: `fill --report`와 같은 게이트 보고서(상속 항목 포함).
+- 템플릿이 가리키는 조각 파일은 입력으로 취급해 출력 경로로 덮어쓸 수 없다.
+- 텍스트 입력은 UTF-8만 받는다(BOM은 보존). 아니면 종료 코드 2.
 - 종료 코드: 0 성공, 1 검사·게이트 실패, 2 사용법 오류·읽을 수 없는 입력.
 - 출력 경로가 입력과 같으면 거부한다. 출력이 이미 있으면 `--overwrite` 없이는 거부한다. 임시 파일에 쓰고 이름을 바꾼다. 실패하면 아무 파일도 남기지 않는다.
 - 보고서에는 값 원문을 넣지 않는다.

@@ -1,7 +1,7 @@
 import { applyPlan, type EditPlan, type SpanEdit } from "../edit/plan.ts";
 import { HwpxError, makeIssue, type Issue } from "../errors.ts";
 import { planImport } from "../fragment/import.ts";
-import type { ImportPlan, InheritedProblems } from "../fragment/types.ts";
+import type { ImportOptions, ImportPlan, InheritedProblems } from "../fragment/types.ts";
 import { parseDocument } from "../model/document.ts";
 import { walkParagraphs } from "../model/paragraph.ts";
 import type { HwpxDocument, ParagraphNode } from "../model/types.ts";
@@ -71,8 +71,9 @@ function verifyInjected(next: HwpxDocument, step: InjectStep, sectionIndex: numb
  * 채움 계획을 적용한다. 주 계획을 먼저 적용하고, 조각 주입은 그 결과 문서에서 하나씩 이어서 계획·적용한다.
  * 단계마다 다시 파싱해 보존 계약(편집 구간 밖 동일)·수량 증감·값 재읽기를 확인하고, 하나라도 어긋나면 거기서 멈춘다.
  * 앵커 문단은 지금까지 단계들의 편집으로 시작 오프셋을 옮겨 새 문서에서 다시 찾는다.
+ * `importOptions`는 조각 주입 단계의 `planImport`에 그대로 넘긴다.
  */
-export function executeFillPlan(doc: HwpxDocument, plan: FillPlan, hooks: ExecuteHooks = {}): ExecuteResult {
+export function executeFillPlan(doc: HwpxDocument, plan: FillPlan, hooks: ExecuteHooks = {}, importOptions: ImportOptions = {}): ExecuteResult {
   const issues: Issue[] = [];
   const stages: StageRecord[] = [];
   const checked = { fields: 0, paragraphs: 0 };
@@ -128,12 +129,17 @@ export function executeFillPlan(doc: HwpxDocument, plan: FillPlan, hooks: Execut
     const { section, paragraph } = found;
     let importPlan: ImportPlan;
     try {
-      importPlan = planImport(cur, step.fragment, {
-        sectionIndex: section.index,
-        parentPath: paragraph.path.slice(0, -1),
-        index: paragraph.path[paragraph.path.length - 1] ?? 0,
-        position: step.position === "after" ? "after" : "before",
-      });
+      importPlan = planImport(
+        cur,
+        step.fragment,
+        {
+          sectionIndex: section.index,
+          parentPath: paragraph.path.slice(0, -1),
+          index: paragraph.path[paragraph.path.length - 1] ?? 0,
+          position: step.position === "after" ? "after" : "before",
+        },
+        importOptions,
+      );
     } catch (e) {
       if (!(e instanceof HwpxError)) throw e;
       issues.push(fail(e.code, e.message, where));

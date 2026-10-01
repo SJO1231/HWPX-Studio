@@ -25,7 +25,8 @@
 | 테스트 | `npm test` | 확인 |
 | 오라클 포함 테스트 | `HWPX_ORACLES=1 npm test` (rhwp 실행 파일과 Python이 있을 때) | 확인 |
 | 실제 문서 보정 집계 | `HWPX_CORPUS_DIR=<폴더> node --test packages/hwpx-engine/test/repair-corpus.test.ts` | 확인 |
-| CLI | `node apps/cli/src/main.ts <명령>` (`--help`로 명령 8종) | 확인 |
+| CLI | `node apps/cli/src/main.ts <명령>` (`--help`로 명령 8종. `fill`·`inspect`는 `.hwpx`·`.md`·`.txt`). 설명은 `apps/cli/README.md` | 확인 |
+| 실제 문서 스트레스 시험 | `node tools/stress/campaign.ts --corpus <폴더> --seed 1 --pairs 150 --oracle-sample 40` | 확인 |
 | 한컴으로 열기·PDF | `python tools/com/open_check.py --out 결과.json [--pdf-dir 폴더] 파일...` | 확인(한컴 13) |
 | 한컴 시험 문서 다시 만들기 | `python tools/com/make_fixtures.py` | 확인 |
 

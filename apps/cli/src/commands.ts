@@ -14,10 +14,12 @@ import {
   findPlaceholders,
   fragmentPaths,
   generate,
+  generateText,
   listFields,
   makeLineAnchor,
   openPackage,
   parseDocument,
+  parseText,
   readArchive,
   readDataset,
   readEntry,
@@ -25,12 +27,15 @@ import {
   serializeFragment,
   validateDocument,
   walkParagraphs,
+  type FillReport,
   type GateMode,
   type GenerateResult,
   type Issue,
   type MissingPolicy,
+  type TextKind,
+  type TextResult,
 } from "./engine.ts";
-import { checkOutputPath, InputError, readBytes, readText, UsageError, writeSafely, type Out } from "./io.ts";
+import { checkOutputPath, InputError, readBytes, readText, readUtf8, UsageError, writeSafely, type Out } from "./io.ts";
 
 const json = (value: unknown): string => JSON.stringify(value, null, 2);
 
@@ -59,6 +64,14 @@ const modeOf = (p: Parsed, usage: string): GateMode => {
   return mode;
 };
 
+/** 확장자로 본 텍스트 문서 형식. `.md`·`.txt`가 아니면 `undefined`. */
+const textKindOf = (path: string): TextKind | undefined => (/\.md$/i.test(path) ? "md" : /\.txt$/i.test(path) ? "txt" : undefined);
+
+/** `.hwpx`만 받는 명령에 md·txt를 주면 사용법 오류(종료 코드 2)로 안내한다. */
+function rejectText(path: string, command: string): void {
+  if (textKindOf(path) !== undefined) throw new UsageError(`${command}은(는) .hwpx 파일만 받습니다(md·txt는 fill과 inspect만 지원합니다): ${path}`);
+}
+
 /** `src/repair`의 보정 함수를 동적으로 연결한다. 모듈이 없으면 사용법 오류로 안내한다. */
 async function loadRepair(): Promise<(bytes: Uint8Array) => { output: Uint8Array; repaired: unknown[] }> {
   const url = new URL("../../../packages/hwpx-engine/src/repair/index.ts", import.meta.url);
@@ -77,10 +90,47 @@ async function loadRepair(): Promise<(bytes: Uint8Array) => { output: Uint8Array
 
 // ── inspect ─────────────────────────────────────────────────────
 
+/** md·txt 요약: 블록·표·코드 블록 수와 `{{}}` 표기(코드 블록 안의 것은 기본으로 채우지 않으므로 따로 센다). */
+function inspectText(file: string, kind: TextKind, p: Parsed, out: Out): number {
+  if (str(p, "model") !== undefined) throw new UsageError("--model은 .hwpx에서만 쓸 수 있습니다(md·txt는 모델 JSON이 없습니다).");
+  const text = readUtf8(file, "입력 파일");
+  const doc = guard(() => parseText(text, kind), file);
+  const placeholders = new Map<string, number>();
+  let inCode = 0;
+  for (const b of doc.blocks) {
+    const found = findPlaceholders(b.text);
+    if (b.kind === "code") inCode += found.length;
+    else for (const h of found) placeholders.set(h.path, (placeholders.get(h.path) ?? 0) + 1);
+  }
+  const summary = {
+    file,
+    kind,
+    bytes: Buffer.byteLength(text),
+    blocks: doc.blocks.length,
+    tables: doc.blocks.filter((b) => b.kind === "table").length,
+    codeBlocks: doc.blocks.filter((b) => b.kind === "code").length,
+    placeholders: [...placeholders].sort(([a], [b]) => (a < b ? -1 : 1)).map(([path, count]) => ({ path, count })),
+    placeholdersInCode: inCode,
+    issues: doc.issues.length,
+  };
+  if (flag(p, "json")) {
+    out.log(json(summary));
+    return 0;
+  }
+  out.log(`파일: ${file} (${summary.bytes}바이트)`);
+  out.log(`형식 ${kind}: 블록 ${summary.blocks}개, 표 ${summary.tables}개, 코드 블록 ${summary.codeBlocks}개`);
+  out.log(`{{}} 표기 ${summary.placeholders.length}종${summary.placeholders.map((x) => `\n  - ${x.path} x${x.count}`).join("")}`);
+  if (inCode > 0) out.log(`코드 블록 안의 {{}} 표기 ${inCode}곳(채우려면 fill --fill-in-code)`);
+  printIssues(out, doc.issues);
+  return 0;
+}
+
 export function inspect(args: string[], out: Out): number {
-  const usage = "hwpx inspect <파일> [--json] [--model 출력.json] [--overwrite]";
+  const usage = "hwpx inspect <파일> [--json] [--model 출력.json] [--overwrite]   (.md·.txt는 --json만)";
   const p = parse(args, { json: { type: "boolean" }, model: { type: "string" }, overwrite: { type: "boolean" } }, { min: 1, max: 1 }, usage);
   const file = p.positionals[0] ?? "";
+  const textKind = textKindOf(file);
+  if (textKind !== undefined) return inspectText(file, textKind, p, out);
   const model = str(p, "model");
   if (model !== undefined) checkOutputPath(model, [file], flag(p, "overwrite"));
   const { bytes, doc } = openDocument(file);
@@ -132,7 +182,9 @@ export function inspect(args: string[], out: Out): number {
 export function candidates(args: string[], out: Out): number {
   const usage = "hwpx candidates <파일> [--json]";
   const p = parse(args, { json: { type: "boolean" } }, { min: 1, max: 1 }, usage);
-  const { doc } = openDocument(p.positionals[0] ?? "");
+  const file = p.positionals[0] ?? "";
+  rejectText(file, "candidates");
+  const { doc } = openDocument(file);
   const found = findCandidates(doc);
   if (flag(p, "json")) {
     out.log(json(found));
@@ -154,6 +206,7 @@ function fragmentExtract(args: string[], out: Out): number {
     usage,
   );
   const file = p.positionals[0] ?? "";
+  rejectText(file, "fragment extract");
   const output = need(p, "output", usage);
   const selection = {
     sectionIndex: intValue(need(p, "section", usage), "section"),
@@ -176,22 +229,31 @@ function fragmentExtract(args: string[], out: Out): number {
   }
 }
 
-/** 생성 결과를 사람이 읽을 글로 출력한다(값 원문은 없다). */
-function printResult(out: Out, result: GenerateResult): void {
-  const r = result.report;
-  const plan = r.plan;
-  out.log(`방식: ${r.mode}${r.dryRun ? " (모의 실행)" : ""}`);
+/** 채움 계획 보고서를 사람이 읽을 글로 출력한다(hwpx·md·txt 공통, 값 원문은 없다). */
+function printPlan(out: Out, plan: FillReport): void {
   out.log(`액션 ${plan.actions.length}개, 건너뜀 ${plan.skipped.length}, 버림 ${plan.dropped.length}, 재배치 ${plan.relocated.length}, 유지 ${plan.kept.length}종`);
   if (plan.requiredPaths.length > 0) out.log(`필요한 데이터 경로: ${plan.requiredPaths.join(", ")}`);
   if (plan.missingPaths.length > 0) out.log(`데이터에 없던 경로: ${plan.missingPaths.join(", ")}`);
   for (const s of plan.skipped) out.log(`건너뜀 [${s.code}] ${s.ruleId} ${s.anchor}: ${s.message}`);
   const expected = Object.entries(plan.expected);
   if (expected.length > 0) out.log(`예상 수량 증감: ${expected.map(([k, v]) => `${k} ${v > 0 ? "+" : ""}${v}`).join(", ")}`);
-  const inherited = r.inherited;
-  if (inherited.duplicateIds.length + inherited.danglingRefs.length > 0) {
-    out.log(
-      `상속한 문제(조각이 소스에서 갖고 있던 것): 겹치는 id ${inherited.duplicateIds.length}종, 없는 참조 ${inherited.danglingRefs.length}종, 그로 설명되는 검사 오류 ${inherited.errors.length}종(새 오류로 세지 않음)`,
-    );
+}
+
+/** 생성 결과를 사람이 읽을 글로 출력한다(값 원문은 없다). */
+function printResult(out: Out, result: GenerateResult | TextResult): void {
+  const r = result.report;
+  if ("mode" in r) {
+    out.log(`방식: ${r.mode}${r.dryRun ? " (모의 실행)" : ""}`);
+    printPlan(out, r.plan);
+    const inherited = r.inherited;
+    if (inherited.duplicateIds.length + inherited.danglingRefs.length > 0) {
+      out.log(
+        `상속한 문제(조각이 소스에서 갖고 있던 것): 겹치는 id ${inherited.duplicateIds.length}종, 없는 참조 ${inherited.danglingRefs.length}종, 그로 설명되는 검사 오류 ${inherited.errors.length}종(새 오류로 세지 않음)`,
+      );
+    }
+  } else {
+    out.log(`형식: ${r.kind}${r.dryRun ? " (모의 실행)" : ""}`);
+    printPlan(out, r.plan);
   }
   printIssues(out, r.issues);
 }
@@ -201,13 +263,14 @@ async function runGenerate(
   bytes: Uint8Array,
   template: ReturnType<typeof emptyTemplate>,
   dataset: ReturnType<typeof readDataset>,
-  options: { mode: GateMode; missing?: MissingPolicy; dryRun: boolean; fragments: Record<string, string> },
+  options: { mode: GateMode; missing?: MissingPolicy; dryRun: boolean; fragments: Record<string, string>; reissueInternal: boolean },
 ): Promise<GenerateResult> {
   const call = {
     mode: options.mode,
     dryRun: options.dryRun,
     fragments: options.fragments,
     ...(options.missing === undefined ? {} : { missing: options.missing }),
+    ...(options.reissueInternal ? { reissueInternalDuplicates: true } : {}),
     ...(options.mode === "repair" ? { repair: await loadRepair() } : {}),
   };
   try {
@@ -219,7 +282,8 @@ async function runGenerate(
 }
 
 async function fragmentImport(args: string[], out: Out): Promise<number> {
-  const usage = "hwpx fragment import <대상> <조각.json> --section N --index I [--parent 주소] [--before] -o 출력.hwpx [--mode baseline|strict|repair] [--overwrite]";
+  const usage =
+    "hwpx fragment import <대상> <조각.json> --section N --index I [--parent 주소] [--before] -o 출력.hwpx [--mode baseline|strict|repair] [--reissue-internal] [--report r.json] [--overwrite]";
   const p = parse(
     args,
     {
@@ -229,18 +293,24 @@ async function fragmentImport(args: string[], out: Out): Promise<number> {
       before: { type: "boolean" },
       output: { type: "string", short: "o" },
       mode: { type: "string" },
+      "reissue-internal": { type: "boolean" },
+      report: { type: "string" },
       overwrite: { type: "boolean" },
     },
     { min: 2, max: 2 },
     usage,
   );
   const [target = "", fragmentFile = ""] = p.positionals;
+  rejectText(target, "fragment import");
   const output = need(p, "output", usage);
   const sectionIndex = intValue(need(p, "section", usage), "section");
   const index = intValue(need(p, "index", usage), "index");
   const parent = str(p, "parent") === undefined ? [] : parseAddress(str(p, "parent") ?? "");
   const mode = modeOf(p, usage);
-  checkOutputPath(output, [target, fragmentFile], flag(p, "overwrite"));
+  const overwrite = flag(p, "overwrite");
+  const reportPath = str(p, "report");
+  checkOutputPath(output, [target, fragmentFile], overwrite);
+  if (reportPath !== undefined) checkOutputPath(reportPath, [target, fragmentFile, output], overwrite);
 
   const { bytes, doc } = openDocument(target);
   let fragment: unknown;
@@ -258,8 +328,8 @@ async function fragmentImport(args: string[], out: Out): Promise<number> {
     anchors: [anchor],
     rules: [{ id: "import", do: { type: "inject", anchor: "target", position: flag(p, "before") ? "before" : "after", fragment } }],
   });
-  const result = await runGenerate(target, bytes, template, readDataset({}), { mode, missing: "keep", dryRun: false, fragments: {} });
-  return finishGenerate(out, result, output, [target, fragmentFile], flag(p, "overwrite"), undefined);
+  const result = await runGenerate(target, bytes, template, readDataset({}), { mode, missing: "keep", dryRun: false, fragments: {}, reissueInternal: flag(p, "reissue-internal") });
+  return finishGenerate(out, result, output, [target, fragmentFile], overwrite, reportPath);
 }
 
 export function fragmentCommand(args: string[], out: Out): Promise<number> | number {
@@ -271,9 +341,16 @@ export function fragmentCommand(args: string[], out: Out): Promise<number> | num
 
 // ── fill ────────────────────────────────────────────────────────
 
-function finishGenerate(out: Out, result: GenerateResult, output: string | undefined, inputs: string[], overwrite: boolean, reportPath: string | undefined): number {
+function finishGenerate(
+  out: Out,
+  result: GenerateResult | TextResult,
+  output: string | undefined,
+  inputs: string[],
+  overwrite: boolean,
+  reportPath: string | undefined,
+): number {
   if (reportPath !== undefined) {
-    const body = { ok: result.ok, dryRun: result.ok ? result.dryRun : false, report: result.report, ...(result.ok && !result.dryRun ? { ledger: result.ledger } : {}) };
+    const body = { ok: result.ok, dryRun: result.ok ? result.dryRun : false, report: result.report, ...("ledger" in result ? { ledger: result.ledger } : {}) };
     writeSafely(reportPath, json(body), inputs, overwrite);
   }
   printResult(out, result);
@@ -284,13 +361,14 @@ function finishGenerate(out: Out, result: GenerateResult, output: string | undef
   if (result.dryRun) return 0;
   if (output === undefined) throw new UsageError("-o 출력 경로가 필요합니다.");
   writeSafely(output, result.output, inputs, overwrite);
-  out.log(`저장했습니다: ${output} (${result.output.length}바이트)`);
+  out.log(`저장했습니다: ${output} (${typeof result.output === "string" ? Buffer.byteLength(result.output) : result.output.length}바이트)`);
   return 0;
 }
 
 export async function fill(args: string[], out: Out): Promise<number> {
   const usage =
-    "hwpx fill <파일> --data d.json [--template t.json] -o 출력 [--mode baseline|strict|repair] [--missing error|empty|keep] [--dry-run] [--report r.json] [--overwrite]";
+    "hwpx fill <파일> --data d.json [--template t.json] -o 출력 [--missing error|empty|keep] [--dry-run] [--report r.json] [--overwrite]\n" +
+    "  .hwpx 전용: [--mode baseline|strict|repair] [--reissue-internal]   .md·.txt 전용: [--fill-in-code]";
   const p = parse(
     args,
     {
@@ -302,6 +380,8 @@ export async function fill(args: string[], out: Out): Promise<number> {
       "dry-run": { type: "boolean" },
       report: { type: "string" },
       overwrite: { type: "boolean" },
+      "reissue-internal": { type: "boolean" },
+      "fill-in-code": { type: "boolean" },
     },
     { min: 1, max: 1 },
     usage,
@@ -309,8 +389,14 @@ export async function fill(args: string[], out: Out): Promise<number> {
   const file = p.positionals[0] ?? "";
   const dryRun = flag(p, "dry-run");
   const overwrite = flag(p, "overwrite");
-  if (/\.(md|txt)$/i.test(file)) throw new UsageError("md·txt 문서는 아직 지원하지 않습니다(.hwpx만 처리합니다).");
-  if (!/\.hwpx$/i.test(file)) throw new UsageError(`.hwpx 파일만 처리합니다: ${file}`);
+  const textKind = textKindOf(file);
+  if (textKind === undefined && !/\.hwpx$/i.test(file)) throw new UsageError(`.hwpx·.md·.txt 파일만 처리합니다: ${file}`);
+  if (textKind !== undefined) {
+    if (str(p, "mode") !== undefined) throw new UsageError(`--mode는 .hwpx에서만 쓸 수 있습니다(md·txt는 저장 게이트 방식이 없습니다).\n사용법: ${usage}`);
+    if (flag(p, "reissue-internal")) throw new UsageError(`--reissue-internal은 .hwpx에서만 쓸 수 있습니다(md·txt 조각에는 id가 없습니다).\n사용법: ${usage}`);
+  } else if (flag(p, "fill-in-code")) {
+    throw new UsageError(`--fill-in-code는 .md·.txt에서만 쓸 수 있습니다.\n사용법: ${usage}`);
+  }
   const dataPath = need(p, "data", usage);
   const output = str(p, "output");
   if (output === undefined && !dryRun) throw new UsageError(`-o 출력 경로가 필요합니다(모의 실행은 --dry-run).\n사용법: ${usage}`);
@@ -325,20 +411,25 @@ export async function fill(args: string[], out: Out): Promise<number> {
   if (output !== undefined) checkOutputPath(output, inputs, overwrite);
   if (reportPath !== undefined) checkOutputPath(reportPath, [...inputs, ...(output === undefined ? [] : [output])], overwrite);
 
-  const bytes = readBytes(file, "입력 파일");
   const dataset = guard(() => readDataset(readText(dataPath, "데이터 파일")), dataPath);
   const template = templatePath === undefined ? emptyTemplate() : guard(() => readTemplate(readText(templatePath, "템플릿 파일")), templatePath);
+  // 조각 경로는 템플릿 파일이 있는 폴더 기준이다. 조각 파일도 입력이므로 출력 경로와 같으면 거부한다.
   const fragments: Record<string, string> = {};
+  const fragmentFiles: string[] = [];
   for (const path of fragmentPaths(template)) {
-    fragments[path] = readText(resolve(dirname(templatePath ?? "."), path), `조각 파일(${path})`);
+    const fragmentFile = resolve(dirname(templatePath ?? "."), path);
+    fragmentFiles.push(fragmentFile);
+    fragments[path] = readText(fragmentFile, `조각 파일(${path})`);
   }
-  const result = await runGenerate(file, bytes, template, dataset, {
-    mode,
-    dryRun,
-    fragments,
-    ...(missingText === undefined ? {} : { missing: missingText }),
-  });
-  return finishGenerate(out, result, output, inputs, overwrite, reportPath);
+  const missing: { missing?: MissingPolicy } = missingText === undefined ? {} : { missing: missingText };
+  const allInputs = [...inputs, ...fragmentFiles];
+  if (textKind !== undefined) {
+    const text = readUtf8(file, "입력 파일");
+    const result = guard(() => generateText(text, textKind, template, dataset, { dryRun, fragments, fillInCode: flag(p, "fill-in-code"), ...missing }), file);
+    return finishGenerate(out, result, output, allInputs, overwrite, reportPath);
+  }
+  const result = await runGenerate(file, readBytes(file, "입력 파일"), template, dataset, { mode, dryRun, fragments, reissueInternal: flag(p, "reissue-internal"), ...missing });
+  return finishGenerate(out, result, output, allInputs, overwrite, reportPath);
 }
 
 /** 템플릿·데이터를 읽다가 나는 `TPL_*`·`DATA_*` 오류를 읽을 수 없는 입력(종료 코드 2)으로 바꾼다. */
@@ -357,9 +448,11 @@ export function validate(args: string[], out: Out): number {
   const usage = "hwpx validate <파일> [--baseline 원본] [--strict] [--json]";
   const p = parse(args, { baseline: { type: "string" }, strict: { type: "boolean" }, json: { type: "boolean" } }, { min: 1, max: 1 }, usage);
   const file = p.positionals[0] ?? "";
+  const baselinePath = str(p, "baseline");
+  rejectText(file, "validate");
+  if (baselinePath !== undefined) rejectText(baselinePath, "validate");
   const strict = flag(p, "strict");
   const report = validateDocument(readBytes(file, "입력 파일"), { strict });
-  const baselinePath = str(p, "baseline");
   const comparison = baselinePath === undefined ? undefined : compareToBaseline(validateDocument(readBytes(baselinePath, "기준선 파일")), report);
   const failed = comparison === undefined || strict ? report.errors.length > 0 : comparison.newErrors.length > 0;
   if (flag(p, "json")) {
@@ -384,6 +477,8 @@ export function diff(args: string[], out: Out): number {
   const usage = "hwpx diff <원본> <결과> [--json]";
   const p = parse(args, { json: { type: "boolean" } }, { min: 2, max: 2 }, usage);
   const [aPath = "", bPath = ""] = p.positionals;
+  rejectText(aPath, "diff");
+  rejectText(bPath, "diff");
   const a = readBytes(aPath, "원본 파일");
   const b = readBytes(bPath, "결과 파일");
   let archiveA;
@@ -442,6 +537,7 @@ export function compile(args: string[], out: Out): number {
   const usage = "hwpx compile <파일> -o 승격본 --experimental [--overwrite]";
   const p = parse(args, { output: { type: "string", short: "o" }, experimental: { type: "boolean" }, overwrite: { type: "boolean" } }, { min: 1, max: 1 }, usage);
   const file = p.positionals[0] ?? "";
+  rejectText(file, "compile");
   if (!flag(p, "experimental")) {
     throw new UsageError(`compile은 실험 기능입니다(한컴에서 열리는지 확인되기 전). --experimental을 붙여야 합니다.\n사용법: ${usage}`);
   }

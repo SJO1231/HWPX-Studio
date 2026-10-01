@@ -27,6 +27,19 @@ export function readText(path: string, what: string): string {
   }
 }
 
+/**
+ * UTF-8 글 파일을 읽는다. BOM은 문자열 맨 앞에 그대로 남기고(`ignoreBOM`), UTF-8이 아니면 `InputError`(종료 코드 2)다.
+ * 줄바꿈은 바꾸지 않는다.
+ */
+export function readUtf8(path: string, what: string): string {
+  const bytes = readBytes(path, what);
+  try {
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    throw new InputError(`${what}이(가) UTF-8이 아닙니다: ${path}`);
+  }
+}
+
 /** 실제 경로(링크를 따라간 것). 아직 없는 파일은 부모 폴더의 실제 경로에 이름을 붙인다. */
 function realTarget(path: string): string {
   const abs = resolve(path);

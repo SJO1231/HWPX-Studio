@@ -4,16 +4,21 @@ import { InputError, UsageError, type Out } from "./io.ts";
 export const USAGE = `사용법: hwpx <명령> [옵션]
 
 명령
-  inspect <파일> [--json] [--model 출력.json]            구역·문단·표·누름틀·{{}}·자원 요약
+  inspect <파일> [--json] [--model 출력.json]            구역·문단·표·누름틀·{{}}·자원 요약(.md·.txt는 블록·표·코드 블록·{{}}, --model 없음)
   candidates <파일> [--json]                            채울 자리 후보 목록
   fragment extract <파일> --section N --from A --to B [--parent 주소] -o 조각.json
   fragment import <대상> <조각.json> --section N --index I [--parent 주소] [--before] -o 출력.hwpx
-  fill <파일> --data d.json [--template t.json] -o 출력 [--mode baseline|strict|repair]
-       [--missing error|empty|keep] [--dry-run] [--report r.json] [--overwrite]
+       [--mode baseline|strict|repair] [--reissue-internal] [--report r.json] [--overwrite]
+  fill <파일> --data d.json [--template t.json] -o 출력 [--missing error|empty|keep]
+       [--dry-run] [--report r.json] [--overwrite]               확장자로 형식을 고른다(.hwpx, .md, .txt)
+       .hwpx 전용: [--mode baseline|strict|repair] [--reissue-internal]
+       .md·.txt 전용: [--fill-in-code]
   validate <파일> [--baseline 원본] [--strict] [--json]  검사
   diff <원본> <결과> [--json]                            항목별 동일 여부와 수량 비교
   compile <파일> -o 승격본 --experimental                {{}}를 누름틀로(실험)
 
+.md·.txt는 inspect와 fill만 받는다. 나머지 명령은 .hwpx만 받는다.
+옵션 --reissue-internal: 조각 안에서 겹치는 id를 새 값으로 바꾼다(기본은 소스 원문 그대로).
 종료 코드: 0 성공, 1 검사·게이트 실패, 2 사용법 오류·읽을 수 없는 입력`;
 
 /** 명령줄을 실행하고 종료 코드를 돌려준다. 출력은 `out`으로만 한다. */

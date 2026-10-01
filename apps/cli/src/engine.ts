@@ -30,5 +30,7 @@ export {
   findPlaceholders,
   type Template,
   type MissingPolicy,
+  type FillReport,
 } from "../../../packages/hwpx-engine/src/template/index.ts";
+export { generateText, parseText, type TextKind, type TextResult } from "../../../packages/hwpx-engine/src/text/index.ts";
 export { validateDocument, compareToBaseline } from "../../../packages/hwpx-engine/src/validate/index.ts";

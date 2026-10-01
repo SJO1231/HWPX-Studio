@@ -22,6 +22,8 @@ export type GenerateOptions = FillOptions & {
    * 보정한 결과가 이후의 원본이 된다.
    */
   repair?: (bytes: Uint8Array) => { output: Uint8Array; repaired: unknown[] };
+  /** 주입하는 조각 안에서 겹치는 id도 새 값으로 바꾼다(`planImport`의 같은 이름 옵션). 기본 끔: 소스 원문 그대로. */
+  reissueInternalDuplicates?: boolean;
   /** 시험 전용 훅: 단계마다 적용 직후 바이트를 바꿔 게이트가 결함을 잡는지 본다. */
   testHooks?: ExecuteHooks;
 };
@@ -146,7 +148,7 @@ export function generate(bytes: Uint8Array, template: Template, dataset: Dataset
   if (dryRun) return { ok: true, dryRun: true, report };
 
   // 3. 적용·재파싱(단계마다 보존·수량·값 재읽기 확인)
-  const exec = executeFillPlan(doc, built.plan, options.testHooks);
+  const exec = executeFillPlan(doc, built.plan, options.testHooks, options.reissueInternalDuplicates === true ? { reissueInternalDuplicates: true } : {});
   issues.push(...exec.issues);
   report.stages = exec.stages.map((s) => ({ label: s.label, edits: s.plan.edits.length, additions: s.plan.additions.length }));
   report.reread = exec.checked;
