@@ -40,3 +40,20 @@ export {
   type ObjectJson,
   type ResourceJson,
 } from "./store/export.ts";
+
+export { applyPlan, mergePlans, type SpanEdit, type EditPlan } from "./edit/plan.ts";
+
+export type {
+  Fragment,
+  FragmentBinary,
+  FragmentRef,
+  FragmentResource,
+  FragmentSelection,
+  InsertPoint,
+  InstanceIdRole,
+} from "./fragment/types.ts";
+export { selectTable } from "./fragment/select.ts";
+export { extractFragment } from "./fragment/extract.ts";
+export { planImport } from "./fragment/import.ts";
+export { fingerprintResource, makeLookup, type FingerprintLookup } from "./fragment/resources.ts";
+export { serializeFragment, parseFragment } from "./fragment/json.ts";

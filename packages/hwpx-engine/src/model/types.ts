@@ -54,7 +54,7 @@ export type HeaderModel = {
 
 // ── 본문 ────────────────────────────────────────────────────────
 
-export type BodyRefKind = "charPr" | "paraPr" | "style" | "borderFill" | "binaryItem" | "numbering" | "unknown";
+export type BodyRefKind = "charPr" | "paraPr" | "style" | "borderFill" | "binaryItem" | "numbering" | "memoShape" | "unknown";
 
 export type BodyRef = {
   kind: BodyRefKind;

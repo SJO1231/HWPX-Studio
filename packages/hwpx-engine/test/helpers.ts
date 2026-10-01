@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { crc32, deflateRawSync } from "node:zlib";
-import { openPackage, parseDocument, readEntry, rewriteArchive, type HwpxDocument } from "../src/index.ts";
+import { openPackage, parseDocument, readEntry, rewriteArchive, xmlToJson, type HwpxDocument, type XmlJson } from "../src/index.ts";
 
 const FIXTURE_DIR = new URL("./fixtures/", import.meta.url);
 
@@ -220,4 +220,106 @@ export function mutateEntryText(bytes: Uint8Array, entry: string, change: (text:
   const changed = change(original);
   if (changed === original) throw new Error(`변형이 ${entry}를 바꾸지 못했다`);
   return rewriteArchive(bytes, pkg.archive, { replace: new Map([[entry, utf8(changed)]]) });
+}
+
+// ── 조각 시험용: 엔진의 가져오기 코드와 독립인 기준 ───────────────────────────
+
+/** 한 fixtures 파일을 열어 모델을 만든다. 하위 폴더는 이름에 포함한다(예: "hancom/picture"). */
+export function loadDoc(name: string): HwpxDocument {
+  return parseDocument(openPackage(readFixture(name)));
+}
+
+export function reparse(bytes: Uint8Array): HwpxDocument {
+  return parseDocument(openPackage(bytes));
+}
+
+const ENTITIES: Record<string, string> = { lt: "<", gt: ">", amp: "&", quot: '"', apos: "'" };
+
+function decodeText(raw: string): string {
+  return raw.replace(/&(?:#(\d+)|#x([0-9a-fA-F]+)|(\w+));/g, (_m, dec?: string, hex?: string, name?: string) =>
+    name !== undefined ? (ENTITIES[name] ?? "") : String.fromCodePoint(dec !== undefined ? Number(dec) : parseInt(hex ?? "0", 16)),
+  );
+}
+
+/** `hp:t` 안의 글을 문서 순서로 정규식만으로 뽑는다(안쪽 태그는 뺀다). */
+export function hpTexts(xml: string): string[] {
+  return [...xml.matchAll(/<hp:t(?:\s[^>]*)?>([\s\S]*?)<\/hp:t>/g)].map((m) => decodeText((m[1] ?? "").replace(/<[^>]+>/g, "")));
+}
+
+/** 모든 속성값을 비우고 줄 배치 캐시를 지운다. 조각 본문이 원문 그대로이고 속성값만 달라졌는지 비교하는 데 쓴다. */
+export function maskValues(xml: string): string {
+  return xml.replace(/<hp:linesegarray>[\s\S]*?<\/hp:linesegarray>/g, "").replace(/="[^"]*"/g, '=""');
+}
+
+const OBJECT_TAG_RE = "(?:tbl|pic|ole|container|equation|rect|ellipse|arc|polygon|curve|line|connectLine|textart|video|chart)";
+
+/** 구역 원문에서 개체(표·그림 등)의 id를 문서 순서로 모은다. */
+export function objectIdsIn(sectionText: string): string[] {
+  return [...sectionText.matchAll(new RegExp(`<hp:${OBJECT_TAG_RE}\\b[^>]*?\\sid="([^"]*)"`, "g"))].map((m) => m[1] ?? "");
+}
+
+export function instIdsIn(sectionText: string): string[] {
+  return [...sectionText.matchAll(/\s(?:instId|instid)="([^"]*)"/g)].map((m) => m[1] ?? "");
+}
+
+export function duplicates(values: string[]): string[] {
+  const seen = new Set<string>();
+  const dup = new Set<string>();
+  for (const v of values) (seen.has(v) ? dup : seen).add(v);
+  return [...dup];
+}
+
+/** 본문 원문에서 서식 참조(글자·문단·스타일·테두리)를 문서 순서로 모은다. */
+export function formatRefsIn(xml: string): { kind: string; id: string }[] {
+  const kinds: Record<string, string> = { charPrIDRef: "charPr", paraPrIDRef: "paraPr", styleIDRef: "style", borderFillIDRef: "borderFill" };
+  return [...xml.matchAll(/\s(charPrIDRef|paraPrIDRef|styleIDRef|borderFillIDRef)="([^"]*)"/g)].map((m) => ({
+    kind: kinds[m[1] ?? ""] ?? "",
+    id: m[2] ?? "",
+  }));
+}
+
+const FONT_LANG_NAMES = ["HANGUL", "LATIN", "HANJA", "JAPANESE", "OTHER", "SYMBOL", "USER"];
+const local = (qname: string): string => qname.slice(qname.indexOf(":") + 1);
+
+/**
+ * 자원 하나를 참조까지 전개한 JSON 트리. 자신의 id와 다른 자원을 가리키는 id는 빼고 대상의 전개로 바꾼다.
+ * 스타일 이름의 ` (n)` 접미사는 뗀다(이름 충돌 시 붙인 것). 대상이 없으면 `<missing:id>`, 순환이면 `<cycle:n>`.
+ */
+export function expandResource(doc: HwpxDocument, kind: string, id: string, lang?: string, stack: string[] = []): unknown {
+  const item = (doc.header.resources[kind] ?? []).find((i) => i.id === id && (kind !== "font" || i.lang === lang));
+  if (item === undefined) return `<missing:${id}>`;
+  const key = `${kind}/${lang ?? ""}/${id}`;
+  const at = stack.indexOf(key);
+  if (at >= 0) return `<cycle:${stack.length - at}>`;
+  const inner = [...stack, key];
+
+  const target = (node: XmlJson, attr: string, root: boolean): [string, string | undefined] | undefined => {
+    const n = local(node.name);
+    if (kind === "charPr") {
+      if (n === "charPr" && attr === "borderFillIDRef") return ["borderFill", undefined];
+      if (n === "fontRef" && FONT_LANG_NAMES.includes(attr.toUpperCase())) return ["font", attr.toUpperCase()];
+    } else if (kind === "paraPr") {
+      if (n === "paraPr" && attr === "tabPrIDRef") return ["tabPr", undefined];
+      if (n === "border" && attr === "borderFillIDRef") return ["borderFill", undefined];
+      if (n === "heading" && attr === "idRef" && node.attrs["type"] === "NUMBER") return ["numbering", undefined];
+      if (n === "heading" && attr === "idRef" && node.attrs["type"] === "BULLET") return ["bullet", undefined];
+    } else if (kind === "style" && root) {
+      if (attr === "paraPrIDRef") return ["paraPr", undefined];
+      if (attr === "charPrIDRef") return ["charPr", undefined];
+      if (attr === "nextStyleIDRef") return ["style", undefined];
+    }
+    return undefined;
+  };
+  const expand = (node: XmlJson, root: boolean): unknown => {
+    const attrs: Record<string, unknown> = {};
+    for (const [name, value] of Object.entries(node.attrs)) {
+      if (name.startsWith("xmlns")) continue;
+      const t = target(node, name, root);
+      if (root && name === "id") continue;
+      if (root && kind === "style" && name === "name") attrs[name] = value.replace(/ \(\d+\)$/, "");
+      else attrs[name] = t === undefined || value === "4294967295" ? value : expandResource(doc, t[0], value, t[1], inner);
+    }
+    return { name: local(node.name), attrs, text: node.text.trim(), children: node.children.map((c) => expand(c, false)) };
+  };
+  return expand(xmlToJson(item.element), true);
 }

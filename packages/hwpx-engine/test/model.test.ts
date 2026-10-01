@@ -710,7 +710,19 @@ for (const name of FIXTURE_NAMES) {
     for (const i of doc.issues.filter((x) => x.code === "MODEL_REF_MISSING")) assert.equal(i.severity, "error");
     // IDRef로 끝나지만 자원이 아닌 속성은 unknown으로 모아 경고한다(문서마다 개수는 원문에서 센다)
     const unknownNames = [...new Set([...sectionText.matchAll(/\s(\w*IDRef)="/g)].map((m) => m[1] ?? ""))].filter(
-      (n) => !["charPrIDRef", "paraPrIDRef", "styleIDRef", "borderFillIDRef", "binaryItemIDRef", "outlineShapeIDRef", "beginIDRef"].includes(n),
+      (n) =>
+        ![
+          "charPrIDRef",
+          "paraPrIDRef",
+          "styleIDRef",
+          "borderFillIDRef",
+          "binaryItemIDRef",
+          "outlineShapeIDRef",
+          "memoShapeIDRef",
+          "beginIDRef",
+          "linkListIDRef",
+          "linkListNextIDRef",
+        ].includes(n),
     );
     const warned = doc.issues.filter((i) => i.code === "MODEL_UNKNOWN_REF").map((i) => /해석하지 못한 (\w+) 속성이 (\d+)곳/.exec(i.message));
     assert.deepEqual(warned.map((m) => m?.[1]).sort(), unknownNames.sort());
@@ -801,7 +813,9 @@ test("5.2 collectBodyRefs: 요소와 후손 전체, 종류별 분류, 누름틀 
   assert.equal(byKind("style"), count(text, /\sstyleIDRef="/g));
   assert.equal(byKind("borderFill"), count(text, /\sborderFillIDRef="/g));
   assert.equal(byKind("numbering"), count(text, /\soutlineShapeIDRef="/g));
-  assert.deepEqual(refs.filter((r) => r.kind === "unknown").map((r) => r.attr.qname), ["memoShapeIDRef"]);
+  // 알 수 없는 참조는 없다: memoShapeIDRef는 메모 모양 참조(memoShape)다
+  assert.deepEqual(refs.filter((r) => r.kind === "unknown").map((r) => r.attr.qname), []);
+  assert.deepEqual(refs.filter((r) => r.kind === "memoShape").map((r) => r.attr.qname), ["memoShapeIDRef"]);
   assert.ok(!refs.some((r) => r.attr.qname === "beginIDRef"));
   for (const r of refs) assert.equal(text.slice(r.attr.valueStart, r.attr.valueEnd), r.id);
   // 일부 요소만 주면 그 후손만 센다
@@ -817,6 +831,37 @@ test("5.2 collectBodyRefs: 요소와 후손 전체, 종류별 분류, 누름틀 
 function tokenizeRoot(xml: string) {
   return buildTree(xml, tokenize(xml));
 }
+
+test("5.2 linkListIDRef·linkListNextIDRef는 알 수 없는 참조가 아니다 (하위 목록의 연결 속성)", () => {
+  const sub = '<hp:subList linkListIDRef="0" linkListNextIDRef="0"><hp:p paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0"/></hp:p></hp:subList>';
+  const doc = parseSynthetic([`<hp:p paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0"><hp:tbl>${sub}</hp:tbl></hp:run></hp:p>`]);
+  const refs = collectBodyRefs(doc.sections[0]?.root ?? tokenizeRoot("<a/>"));
+  assert.deepEqual(refs.filter((r) => r.kind === "unknown"), []);
+  assert.deepEqual(doc.issues.filter((i) => i.code === "MODEL_UNKNOWN_REF"), []);
+  // 다른 IDRef는 그대로 알 수 없는 참조다
+  assert.deepEqual(collectBodyRefs(tokenizeRoot('<a linkListIDRef="1" fooIDRef="2"/>')).map((r) => [r.kind, r.id]), [["unknown", "2"]]);
+});
+
+test("5.2 memoShapeIDRef: 메모 모양 목록이 있으면 대상을 확인하고, 없거나 값이 '없음'이면 무시한다", () => {
+  const sec = (id: string) => `<hp:p paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0"><hp:secPr memoShapeIDRef="${id}"/></hp:run></hp:p>`;
+  const withList = MINIMAL_HEADER.replace(
+    "</hh:refList>",
+    '<hh:memoProperties itemCnt="1"><hh:memoPr id="1" width="15591"/></hh:memoProperties></hh:refList>',
+  );
+  const missing = (doc: HwpxDocument) => doc.issues.filter((i) => i.code === "MODEL_REF_MISSING").map((i) => i.message.split("이(가)")[0]);
+  // 목록이 있고 대상이 있다
+  assert.deepEqual(missing(parseSynthetic([sec("1")], withList)), []);
+  // 목록이 있는데 대상이 없다
+  assert.deepEqual(missing(parseSynthetic([sec("9")], withList)), ["memoShape 9"]);
+  // '없음' 값(0)은 목록이 있어도 확인하지 않는다
+  assert.deepEqual(missing(parseSynthetic([sec("0")], withList)), []);
+  // 목록이 없으면 무시한다
+  const none = parseSynthetic([sec("9")]);
+  assert.deepEqual(missing(none), []);
+  assert.deepEqual(none.issues.filter((i) => i.code === "MODEL_UNKNOWN_REF"), []);
+  // BodyRef 종류는 memoShape다
+  assert.deepEqual(collectBodyRefs(none.sections[0]?.root ?? tokenizeRoot("<a/>")).filter((r) => r.kind === "memoShape").map((r) => r.id), ["9"]);
+});
 
 // ── M6 ──────────────────────────────────────────────────────────────────
 

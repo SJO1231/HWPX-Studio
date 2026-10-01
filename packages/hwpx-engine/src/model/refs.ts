@@ -10,10 +10,16 @@ const BODY_REF_KINDS = new Map<string, BodyRefKind>([
   ["borderFillIDRef", "borderFill"],
   ["binaryItemIDRef", "binaryItem"],
   ["outlineShapeIDRef", "numbering"],
+  ["memoShapeIDRef", "memoShape"],
 ]);
 
-// 이름은 IDRef로 끝나지만 자원이 아니라 누름틀 짝(FieldMark)을 가리키는 속성
-const FIELD_PAIR_ATTRS = new Set(["beginIDRef"]);
+// 이름은 IDRef로 끝나지만 자원 참조가 아닌 속성: 누름틀 짝(FieldMark)을 가리키는 beginIDRef,
+// 하위 목록(subList)의 연결 속성 linkListIDRef·linkListNextIDRef
+const NON_RESOURCE_ATTRS = new Set(["beginIDRef", "linkListIDRef", "linkListNextIDRef"]);
+
+// 메모 모양 목록(memoProperties) 참조. 목록이 없거나 값이 "없음"(0, 4294967295, -1)이면 확인하지 않는다.
+const MEMO_LIST = "other:memoProperties";
+const NO_MEMO_SHAPE = new Set(["0", "4294967295", "-1"]);
 
 /** 요소와 그 후손 전체에서 자원을 가리키는 속성을 모은다. */
 export function collectBodyRefs(element: XElement): BodyRef[] {
@@ -23,7 +29,7 @@ export function collectBodyRefs(element: XElement): BodyRef[] {
       const kind = BODY_REF_KINDS.get(attr.qname);
       if (kind !== undefined) {
         refs.push({ kind, id: attr.value, element: el, attr });
-      } else if (attr.qname.endsWith("IDRef") && !FIELD_PAIR_ATTRS.has(attr.qname)) {
+      } else if (attr.qname.endsWith("IDRef") && !NON_RESOURCE_ATTRS.has(attr.qname)) {
         refs.push({ kind: "unknown", id: attr.value, element: el, attr });
       }
     }
@@ -79,6 +85,13 @@ export function checkReferences(pkg: HwpxPackage, header: HeaderModel, sections:
       if (ref.kind === "unknown") {
         const name = ref.attr.qname;
         tally(unknown, `${sec.entryName}\u0000${name}`, (n) => `자원 참조로 해석하지 못한 ${name} 속성이 ${n}곳 있습니다.`);
+      } else if (ref.kind === "memoShape") {
+        const memoShapes = header.resources[MEMO_LIST];
+        if (memoShapes === undefined || memoShapes.length === 0 || NO_MEMO_SHAPE.has(ref.id)) continue;
+        if (!memoShapes.some((m) => m.id === ref.id)) {
+          const label = `memoShape ${ref.id}`;
+          tally(missing, `${sec.entryName}\u0000${label}`, (n) => `${label}이(가) 없는데 ${n}곳에서 가리킵니다.`);
+        }
       } else if (!exists(ref.kind, undefined, ref.id)) {
         const label = `${ref.kind} ${ref.id}`;
         tally(missing, `${sec.entryName}\u0000${label}`, (n) => `${label}이(가) 없는데 ${n}곳에서 가리킵니다.`);
