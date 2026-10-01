@@ -102,6 +102,59 @@ test("7.2 F10 secPr가 든 문단을 선택하면 FRAG_SECTION_PROPS (범위 안
   assert.doesNotThrow(() => extractFragment(loadDoc("D1"), sel(0, 1, 12)));
 });
 
+// ── 7.2 누름틀을 자르는 선택 ────────────────────────────────────────────
+
+const fieldBegin = (id: string, name = "n"): string =>
+  `<hp:ctrl><hp:fieldBegin id="${id}" type="CLICK_HERE" name="${name}" editable="1" dirty="0" zorder="-1" fieldid="1"/></hp:ctrl>`;
+const fieldEnd = (id: string): string => `<hp:ctrl><hp:fieldEnd beginIDRef="${id}" fieldid="1"/></hp:ctrl>`;
+const fpara = (inner: string, text = "x"): string => `<hp:p paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0">${inner}<hp:t>${text}</hp:t></hp:run></hp:p>`;
+
+test("7.2 FRAG_SPLITS_FIELD: 선택 범위가 누름틀의 시작과 끝 사이를 자르면 거절한다(시작만, 끝만 든 경우 모두)", () => {
+  // 문단 0: 시작, 문단 1: 가운데, 문단 2: 끝 (여러 문단에 걸친 누름틀), 문단 3: 한 문단 안에서 닫히는 누름틀, 문단 4: 일반
+  const doc = parseSynthetic([fpara(fieldBegin("9")) + fpara("", "가운데") + fpara(fieldEnd("9")) + fpara(fieldBegin("5") + "<hp:t>값</hp:t>" + fieldEnd("5")) + fpara("", "끝")]);
+  for (const [label, from, to] of [
+    ["시작만(0~1)", 0, 1],
+    ["시작만(0~0)", 0, 0],
+    ["끝만(1~2)", 1, 2],
+    ["끝만(2~3)", 2, 3],
+  ] as const) {
+    assert.throws(
+      () => extractFragment(doc, sel(0, from, to)),
+      (e: unknown) => e instanceof HwpxError && e.code === "FRAG_SPLITS_FIELD" && e.where === "Contents/section0.xml",
+      label,
+    );
+  }
+  // 시작과 끝이 모두 든 범위, 짝이 범위 안에서 닫히는 누름틀, 누름틀이 없는 범위는 뽑힌다
+  for (const [label, from, to] of [
+    ["시작~끝 전체(0~2)", 0, 2],
+    ["전체", 0, 4],
+    ["한 문단 안에서 닫힘(3~3)", 3, 3],
+    ["가운데만(1~1)", 1, 1],
+    ["일반 문단(4~4)", 4, 4],
+  ] as const) {
+    const f = extractFragment(doc, sel(0, from, to));
+    assert.equal(f.census.paragraphs, to - from + 1, label);
+  }
+});
+
+test("7.2 FRAG_SPLITS_FIELD: 표 셀 안 문단을 고를 때도 같고, 같은 id가 겹쳐 열린 누름틀은 안쪽부터 닫히는 짝으로 본다", () => {
+  const cell = (inner: string): string =>
+    `<hp:tbl id="1" rowCnt="1" colCnt="1"><hp:tr><hp:tc><hp:subList>${inner}</hp:subList><hp:cellAddr colAddr="0" rowAddr="0"/><hp:cellSpan colSpan="1" rowSpan="1"/></hp:tc></hp:tr></hp:tbl>`;
+  const doc = parseSynthetic([fpara(cell(fpara(fieldBegin("9")) + fpara("", "중간") + fpara(fieldEnd("9")))) ]);
+  const inCell = (from: number, to: number) => sel(0, from, to, [0, 0]);
+  assert.throws(() => extractFragment(doc, inCell(0, 1)), (e: unknown) => e instanceof HwpxError && e.code === "FRAG_SPLITS_FIELD");
+  assert.throws(() => extractFragment(doc, inCell(1, 2)), (e: unknown) => e instanceof HwpxError && e.code === "FRAG_SPLITS_FIELD");
+  assert.equal(extractFragment(doc, inCell(0, 2)).census.paragraphs, 3);
+  // 표를 담은 바깥 문단 전체는 누름틀이 안에서 닫히므로 뽑힌다
+  assert.equal(extractFragment(doc, sel(0, 0, 0)).census.fields, 1);
+
+  // 같은 id 9가 겹쳐 열려도(문서에 이미 있는 중복) 범위 안에서 모두 닫히면 뽑히고, 하나라도 닫히지 않으면 거절한다
+  const nested = parseSynthetic([fpara(fieldBegin("9", "a") + fieldBegin("9", "b") + fieldEnd("9") + fieldEnd("9"))]);
+  assert.equal(extractFragment(nested, sel(0, 0, 0)).census.fields, 2);
+  const open = parseSynthetic([fpara(fieldBegin("9", "a") + fieldBegin("9", "b") + fieldEnd("9"))]);
+  throwsCode(() => extractFragment(open, sel(0, 0, 0)), "FRAG_SPLITS_FIELD");
+});
+
 // ── 7.3 조각 자료 ───────────────────────────────────────────────────────
 
 test("7.3 D5 표 조각: 원문 그대로, 참조·접두사·수량이 독립 기준과 같다", () => {

@@ -435,6 +435,48 @@ test("새 id는 그 종류의 가장 큰 숫자 id + 1이다(번호가 비어 �
   assert.equal(deriveResource(doc, "paraPr", "0", paraDelta(doc, { marginLeft: 123 })).id, String(maxPara + 1));
 });
 
+// ── 없는 자원을 가리키던 참조의 id는 새 자원이 차지하지 않는다 ─────────────────────────────────────
+
+const missingOf = (doc: HwpxDocument): string[] => doc.issues.filter((i) => i.code === "MODEL_REF_MISSING").map((i) => i.message).sort();
+const para1 = (paraPr: string, charPr: string): string =>
+  `<hp:p paraPrIDRef="${paraPr}" styleIDRef="0"><hp:run charPrIDRef="${charPr}"><hp:t>x</hp:t></hp:run></hp:p>`;
+
+test("새 id는 대상에서 없는 자원을 가리키던 참조의 id를 건너뛴다(본문의 없는 글자모양 2·문단모양 1, header의 없는 테두리 2)", () => {
+  // MINIMAL_HEADER: charPr 0·1, paraPr 0, borderFill 1. 본문이 charPr 2·paraPr 1을, charPr 1이 borderFill 2를 가리키지만 셋 다 없다.
+  const header = MINIMAL_HEADER.replace('<hh:charPr id="1" height="1200" borderFillIDRef="1">', '<hh:charPr id="1" height="1200" borderFillIDRef="2">');
+  assert.notEqual(header, MINIMAL_HEADER);
+  const doc = parseSynthetic([para1("1", "2")], header);
+  assert.deepEqual(missingOf(doc).map((m) => m.slice(0, m.indexOf("이(가)"))), ["borderFill 2", "charPr 2", "paraPr 1"]);
+
+  const d = createDeriver(doc);
+  assert.equal(d.derive("charPr", "0", charDelta(doc, { ratio: 120 })).id, "3", "charPr 2는 건너뛴다");
+  assert.equal(d.derive("paraPr", "0", paraDelta(doc, { marginLeft: 100 })).id, "2", "paraPr 1은 건너뛴다");
+  assert.equal(d.derive("borderFill", "1", [{ op: "setAttr", path: [], name: "threeD", value: "1" }]).id, "3", "borderFill 2는 건너뛴다");
+
+  // 적용한 뒤에도 그 참조들은 여전히 없는 대상을 가리킨다(새 자원이 채우지 않았다)
+  const after = applyTo(doc, d.finish());
+  assert.deepEqual(missingOf(after), missingOf(doc));
+  assert.deepEqual((after.header.resources["charPr"] ?? []).map((i) => i.id), ["0", "1", "3"]);
+  assert.deepEqual((after.header.resources["paraPr"] ?? []).map((i) => i.id), ["0", "2"]);
+  assert.deepEqual((after.header.resources["borderFill"] ?? []).map((i) => i.id), ["1", "3"]);
+});
+
+test("한 파생기 안에서 연달아 새 id를 줘도 없는 참조의 id를 건너뛰고 서로 겹치지 않는다", () => {
+  const doc = parseSynthetic([para1("0", "2") + para1("0", "3")]);
+  const d = createDeriver(doc);
+  const ids = [{ ratio: 110 }, { ratio: 120 }, { ratio: 130 }].map((spec) => d.derive("charPr", "0", charDelta(doc, spec)).id);
+  assert.deepEqual(ids, ["4", "5", "6"], "charPr 2·3(없음)을 건너뛰고 4부터");
+  const after = applyTo(doc, d.finish());
+  assert.deepEqual(missingOf(after), missingOf(doc));
+});
+
+test("없는 참조가 없는 문서에서는 새 id가 그대로 가장 큰 숫자 + 1이다(대조군)", () => {
+  const doc = parseSynthetic([para1("0", "1")]);
+  assert.deepEqual(missingOf(doc), []);
+  assert.equal(deriveResource(doc, "charPr", "0", charDelta(doc, { ratio: 120 })).id, "2");
+  assert.equal(deriveResource(doc, "paraPr", "0", paraDelta(doc, { marginLeft: 100 })).id, "1");
+});
+
 // ── 일반 연산과 거절 ──────────────────────────────────────────────────
 
 test("일반 연산: addChild는 같은 이름이 있으면 새로 만들지 않고 속성만 덮어쓴다(멱등)", () => {

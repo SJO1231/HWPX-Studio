@@ -12,6 +12,7 @@ import {
   formatRefsIn,
   loadDoc,
   mutateEntryText,
+  newErrorsAfter,
   objectIdsIn,
   readFixture,
   reparse,
@@ -280,7 +281,7 @@ test("E9: 그림 조각을 다른 문서(한컴 저장본·합성 문서)로 —
     assert.deepEqual(duplicates(objectIdsIn(text(r.output))), [], `${name}: 객체 id 중복`);
     const before = validateDocument(bytes);
     const after = validateDocument(r.output);
-    assert.equal(after.errors.length, before.errors.length, `${name}: 오류가 늘지 않는다`);
+    assert.deepEqual(newErrorsAfter(before, after), [], `${name}: 새 오류가 없다`);
   }
 });
 
@@ -307,7 +308,7 @@ test("E9: 표 조각·문단 조각을 다른 문서로 — 글·서식 지문�
       assert.deepEqual(outXml.flatMap((x) => prints(out, x)), paragraphXml(d5, from, from + topCount - 1).flatMap((x) => prints(d5, x)), `${target} ${label}: 서식 지문`);
       assert.deepEqual(duplicates(objectIdsIn(text(r.output))), [], `${target} ${label}: 객체 id`);
       assert.equal(r.report.plan.expected["paragraphs"], n);
-      assert.equal(validateDocument(r.output).errors.length, validateDocument(bytes).errors.length);
+      assert.deepEqual(newErrorsAfter(validateDocument(bytes), validateDocument(r.output)), [], `${target} ${label}: 새 오류`);
     }
   }
 });
@@ -357,7 +358,7 @@ test("E9: 새 자원·객체 id가 필요한 조각을 여러 번 넣어도 id�
   const r = done(generate(d1, t, ds({})));
   assert.deepEqual(duplicates(objectIdsIn(text(r.output))), []);
   assert.equal(census(r.output).tables, census(d1).tables + 3);
-  assert.equal(validateDocument(r.output).errors.length, validateDocument(d1).errors.length);
+  assert.deepEqual(newErrorsAfter(validateDocument(d1), validateDocument(r.output)), []);
   assert.equal(r.report.stages.length, 4);
 });
 

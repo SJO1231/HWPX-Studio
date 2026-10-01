@@ -417,6 +417,66 @@ test("R4 글 안의 서로게이트 쌍(참조가 아닌 글자 그대로)도 �
   checkRange("쌍 전체", doc, r, at(1, 3), (b) => void b.children.push(flagChild("bold")));
 });
 
+// ── R4: 구간 경계는 글자 묶음(grapheme cluster)의 경계여야 한다 ────────────────────────────
+
+const onePara = (inner: string, charPr = "0"): string => `<hp:p id="1" paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="${charPr}">${inner}</hp:run></hp:p>`;
+const charAt = (start: number, end: number): CharTarget => ({ sectionIndex: 0, path: [0], start, end });
+
+test("R4 옛한글 조합 자모 묶음(U+1140 U+1161 U+11AB) 한가운데는 구간 경계가 될 수 없고, 묶음 전체를 포함하거나 제외하는 경계는 된다", () => {
+  // 논리 텍스트: A(0) B(1) [U+1140(2) U+1161(3) U+11AB(4)] C(5) D(6)
+  const doc = parseSynthetic([onePara("<hp:t>AB\u{1140}\u{1161}\u{11AB}CD</hp:t>")], MINIMAL_HEADER);
+  assert.equal(paragraphAt(doc, [0]).logicalText.length, 7);
+  const delta = charDelta(doc, { bold: true });
+  // 묶음 가운데(3, 4)에서 시작하거나 끝나면 거절한다
+  for (const [s, e] of [[3, 6], [4, 7], [0, 3], [0, 4], [3, 4], [2, 3], [4, 5], [3, 5]] as const) {
+    throwsCode(() => planApplyCharFormat(doc, charAt(s, e), delta), "FMT_BAD_RANGE", `[${s},${e})`);
+  }
+  // 묶음 전체를 포함하거나 제외하는 경계는 통과한다: 시작·끝이 0, 1, 2, 5, 6, 7 가운데
+  for (const [s, e] of [[2, 5], [0, 2], [5, 7], [0, 5], [2, 7], [1, 6], [0, 7], [1, 2]] as const) {
+    const target = charAt(s, e);
+    const r = applyChar(doc, target, { bold: true });
+    checkRange(`묶음 경계 [${s},${e})`, doc, r, target, (b) => void b.children.push(flagChild("bold")));
+  }
+});
+
+test("R4 결합 부호(e + U+0301)와 이모지 ZWJ 묶음도 가르지 않는다", () => {
+  const delta = charDelta(parseSynthetic([onePara("<hp:t>x</hp:t>")], MINIMAL_HEADER), { bold: true });
+  // x(0) e(1) U+0301(2) y(3)
+  const accent = parseSynthetic([onePara("<hp:t>xe\u{301}y</hp:t>")], MINIMAL_HEADER);
+  throwsCode(() => planApplyCharFormat(accent, charAt(2, 4), delta), "FMT_BAD_RANGE", "결합 부호 앞에서 시작");
+  throwsCode(() => planApplyCharFormat(accent, charAt(0, 2), delta), "FMT_BAD_RANGE", "결합 부호 앞에서 끝");
+  const ok = applyChar(accent, charAt(1, 3), { bold: true });
+  checkRange("é 전체", accent, ok, charAt(1, 3), (b) => void b.children.push(flagChild("bold")));
+  // a(0) 👨(1,2) ZWJ(3) 👩(4,5) ZWJ(6) 👧(7,8) b(9): 묶음은 [1, 9)
+  const family = parseSynthetic([onePara("<hp:t>a\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}b</hp:t>")], MINIMAL_HEADER);
+  assert.equal(paragraphAt(family, [0]).logicalText.length, 10);
+  for (const b of [2, 3, 4, 5, 6, 7, 8]) {
+    throwsCode(() => planApplyCharFormat(family, charAt(0, b), delta), "FMT_BAD_RANGE", `ZWJ 묶음 안 끝 ${b}`);
+    throwsCode(() => planApplyCharFormat(family, charAt(b, 10), delta), "FMT_BAD_RANGE", `ZWJ 묶음 안 시작 ${b}`);
+  }
+  const whole = applyChar(family, charAt(1, 9), { bold: true });
+  checkRange("ZWJ 묶음 전체", family, whole, charAt(1, 9), (b) => void b.children.push(flagChild("bold")));
+});
+
+test("R4 글자 묶음은 hp:t·run 경계를 가로질러도 하나이고, 탭·객체 자리 문자는 각각 하나의 묶음이다", () => {
+  const delta = charDelta(parseSynthetic([onePara("<hp:t>x</hp:t>")], MINIMAL_HEADER), { bold: true });
+  // e와 결합 부호가 서로 다른 run에 있다: 두 run의 경계(1)는 묶음 가운데다
+  const split = parseSynthetic([onePara("<hp:t>xe</hp:t>") .replace("</hp:run>", `</hp:run><hp:run charPrIDRef="1"><hp:t>\u{301}y</hp:t></hp:run>`)], MINIMAL_HEADER);
+  assert.equal(paragraphAt(split, [0]).runs.length, 2);
+  throwsCode(() => planApplyCharFormat(split, charAt(2, 4), delta), "FMT_BAD_RANGE", "run 경계가 묶음 가운데");
+  assert.doesNotThrow(() => planApplyCharFormat(split, charAt(1, 3), delta));
+  // 객체 자리 문자(U+FFFC) 바로 뒤의 결합 부호는 객체의 묶음이 아니다: 객체와 결합 부호 사이는 경계다
+  const COLPR = '<hp:ctrl><hp:colPr id="" type="NEWSPAPER" layout="LEFT" colCount="1" sameSz="1" sameGap="0"/></hp:ctrl>';
+  const object = parseSynthetic([onePara(`<hp:t>가</hp:t>${COLPR}<hp:t>\u{301}나</hp:t>`)], MINIMAL_HEADER);
+  const logical = paragraphAt(object, [0]).logicalText;
+  assert.equal(logical, "가￼\u{301}나");
+  const r = applyChar(object, charAt(2, 4), { bold: true });
+  assert.equal(paragraphAt(r.after, [0]).logicalText, logical);
+  // 탭 앞뒤도 경계다
+  const tab = parseSynthetic([onePara('<hp:t>가<hp:tab width="0" leader="0" type="0"/>나</hp:t>')], MINIMAL_HEADER);
+  for (const [s, e] of [[1, 2], [0, 1], [2, 3], [1, 3]] as const) assert.doesNotThrow(() => planApplyCharFormat(tab, charAt(s, e), delta), `탭 [${s},${e})`);
+});
+
 test("R4 구역 설정(secPr)·컨트롤이 든 첫 문단(D1, ph-mixed, ph-single): 구간이 개체를 포함해도 되고 구역 설정은 그대로다", () => {
   for (const name of ["D1", "hancom/ph-mixed", "hancom/ph-single"]) {
     const doc = loadDoc(name);

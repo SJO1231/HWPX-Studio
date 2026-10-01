@@ -1,5 +1,6 @@
 import type { EditPlan, SpanEdit } from "../edit/plan.ts";
 import { HwpxError } from "../errors.ts";
+import { clusterBoundaries } from "../model/clusters.ts";
 import type { HwpxDocument, ParagraphNode, Piece, SectionModel } from "../model/types.ts";
 import { attrNode, subElements, elIs, walkElements, type XElement } from "../xml/tree.ts";
 import { createDeriver } from "./derive.ts";
@@ -58,8 +59,6 @@ function lineSegRemovals(section: SectionModel): SpanEdit[] {
 
 const width = (p: Piece): number => p.logicalEnd - p.logicalStart;
 const CDATA_OPEN = "<![CDATA[";
-const isHighSurrogate = (c: number): boolean => c >= 0xd800 && c <= 0xdbff;
-const isLowSurrogate = (c: number): boolean => c >= 0xdc00 && c <= 0xdfff;
 
 type Split = {
   boundary: "start" | "end";
@@ -102,7 +101,9 @@ export function planApplyCharFormat(doc: HwpxDocument, target: CharTarget, delta
   const last = Math.max(...affected);
   for (const run of paragraph.runs) if (run.ordinal > first && run.ordinal < last) affected.add(run.ordinal);
 
-  // 경계 검사와 쪼갤 위치
+  // 경계 검사와 쪼갤 위치. 구간의 시작·끝은 글자 묶음(grapheme cluster)의 경계여야 한다(결합 부호·이모지 ZWJ·옛한글 조합 자모 묶음,
+  // 서로게이트 쌍의 가운데를 가르면 한컴 화면에서 글자가 쪼개져 보인다).
+  const clusters = clusterBoundaries(paragraph);
   const splits = new Map<number, Split[]>();
   const addSplit = (ordinal: number, split: Split): void => {
     const list = splits.get(ordinal);
@@ -113,13 +114,13 @@ export function planApplyCharFormat(doc: HwpxDocument, target: CharTarget, delta
     [s, "start"],
     [e, "end"],
   ] as const) {
+    if (!clusters.has(b)) {
+      throw new HwpxError("FMT_BAD_RANGE", `구간 경계 ${b}이(가) 글자 묶음(grapheme cluster) 한가운데입니다.`, section.entryName);
+    }
     const inner = pieces.find((p) => p.logicalStart < b && b < p.logicalEnd);
     if (inner !== undefined) {
       if (inner.kind !== "text") {
         throw new HwpxError("FMT_BAD_RANGE", `구간 경계 ${b}이(가) ${inner.kind === "entity" ? "엔티티 참조" : "경계 조각"} 한가운데입니다.`, section.entryName);
-      }
-      if (isHighSurrogate(paragraph.logicalText.charCodeAt(b - 1)) && isLowSurrogate(paragraph.logicalText.charCodeAt(b))) {
-        throw new HwpxError("FMT_BAD_RANGE", `구간 경계 ${b}이(가) 서로게이트 쌍 한가운데입니다.`, section.entryName);
       }
       const run = paragraph.runs[inner.runOrdinal]?.element;
       if (run === undefined) continue;

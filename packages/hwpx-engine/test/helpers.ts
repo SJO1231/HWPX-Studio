@@ -1,7 +1,19 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { crc32, deflateRawSync } from "node:zlib";
-import { openPackage, parseDocument, readEntry, rewriteArchive, xmlToJson, type HwpxDocument, type XmlJson } from "../src/index.ts";
+import {
+  compareToBaseline,
+  openPackage,
+  parseDocument,
+  readEntry,
+  rewriteArchive,
+  splitTolerated,
+  xmlToJson,
+  type HwpxDocument,
+  type ValidationIssue,
+  type ValidationReport,
+  type XmlJson,
+} from "../src/index.ts";
 
 const FIXTURE_DIR = new URL("./fixtures/", import.meta.url);
 
@@ -322,4 +334,12 @@ export function expandResource(doc: HwpxDocument, kind: string, id: string, lang
     return { name: local(node.name), attrs, text: node.text.trim(), children: node.children.map((c) => expand(c, false)) };
   };
   return expand(xmlToJson(item.element), true);
+}
+
+/**
+ * 편집 뒤에 새로 생긴 검사 오류. 기준선에서 한컴이 받아 주는 경고(RES_DANGLING_TOLERATED)였던 같은 참조가 오류로 올라온 것
+ * (탭 목록이 비었다가 새 탭이 들어와 찬 경우)은 원래 있던 문제이므로 뺀다(저장 게이트와 같은 규칙).
+ */
+export function newErrorsAfter(before: ValidationReport, after: ValidationReport): ValidationIssue[] {
+  return splitTolerated(compareToBaseline(before, after).newErrors, before.warnings).rest;
 }

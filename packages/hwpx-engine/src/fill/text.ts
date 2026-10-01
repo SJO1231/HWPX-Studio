@@ -1,4 +1,5 @@
 import type { SpanEdit } from "../edit/plan.ts";
+import { clusterBoundaries } from "../model/clusters.ts";
 import type { ParagraphNode, Piece } from "../model/types.ts";
 import { escapeText } from "../xml/chars.ts";
 import { childEls } from "../xml/tree.ts";
@@ -8,7 +9,7 @@ import { isTextPiece, nsPrefixOf, type Repl } from "./doc.ts";
 export type Ctx = { entry: string; text: string };
 
 export type TextPlan = { edits: SpanEdit[]; repls: Repl[] };
-export type Skip = { skip: { code: "FILL_CROSSES_MARKUP" | "FILL_MIXED_FORMAT"; message: string } };
+export type Skip = { skip: { code: "FILL_CROSSES_MARKUP" | "FILL_SPLITS_CLUSTER" | "FILL_MIXED_FORMAT"; message: string } };
 export type Fail = { fail: { code: string; message: string } };
 
 export function span(ctx: Ctx, start: number, end: number, replacement: string, reason: string): SpanEdit {
@@ -51,7 +52,8 @@ function replacePiece(ctx: Ctx, piece: Piece, value: string, reason: string, ls 
 
 /**
  * 논리 구간 `[ls, le)`의 글을 값으로 바꾼다(`word` 앵커·`{{}}`).
- * 구간 안에 경계 조각(inline·object)이 있으면 `FILL_CROSSES_MARKUP`, 글자모양이 다른 run에 걸치면 `FILL_MIXED_FORMAT`(`mixed: "first"`면 통과).
+ * 구간 안에 경계 조각(inline·object)이 있으면 `FILL_CROSSES_MARKUP`, 구간의 시작·끝이 글자 묶음(grapheme cluster) 한가운데면 `FILL_SPLITS_CLUSTER`,
+ * 글자모양이 다른 run에 걸치면 `FILL_MIXED_FORMAT`(`mixed: "first"`면 통과).
  * 첫 글 조각에 값을 넣고 나머지 겹친 구간은 지운다. run·`hp:t` 요소는 지우지 않는다.
  */
 export function planRangeReplace(
@@ -69,6 +71,10 @@ export function planRangeReplace(
   });
   if (inside.some((p) => p.kind === "inline" || p.kind === "object")) {
     return { skip: { code: "FILL_CROSSES_MARKUP", message: "치환할 글 사이에 탭·줄바꿈·객체가 끼어 있어 건너뜁니다." } };
+  }
+  const clusters = clusterBoundaries(par);
+  if (!clusters.has(ls) || !clusters.has(le)) {
+    return { skip: { code: "FILL_SPLITS_CLUSTER", message: "치환할 글의 시작이나 끝이 결합 부호·옛한글 조합 자모 같은 글자 묶음 한가운데라 건너뜁니다." } };
   }
   const texts = inside.filter(isTextPiece);
   const formats = new Set(texts.map((p) => par.runs[p.runOrdinal]?.charPrIDRef ?? ""));

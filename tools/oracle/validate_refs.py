@@ -153,7 +153,7 @@ def check_package(z, rep, cache):
     if not sections:
         rep.err("PKG_MISSING", "Contents/section*.xml 이 하나도 없음")
     if "META-INF/manifest.xml" not in nameset:
-        rep.warn("PKG_NO_ODF_MANIFEST", "META-INF/manifest.xml 없음(한컴 저장본에는 있고 kordoc 합성본에는 없음)")
+        rep.warn("PKG_NO_ODF_MANIFEST", "META-INF/manifest.xml 없음(한컴 저장본에는 있고 합성 문서에는 없음)")
     # 모든 xml 정형성
     for n in sorted(nameset):
         if n.lower().endswith((".xml", ".hpf", ".rdf")):
@@ -267,7 +267,7 @@ def check_refs(root, fname, spaces, fonts, manifest_ids, rep, counters):
             if not ok and an == "outlineShapeIDRef" and v == "0":
                 continue  # 개요 번호 없음 관례
             if not ok and an == "tabPrIDRef" and v == "0" and not spaces["tabPr"] and not STRICT[0]:
-                # kordoc 합성본(D1·D7)은 tabProperties 가 비어 있는데 paraPr 가 0 을 쓴다. 한컴이 열어 주는 것을 COM 으로 실측(P4)해 경고로 분류. --strict 면 오류.
+                # 합성 문서(D1·D7)는 tabProperties 가 비어 있는데 paraPr 가 0 을 쓴다. 한컴이 열어 주는 것을 COM 으로 실측(P4)해 경고로 분류. --strict 면 오류.
                 rep.warn("RES_DANGLING_TOLERATED", "tabPrIDRef='0' 인데 tabProperties 가 비어 있음(한컴 실측: 열림)", f"{fname} <{tag}>")
                 continue
             if not ok and tag == "pageBorderFill" and an == "borderFillIDRef" and v == "0" and not STRICT[0]:

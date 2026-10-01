@@ -2,10 +2,10 @@
 // 대상의 새 오류로 세지 않고 보고서에 "상속"으로 따로 낸다. 설명되지 않는 새 오류는 그대로 막고, strict 방식은 상속 오류도 막는다.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { extractFragment, serializeFragment, validateDocument, type Fragment, type HwpxDocument } from "../src/index.ts";
-import { generate, makeLineAnchor, type GenerateOptions, type GenerateResult } from "../src/fill/index.ts";
+import { extractFragment, selectTable, serializeFragment, validateDocument, type Fragment, type HwpxDocument, type InheritedProblems, type ValidationIssue } from "../src/index.ts";
+import { explainInherited, generate, makeLineAnchor, noInherited, splitTolerated, type GenerateOptions, type GenerateResult } from "../src/fill/index.ts";
 import { emptyTemplate, readDataset, readTemplate } from "../src/template/index.ts";
-import { duplicates, objectIdsIn, parseSynthetic, reparse } from "./helpers.ts";
+import { duplicates, loadDoc, mutateEntryText, objectIdsIn, parseSynthetic, readFixture, reparse } from "./helpers.ts";
 
 const para = (id: string, inner: string, text = "x"): string =>
   `<hp:p id="${id}" paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0">${inner}<hp:t>${text}</hp:t></hp:run></hp:p>`;
@@ -144,4 +144,186 @@ test("게이트: 조각이 없는 문서(주입 없음)의 보고서 inherited�
   const r = generate(target().pkg.bytes, emptyTemplate(), readDataset({}));
   assert.ok(r.ok);
   assert.deepEqual(r.report.inherited, { duplicateIds: [], danglingRefs: [], errors: [] });
+});
+
+// ── 상속으로 설명하는 양은 조각이 기록한 개수를 넘지 못한다 ───────────────────────────────────────────
+// 같은 (코드, id)의 오류가 기록된 개수보다 많이 늘면, 넘는 만큼은 새 오류다(다른 규칙이 만든 같은 오류가 가려지지 않는다).
+
+/** 대상 hancom/ph-single: 문단 1의 첫 run `charPrIDRef`를 없는 id 77로 바꾼다(원래 오류 RES_DANGLING 1건) */
+function danglingTarget(): Uint8Array {
+  const doc = loadDoc("hancom/ph-single");
+  const attr = doc.sections[0]?.paragraphs[1]?.runs[0]?.element.attrs.find((a) => a.qname === "charPrIDRef");
+  assert.ok(attr !== undefined);
+  return mutateEntryText(readFixture("hancom/ph-single"), "Contents/section0.xml", (t) => t.slice(0, attr.valueStart) + "77" + t.slice(attr.valueEnd));
+}
+
+/** 소스 D5의 최상위 문단 4의 첫 run `charPrIDRef`를 77로 바꾼 뒤 그 문단을 조각으로 뽑는다(조각의 없는 참조 기록 1건) */
+function danglingFragment(): Record<string, unknown> {
+  const d5 = loadDoc("D5");
+  const attr = d5.sections[0]?.paragraphs[4]?.runs[0]?.element.attrs.find((a) => a.qname === "charPrIDRef");
+  assert.ok(attr !== undefined);
+  const changed = reparse(mutateEntryText(readFixture("D5"), "Contents/section0.xml", (t) => t.slice(0, attr.valueStart) + "77" + t.slice(attr.valueEnd)));
+  const f = extractFragment(changed, { sectionIndex: 0, parentPath: [], from: 4, to: 4 });
+  assert.deepEqual(f.dangling, [{ kind: "charPr", id: "77", count: 1 }]);
+  return asJson(f);
+}
+
+/** r1: 문단 1 뒤에 insertText(style inherit — 없는 77을 물려받는다), r2: 마지막 문단 뒤에 조각 주입 */
+function twoRules(bytes: Uint8Array, rules: ("r1" | "r2")[]): GenerateResult {
+  const doc = reparse(bytes);
+  const a1 = makeLineAnchor(doc, "a1", 0, [1]);
+  const a2 = makeLineAnchor(doc, "a2", 0, [(doc.sections[0]?.paragraphs.length ?? 1) - 1]);
+  assert.ok(a1 !== undefined && a2 !== undefined);
+  const all = {
+    r1: { id: "r1", do: { type: "insertText", anchor: "a1", position: "after", value: { text: "새 문단" }, style: "inherit" } },
+    r2: { id: "r2", do: { type: "inject", anchor: "a2", position: "after", fragment: danglingFragment() } },
+  };
+  const template = readTemplate({ schema: "hwpx-studio/template@1", anchors: [a1, a2], rules: rules.map((r) => all[r]) });
+  return generate(bytes, template, readDataset({}), { missing: "keep" });
+}
+
+const danglingErrors = (issues: readonly { code: string; count?: number }[]): number =>
+  issues.filter((e) => e.code === "RES_DANGLING").reduce((n, e) => n + (e.count ?? 1), 0);
+
+test("게이트: r1(insertText inherit)이 만든 없는 참조 오류는 r2(조각 주입)의 상속 기록 1건에 가려지지 않아 막힌다", () => {
+  const bytes = danglingTarget();
+  assert.equal(validateDocument(bytes).errors.filter((e) => e.code === "RES_DANGLING").length, 1, "원래 오류 1건");
+
+  // 대조군 1: r1만 — 새 오류 1건이라 막힌다(상속 기록 없음)
+  const only1 = twoRules(bytes, ["r1"]);
+  assert.equal(only1.ok, false);
+  assert.ok(errorCodes(only1).includes("GATE_NEW_ERRORS"), errorCodes(only1).join());
+  assert.equal(danglingErrors(only1.report.validation?.newErrors ?? []), 1);
+
+  // 대조군 2: r2만 — 조각이 가져온 없는 참조 1건을 상속 기록 1건이 설명해 통과한다
+  const only2 = twoRules(bytes, ["r2"]);
+  assert.equal(only2.ok, true, JSON.stringify(only2.report.issues.filter((i) => i.severity === "error")));
+  assert.deepEqual(only2.report.inherited.danglingRefs, [{ kind: "charPr", id: "77", count: 1 }]);
+  assert.equal(danglingErrors(only2.report.inherited.errors), 1);
+  assert.deepEqual(only2.report.validation?.newErrors, []);
+
+  // r1 + r2: 새 오류 2건(r1 1건 + 조각 1건) 중 기록이 설명하는 것은 1건뿐이다. 나머지 1건은 새 오류로 막는다.
+  const both = twoRules(bytes, ["r1", "r2"]);
+  assert.equal(both.ok, false, "r1이 만든 오류까지 상속으로 설명돼 통과해 버렸다");
+  assert.ok(errorCodes(both).includes("GATE_NEW_ERRORS"), errorCodes(both).join());
+  assert.equal(danglingErrors(both.report.validation?.newErrors ?? []), 1, "설명되지 않은 1건");
+  assert.equal(danglingErrors(both.report.inherited.errors), 1, "설명된 1건(기록의 개수 이하)");
+});
+
+// 검사기의 새 오류(메시지·개수는 검사기가 내는 모양 그대로)
+const dangling = (value: string, count: number, where = "Contents/section0.xml <run>"): ValidationIssue => ({
+  severity: "error",
+  code: "RES_DANGLING",
+  message: `charPrIDRef='${value}' 가 가리키는 charPr 가 없음`,
+  where,
+  count,
+});
+const dupId = (value: string, n: number): ValidationIssue => ({
+  severity: "error",
+  code: "INST_DUP_ID",
+  message: `object id (표·도형) 중복: '${value}' x${n}`,
+  where: "Contents/section0.xml <rect>",
+  count: 1,
+});
+const rec = (over: Partial<InheritedProblems>): InheritedProblems => ({ ...noInherited(), ...over });
+
+test("explainInherited: 없는 참조는 (종류, id)별 발생 횟수가 기록의 개수 이하일 때만 그만큼 설명하고, 넘는 부분은 설명하지 않는다", () => {
+  const inherited = rec({ danglingRefs: [{ kind: "charPr", id: "77", count: 2 }] });
+  // 2건 이하는 전부 설명
+  let r = explainInherited([dangling("77", 2)], inherited);
+  assert.deepEqual(r.explained.map((e) => e.count), [2]);
+  assert.deepEqual(r.unexplained, []);
+  // 3건: 2건만 설명하고 1건은 설명하지 않는다(한 오류의 개수를 쪼갠다)
+  r = explainInherited([dangling("77", 3)], inherited);
+  assert.deepEqual(r.explained.map((e) => e.count), [2]);
+  assert.deepEqual(r.unexplained.map((e) => [e.code, e.count]), [["RES_DANGLING", 1]]);
+  // 위치가 다른 같은 (종류, id) 오류들이 한 예산을 나눠 쓴다
+  r = explainInherited([dangling("77", 1, "a <run>"), dangling("77", 1, "b <style>"), dangling("77", 1, "c <p>")], inherited);
+  assert.equal(r.explained.reduce((n, e) => n + e.count, 0), 2);
+  assert.equal(r.unexplained.reduce((n, e) => n + e.count, 0), 1);
+  // 기록에 없는 id나 종류는 설명하지 않는다(예산 0)
+  r = explainInherited([dangling("78", 1)], inherited);
+  assert.deepEqual(r.explained, []);
+  assert.equal(r.unexplained.length, 1);
+});
+
+test("explainInherited: id 중복은 메시지의 xN(그 id가 나온 횟수)에서 원래 문서의 횟수를 뺀 증가분이 기록의 개수 이하일 때만 설명한다", () => {
+  const inherited = rec({ duplicateIds: [{ role: "object", value: "2", count: 2 }] });
+  assert.deepEqual(explainInherited([dupId("2", 2)], inherited).unexplained, []);
+  // 조각 밖의 다른 곳에서 같은 id가 하나 더 생겨 x3이 되면 증가분 3이 기록(2)을 넘어 설명하지 않는다
+  const over = explainInherited([dupId("2", 3)], inherited);
+  assert.deepEqual(over.explained, []);
+  assert.equal(over.unexplained.length, 1);
+  // 원래 문서에 이미 x2가 있었고 지금 x4면 증가분은 2라 설명한다
+  const baseline = [{ ...dupId("2", 2), where: "Contents/section0.xml <tbl>" }];
+  assert.deepEqual(explainInherited([dupId("2", 4)], inherited, baseline).unexplained, []);
+  assert.equal(explainInherited([dupId("2", 5)], inherited, baseline).unexplained.length, 1);
+});
+
+// ── 기준선에서 관용 경고였던 같은 참조는 "원래 있던 문제"다 ────────────────────────────────────────────
+// 엔진 검사기는 "탭 목록이 비었는데 tabPrIDRef=0"을 경고(RES_DANGLING_TOLERATED)로 두는데, 목록에 항목이 생기면 같은 참조가 오류(RES_DANGLING)로 올라간다.
+// 새 탭이 없는 tabPr 0을 건너뛰어 목록이 차므로(명세 7.5), 그 오류는 가져오기가 만든 새 오류가 아니라 원래 있던 문제다.
+
+test("게이트: D5의 표를 D1에 가져오면(tabPr 0을 건너뛰어 탭 목록이 차서 같은 참조가 오류로 올라가도) 통과한다", () => {
+  const d1 = loadDoc("D1");
+  const d5 = loadDoc("D5");
+  const f = extractFragment(d5, selectTable(d5, 0, 4).selection);
+  const before = validateDocument(d1.pkg.bytes);
+  assert.ok(before.warnings.some((w) => w.code === "RES_DANGLING_TOLERATED" && w.message.startsWith("tabPrIDRef='0'")), "전제: 기준선에서는 관용 경고");
+  assert.equal(before.errors.filter((e) => e.code === "RES_DANGLING").length, 0);
+
+  const r = inject(d1, asJson(f));
+  assert.equal(r.ok, true, JSON.stringify(r.report.issues.filter((i) => i.severity === "error")));
+  assert.ok(r.ok && !r.dryRun);
+  if (!(r.ok && !r.dryRun)) return;
+  const out = reparse(r.output);
+  // 새 탭은 0이 아닌 id를 받고, D1 기존 문단모양의 tabPrIDRef="0"은 여전히 없는 대상을 가리킨다
+  const tabIds = (out.header.resources["tabPr"] ?? []).map((t) => t.id);
+  assert.ok(tabIds.length > 0 && !tabIds.includes("0"), tabIds.join());
+  assert.ok(out.issues.some((i) => i.code === "MODEL_REF_MISSING" && i.message.startsWith("tabPr 0이(가) 없는데 8곳")));
+  // 엔진 검사기는 이제 그 참조를 오류로 올린다(목록이 비어 있지 않으므로). 게이트는 그것을 새 오류로 세지 않는다
+  const after = validateDocument(r.output);
+  assert.ok(after.errors.some((e) => e.code === "RES_DANGLING" && e.message.startsWith("tabPrIDRef='0'")), "목록이 차서 오류로 올라간다");
+  assert.deepEqual(r.report.validation?.newErrors, []);
+  assert.deepEqual(r.report.inherited.errors, [], "조각이 소스에서 갖고 있던 문제가 아니다");
+  const note = r.report.issues.filter((i) => i.severity === "warning" && i.message.includes("tabPrIDRef='0'"));
+  assert.ok(note.length > 0, "원래 있던 문제로 경고에 남는다");
+  // strict 방식은 이것을 가리지 않는다(오류 0을 요구한다)
+  assert.equal(inject(d1, asJson(f), { mode: "strict" }).ok, false);
+});
+
+const toleratedWarning = (count: number, value = "0"): ValidationIssue => ({
+  severity: "warning",
+  code: "RES_DANGLING_TOLERATED",
+  message: `tabPrIDRef='${value}' 인데 tabProperties 가 비어 있음(한컴 실측: 열림)`,
+  where: "Contents/header.xml <paraPr>",
+  count,
+});
+const tabError = (count: number, value = "0", space = "tabPr"): ValidationIssue => ({
+  severity: "error",
+  code: "RES_DANGLING",
+  message: `tabPrIDRef='${value}' 가 가리키는 ${space} 가 없음`,
+  where: "Contents/header.xml <paraPr>",
+  count,
+});
+
+test("splitTolerated: 기준선의 관용 경고와 같은 (종류, id)의 오류만, 경고의 개수까지 원래 있던 문제로 센다", () => {
+  const warning = toleratedWarning(8);
+  // 같은 (tabPr, 0) 8건: 전부 원래 있던 문제
+  let r = splitTolerated([tabError(8)], [warning]);
+  assert.deepEqual(r.original.map((e) => e.count), [8]);
+  assert.deepEqual(r.rest, []);
+  // 9건이면 8건까지만, 1건은 새 오류
+  r = splitTolerated([tabError(9)], [warning]);
+  assert.deepEqual(r.original.map((e) => e.count), [8]);
+  assert.deepEqual(r.rest.map((e) => e.count), [1]);
+  // 기준선에 관용 경고가 없으면 전부 새 오류
+  r = splitTolerated([tabError(1)], []);
+  assert.deepEqual(r.original, []);
+  assert.equal(r.rest.length, 1);
+  // 다른 id나 다른 종류, 다른 코드는 가리지 않는다
+  assert.equal(splitTolerated([tabError(1, "3")], [warning]).rest.length, 1);
+  assert.equal(splitTolerated([tabError(1, "0", "numbering")], [warning]).rest.length, 1);
+  const dup: ValidationIssue = { severity: "error", code: "INST_DUP_ID", message: "object id (표·도형) 중복: '0' x2", count: 1 };
+  assert.deepEqual(splitTolerated([dup], [warning]).rest, [dup]);
 });

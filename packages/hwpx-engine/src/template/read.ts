@@ -1,5 +1,6 @@
 import { HwpxError } from "../errors.ts";
 import { isValidPath } from "./placeholder.ts";
+import { MAX_PATTERN_LENGTH, hasNestedQuantifier } from "./regex.ts";
 import {
   CONDITION_OPS,
   DATASET_SCHEMA,
@@ -186,6 +187,13 @@ function readCondition(v: unknown, where: string, depth: number): Condition {
       new RegExp(value);
     } catch {
       fail("TPL_CONDITION", "matches의 value가 올바른 정규식이 아닙니다.", where);
+    }
+    // 실행 시간을 막는 보수적인 한도(휴리스틱): 긴 패턴과 중첩 수량자 패턴(`(a+)+` 등)은 입력 길이에 지수로 늘어나는 시간을 쓸 수 있다
+    if (value.length > MAX_PATTERN_LENGTH) {
+      fail("TPL_CONDITION", `matches의 value(정규식)가 ${MAX_PATTERN_LENGTH}자를 넘습니다(${value.length}자).`, where);
+    }
+    if (hasNestedQuantifier(value)) {
+      fail("TPL_CONDITION", "matches의 value에 수량자가 붙은 묶음 안에 다시 수량자가 있습니다(중첩 수량자). 실행 시간이 폭증할 수 있어 거절합니다.", where);
     }
   }
   if (op.startsWith("length") && (typeof value !== "number" || !Number.isFinite(value))) {

@@ -44,6 +44,7 @@ const BODY_ATTR: Record<string, string> = {
   borderFillIDRef: "borderFill",
   outlineShapeIDRef: "numbering",
   binaryItemIDRef: "binaryItem",
+  charStyleIDRef: "style",
 };
 
 export type BodyRefLite = { kind: string; id: string };
@@ -54,7 +55,9 @@ export function bodyRefsOf(roots: readonly XElement[]): BodyRefLite[] {
   for (const root of roots) {
     for (const el of walkElements(root)) {
       for (const a of el.attrs) {
-        const kind = BODY_ATTR[a.qname.slice(a.qname.lastIndexOf(":") + 1)];
+        const name = a.qname.slice(a.qname.lastIndexOf(":") + 1);
+        // 글자 겹침(compose) 안 charPr 요소의 prIDRef는 글자모양이다(집계 근거: 값이 전부 글자모양 id). 다른 요소의 prIDRef는 대상을 모른다.
+        const kind = BODY_ATTR[name] ?? (el.local === "charPr" && name === "prIDRef" ? "charPr" : undefined);
         if (kind !== undefined && !NO_REF.has(a.value)) out.push({ kind, id: a.value });
       }
     }

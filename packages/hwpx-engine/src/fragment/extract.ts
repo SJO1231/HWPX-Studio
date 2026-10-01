@@ -3,7 +3,7 @@ import { collectBodyRefs } from "../model/refs.ts";
 import { walkParagraphs } from "../model/paragraph.ts";
 import type { HwpxDocument, ResourceItem } from "../model/types.ts";
 import { findEntry, readEntry } from "../package/zip-read.ts";
-import { attrNode, elIs, walkElements, type XElement } from "../xml/tree.ts";
+import { attrNode, attrValue, elIs, walkElements, type XElement } from "../xml/tree.ts";
 import { createFingerprinter, makeLookup, resourceRefs } from "./resources.ts";
 import { resolveSelection } from "./select.ts";
 import type { Fragment, FragmentBinary, FragmentDangling, FragmentRef, FragmentResource, FragmentSelection } from "./types.ts";
@@ -30,7 +30,7 @@ function makeTally(): {
 
 /**
  * 선택한 문단들을 조각으로 뽑는다. 본문은 원문 그대로이고, 서식 자원은 의존 닫힘으로, 그림은 이진 자료까지 담는다.
- * 구역 설정(`secPr`)이 든 문단이 있으면 `FRAG_SECTION_PROPS`.
+ * 구역 설정(`secPr`)이 든 문단이 있으면 `FRAG_SECTION_PROPS`, 누름틀의 시작·끝 짝이 범위 안에서 닫히지 않으면 `FRAG_SPLITS_FIELD`.
  */
 export function extractFragment(doc: HwpxDocument, selection: FragmentSelection): Fragment {
   const { section, paragraphs } = resolveSelection(doc, selection);
@@ -44,6 +44,29 @@ export function extractFragment(doc: HwpxDocument, selection: FragmentSelection)
     throw new HwpxError(
       "FRAG_SECTION_PROPS",
       "구역 설정(secPr)이 든 문단은 조각으로 뽑을 수 없습니다(1차 범위 밖).",
+      section.entryName,
+    );
+  }
+
+  // 누름틀의 시작과 끝은 범위 안에서 짝이 닫혀야 한다(같은 id로 겹쳐 열린 시작은 안쪽 것부터 닫힌다). 아니면 가져온 뒤 짝 없는 시작·끝이 남는다.
+  const opened = new Map<string, number>();
+  let strayEnds = 0;
+  for (const el of elements) {
+    if (elIs(el, "paragraph", "fieldBegin")) {
+      const id = attrValue(el, "id") ?? "";
+      opened.set(id, (opened.get(id) ?? 0) + 1);
+    } else if (elIs(el, "paragraph", "fieldEnd")) {
+      const id = attrValue(el, "beginIDRef") ?? "";
+      const n = opened.get(id) ?? 0;
+      if (n === 0) strayEnds++;
+      else opened.set(id, n - 1);
+    }
+  }
+  const strayBegins = [...opened.values()].reduce((sum, n) => sum + n, 0);
+  if (strayBegins > 0 || strayEnds > 0) {
+    throw new HwpxError(
+      "FRAG_SPLITS_FIELD",
+      `선택한 범위가 누름틀의 시작과 끝 사이를 자릅니다(범위 안에서 짝이 닫히지 않는 시작 ${strayBegins}개, 끝 ${strayEnds}개).`,
       section.entryName,
     );
   }
@@ -93,7 +116,7 @@ export function extractFragment(doc: HwpxDocument, selection: FragmentSelection)
       if (ref.kind === "memoShape" || isNoRefOf(ref.kind, ref.id)) continue;
       if (ref.kind === "unknown") {
         const name = ref.attr.qname;
-        tally.add("FRAG_UNKNOWN_REF", name, section.entryName, (n) => `자원 참조로 해석하지 못한 ${name} 속성이 ${n}곳 있어 조각이 옮기지 않습니다.`);
+        tally.add("FRAG_UNKNOWN_REF", name, section.entryName, (n) => `자원 참조로 해석하지 못한 ${name} 속성이 ${n}곳 있습니다. 대상을 알 수 없어 번역하지 않고 원래 값 그대로 옮깁니다.`);
         continue;
       }
       const at = { start: ref.attr.valueStart - base, end: ref.attr.valueEnd - base };

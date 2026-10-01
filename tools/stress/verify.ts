@@ -11,10 +11,10 @@ import {
   type ParagraphNode,
   type XElement,
 } from "../../packages/hwpx-engine/src/index.ts";
-import { explainInherited } from "../../packages/hwpx-engine/src/fill/index.ts";
+import { explainInherited, splitTolerated } from "../../packages/hwpx-engine/src/fill/index.ts";
 import { createFingerprinter, makeLookup } from "../../packages/hwpx-engine/src/fragment/resources.ts";
 import type { ImportPlan, InheritedProblems } from "../../packages/hwpx-engine/src/fragment/types.ts";
-import { compareToBaseline, validateDocument, type ValidationReport } from "../../packages/hwpx-engine/src/validate/index.ts";
+import { compareToBaseline, validateDocument, type ValidationIssue, type ValidationReport } from "../../packages/hwpx-engine/src/validate/index.ts";
 import { binaryRefsIn, bodyRefsOf, makeCanon, textRuns, type Canon } from "./canon.ts";
 
 export type Fail = { item: string; code: string };
@@ -409,10 +409,10 @@ function checkStyleNames(base: HwpxDocument, result: HwpxDocument, fails: Fail[]
 }
 
 /**
- * 대상 원본에서 없는 대상을 가리키던 참조(본문·자원 안)가 가져온 자원 때문에 가리키는 곳이 생겼는데(기존 문단의 모양이 바뀔 수 있다)
- * 계획이 FRAG_FILLS_DANGLING 경고를 내지 않았다면 결함이다.
+ * 대상 원본에서 없는 대상을 가리키던 참조(본문·자원 안)가 가져온 자원(또는 서식 변경이 파생한 자원) 때문에 가리키는 곳이 생겼다면
+ * 결함이다(기존 문단의 모양이 바뀔 수 있다). 새 자원의 id는 그런 참조의 id를 건너뛰어야 한다(명세 7.5).
  */
-function checkSilentFill(base: HwpxDocument, result: HwpxDocument, steps: readonly Step[], notes: Notes, fails: Fail[]): void {
+function checkFilledDangling(base: HwpxDocument, result: HwpxDocument, notes: Notes, fails: Fail[]): void {
   const before = makeLookup(base);
   const after = makeLookup(result);
   const manifestBefore = new Set(base.pkg.manifestItems.map((m) => m.id));
@@ -430,7 +430,7 @@ function checkSilentFill(base: HwpxDocument, result: HwpxDocument, steps: readon
   for (const item of Object.values(base.header.resources).flat()) for (const ref of item.refs) check(ref.kind, ref.lang, ref.id);
   if (filled === 0) return;
   note(notes, "ve.targetDanglingRefsFilled", filled);
-  if (!steps.some((s) => s.plan.issues.some((i) => i.code === "FRAG_FILLS_DANGLING"))) fails.push({ item: "V-e", code: "FILLS_DANGLING_SILENT" });
+  fails.push({ item: "V-e", code: "FILLS_DANGLING" });
 }
 
 /** 문서 하나(가져오기가 끝난 결과)의 검증: V-a(모델 오류), V-b, V-e(원문·자원·항목), V-f(검사기 census), V-g, V-i */
@@ -451,9 +451,14 @@ export function verifyDocument(input: DocCheckInput, notes: Notes): DocCheckOutp
   }
 
   // V-b: 검사기 기준선 대비 새 오류
+  // 엔진의 저장 게이트와 같은 판정: 기준선에서 한컴이 받아 주는 경고(RES_DANGLING_TOLERATED)였던 같은 참조가 오류로 올라온 것(탭 목록이 비었다가
+  // 새 탭이 들어와 찬 경우)은 원래 있던 문제이고, 나머지는 상속 기록(개수까지)으로 설명되는 것과 아닌 것으로 가른다.
   const cmp = compareToBaseline(base.baseline, report);
-  const explained = new Set(explainInherited(cmp.newErrors, input.inherited).explained);
-  for (const e of cmp.newErrors) {
+  const tolerated = splitTolerated(cmp.newErrors, base.baseline.warnings);
+  for (const e of tolerated.original) note(notes, "vb.toleratedBecameError", e.count);
+  const split = explainInherited(tolerated.rest, input.inherited, base.baseline.errors);
+  const classified: [ValidationIssue, Fail[]][] = [...split.unexplained.map((e): [ValidationIssue, Fail[]] => [e, fails]), ...split.explained.map((e): [ValidationIssue, Fail[]] => [e, inherited])];
+  for (const [e, list] of classified) {
     let code = e.code;
     if (code === "INST_DUP_ID") {
       let sub = SPACE_OF_MESSAGE.find(([prefix]) => e.message.startsWith(prefix))?.[1];
@@ -464,7 +469,7 @@ export function verifyDocument(input: DocCheckInput, notes: Notes): DocCheckOutp
         code = `${code}:${sub}`;
       }
     }
-    (explained.has(e) ? inherited : fails).push({ item: "V-b", code });
+    list.push({ item: "V-b", code });
     note(notes, `vb.newErrors.${code}`, e.count);
   }
 
@@ -539,7 +544,7 @@ export function verifyDocument(input: DocCheckInput, notes: Notes): DocCheckOutp
 
   checkCounts(base.doc, result, sumKeyOf(steps, "createdLists"), fails);
   checkStyleNames(base.doc, result, fails);
-  if (input.afterFormat !== true) checkSilentFill(base.doc, result, steps, notes, fails);
+  checkFilledDangling(base.doc, result, notes, fails);
 
   // V-g, V-i
   checkBinaries(base.doc, result, danglingKeys, fails, inherited, notes);

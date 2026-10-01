@@ -169,7 +169,7 @@ type HwpxDocument = {
 - `ctrl` 안의 `fieldBegin`/`fieldEnd`는 `FieldMark = { kind: "begin"|"end", id, name?, type?, dirty?, beginIDRef?, element }`로 문단에 기록한다.
 - 책갈피는 `{ name, element }`.
 
-**BodyRef**: 본문 요소가 자원을 가리키는 속성. `{ kind, id, element, attr 위치 }`. 대상: `charPrIDRef`, `paraPrIDRef`, `styleIDRef`, `borderFillIDRef`, `binaryItemIDRef`, `outlineShapeIDRef`(numbering). 그 밖에 이름이 `IDRef`로 끝나는 속성은 `kind: "unknown"`으로 모은다(경고 대상).
+**BodyRef**: 본문 요소가 자원을 가리키는 속성. `{ kind, id, element, attr 위치 }`. 대상: `charPrIDRef`, `paraPrIDRef`, `styleIDRef`, `borderFillIDRef`, `binaryItemIDRef`, `outlineShapeIDRef`(numbering), `charStyleIDRef`(글자 스타일 → style), 글자 겹침 안 `charPr` 요소의 `prIDRef`(→ charPr). "참조 없음" 관례값(`4294967295`, `-1`)과 빈 값은 참조로 세지 않는다. 그 밖에 이름이 `IDRef`로 끝나는 속성은 `kind: "unknown"`으로 모은다(경고 대상).
 
 `collectBodyRefs(element)`: 요소와 그 후손 전체의 BodyRef를 모은다.
 
@@ -287,6 +287,7 @@ type FragmentSelection = { sectionIndex: number; parentPath: number[]; from: num
 
 - `parentPath`가 빈 배열이면 구역의 최상위 문단, 아니면 그 주소의 하위 목록(예: 표 셀) 안 문단이다. `from`~`to`는 포함 범위다.
 - 범위 안 문단에 구역 설정(`secPr`)이 있으면 `FRAG_SECTION_PROPS`로 거절한다(구역 설정이 든 run을 다루는 것은 1차 범위 밖).
+- 범위가 누름틀의 시작과 끝 사이를 자르면 `FRAG_SPLITS_FIELD`로 거절한다.
 - 편의 함수 `selectTable(doc, sectionIndex, tableOrdinal)`: 그 표를 담은 최상위 문단 하나를 선택으로 돌려준다. 그 문단에 표 말고 글이 있으면 경고를 붙인다.
 
 ### 7.3 조각 자료 `extractFragment(doc, selection): Fragment`
@@ -381,7 +382,7 @@ type InsertPoint = { sectionIndex: number; parentPath: number[]; index: number; 
 후속 수정(구현·검증 완료, 테스트 414개와 오라클 23개 통과):
 
 - **문단 id**: 조각의 문단 id가 자리값이 아니고 대상에 이미 있으면 새 값으로 바꾼다(같은 문서에 다시 넣을 때 중복 오류가 나던 문제).
-- **없는 참조를 채우는 경우 경고**: 대상에서 없는 자원을 가리키던 id를 새 자원이 차지하게 되면(예: 탭 목록이 비었는데 0번을 가리키는 합성 문서) 기존 문단의 모양이 달라질 수 있다. 계획에 `FRAG_FILLS_DANGLING` 경고를 남긴다.
+- **없는 참조의 id는 건너뛴다**(최종 검증 뒤 변경): 대상에서 없는 자원을 가리키던 id를 새 자원이 차지하면 기존 문단의 모양이 달라질 수 있다(실제 문서 2쌍에서 관측). 그래서 조각 가져오기와 서식 파생 모두 새 id를 줄 때 그런 id를 건너뛴다. 대상의 없는 참조는 그대로 없는 채로 남는다.
 - 소스에서 없는 대상을 가리키던 참조는 그대로 옮긴다(`FRAG_DANGLING_SOURCE` 경고). 대상에 같은 id가 있으면 그 자원을 가리키게 된다. 원본이 깨끗하면 생기지 않는다.
 - `HwpxPackage`에 rootfile 경로를 둔다.
 - 문단 해석에서 객체와 하위 목록의 대응을 한 번의 순회로 만든다(하위 목록 2만 개 문단이 0.1초 안팎).
@@ -426,7 +427,7 @@ type InsertPoint = { sectionIndex: number; parentPath: number[]; index: number; 
 - 자식 순서는 시험 문서와 한컴 저장본에서 관측한 정적 표(`order.ts`)를 따른다. 표에 없는 자식은 `FMT_UNKNOWN_CHILD`.
 - 끄는 요청은 한컴의 "끈 상태" 값으로 되돌린다. 양각↔음각, 위첨자↔아래첨자는 서로 배타로 다룬다.
 - 글자모양이 바뀌지 않는 run은 쪼개지 않는다. 구간 전체가 이미 같은 모양이면 계획이 비어 있다.
-- 쪼개기 규칙: 한 글자 엔티티는 가르지 않는다. 서로게이트 쌍 가운데는 `FMT_BAD_RANGE`. CDATA 가운데에서는 닫고 다시 연다. run 자식 사이에서는 run만 닫는다.
+- 쪼개기 규칙: 한 글자 엔티티는 가르지 않는다. 구간의 시작·끝이 **글자 묶음** 경계가 아니면 `FMT_BAD_RANGE`다(서로게이트 쌍, 결합 부호, 옛한글 조합 자모, 이모지 묶음. `Intl.Segmenter`로 판정. 탭·객체 자리는 각각 한 묶음). CDATA 가운데에서는 닫고 다시 연다. run 자식 사이에서는 run만 닫는다.
 - 줄 배치 캐시는 그 구역 전부를 지운다.
 - 문단 테두리를 새로 만들 때는 두 단계다(테두리 파생·적용 → 다시 파싱 → 문단모양이 그것을 가리키게).
 - `createDeriver(doc)`: 여러 자원을 한 번에 파생해 새 id가 겹치지 않게 한다. 결과에 `reused`가 있다.
@@ -505,6 +506,54 @@ type InsertPoint = { sectionIndex: number; parentPath: number[]; index: number; 
 - 계획 `summary`에 `createdLists`가 있다. 새 글머리표·번호의 id는 빈 목록이면 0부터다(한컴이 0번 글머리표를 정상으로 읽는 것을 확인).
 - 보정: `fixCounts`는 `itemCnt`·`fontCnt`만, `fixSectionCount`(기본 끔)가 구역 수 선언을 고친다.
 - 빈 `binaryItemIDRef`는 조각·모델에서 참조 없음이다. 검사기는 경고 `RES_EMPTY_REF`로 다룬다.
+
+### 7.9 표 조정 (`src/table/`) — S5 (사용자 지시, 2026-10-01)
+
+표는 새로 만들든 기존 것이든 크기와 설정을 함께 갖는다. 조각을 셀에 넣거나 구조가 달라지는 템플릿에서는 표 자체를 조정할 수 있어야 한다.
+
+**실제 문서의 표** (642건, 표 7,037개, 수량 집계): 글자처럼 취급 73%, 쪽 나눔은 셀 단위 70%·없음 29%, 제목 행 반복 92%, 병합 셀 20%, 중첩 표 909개, 셀 세로 정렬 가운데 97%, 최대 261행·65열. 글자처럼 취급 표는 쪽을 넘지 못해 셀에 긴 내용을 넣으면 잘린다(7.8, 검증 기준 10절).
+
+**표의 구성** (한컴 저장본에서 관측)
+
+- `tbl` 속성: `pageBreak`(CELL·NONE·TABLE), `repeatHeader`, `rowCnt`, `colCnt`, `cellSpacing`, `borderFillIDRef`, `textWrap`, `textFlow`, `noAdjust`, `lock`
+- `sz`: `width`, `height`(단위 HWPUNIT), 기준(`widthRelTo`·`heightRelTo`), `protect`
+- `pos`: `treatAsChar`, `flowWithText`, `allowOverlap`, 세로·가로 기준과 정렬, 오프셋
+- `outMargin`, `inMargin`: 바깥 여백, 셀 기본 안 여백
+- 선택 요소: `caption`, `cellzoneList`, `label`
+- 셀 `tc`: `header`, `hasMargin`, `protect`, `editable`, `borderFillIDRef`, `subList`(`vertAlign`, `lineWrap`), `cellAddr`, `cellSpan`, `cellSz`(`width`, `height`), `cellMargin`
+
+**원칙**: 변경은 구간 치환이다. 새 요소는 기존 것을 복제해 만든다(행은 기존 행, 표는 기존 표). 표와 셀의 수치가 서로 맞아야 한다(행·열 수, 주소, 병합, 열 너비의 합과 표 너비). 글이 있는 구역의 줄 배치 캐시는 지운다.
+
+**연산**
+
+| 단계 | 연산 | 내용 |
+| --- | --- | --- |
+| 1 설정 | `planSetTableProps` | 글자처럼 취급, 쪽 나눔, 제목 행 반복, 가로 정렬, 바깥·안 여백, 셀 간격, 테두리 |
+| 1 설정 | `planSetCellProps` | 세로 정렬, 줄 나눔, 제목 셀, 셀 여백, 테두리(서식 변경의 파생 자원), 보호 |
+| 2 크기 | `planSetColumnWidths` | 열 너비 지정. 병합 셀은 걸친 열의 합. 표 너비는 열 합으로 맞춘다 |
+| 2 크기 | `planScaleTable` | 표 전체 너비를 비율이나 목표값으로 바꾸고 열을 비례 조정 |
+| 2 크기 | `planSetRowHeights` | 행 높이(최소 높이) 지정. 표 높이는 행 합으로 맞춘다 |
+| 3 구조 | `planInsertRows` | 기존 행을 원형으로 복제해 넣는다(글은 비우거나 유지). 뒤 행 주소·행 수·표 높이 갱신. 세로 병합에 걸리면 병합을 늘리거나 거절 |
+| 3 구조 | `planRepeatRows` | 데이터 배열의 원소마다 원형 행을 복제하고 행 안의 `{{}}`를 원소로 채운다(템플릿 액션 `repeat`) |
+| 3 구조 | `planInsertColumns`, `planDeleteColumns` | 열 복제·삭제. 열 주소·열 수·너비 갱신 |
+| 3 구조 | `planMergeCells`, `planSplitCell` | 병합·분할 |
+| 4 새 표 | `planCloneTable` | 문서나 조각의 기존 표를 원형으로 복제해 행·열 수를 맞춘다 |
+
+- 템플릿 액션에 `tableProps`(표·셀 설정), `resize`(열 너비·표 너비), `repeat`(행 반복)을 더한다.
+- `inject`에 `fitTable: "allowBreak"`: 삽입 지점이 잘릴 수 있는 표의 셀이면 그 표를 쪽을 넘길 수 있게 바꾼다(글자처럼 취급 끔, 쪽 나눔 셀 단위). 한 일은 보고서에 남는다. 기본은 바꾸지 않고 경고만 낸다.
+- 조정으로 표의 위치나 흐름이 달라질 수 있는 설정(글자처럼 취급 등)은 사용자가 고른 경우에만 바꾼다.
+
+**수용 조건**
+
+| ID | 조건 |
+| --- | --- |
+| B1 | 설정 변경 뒤 다시 파싱하면 요청한 속성만 바뀌고 나머지 원문은 그대로다 |
+| B2 | 열 너비 변경 뒤 모든 행에서 셀 너비의 합이 표 너비와 같다(병합 포함). 실제 문서 표 표본에서 불변식이 유지된다 |
+| B3 | 행 삽입·반복 뒤 행 수, 셀 주소, 병합 범위가 맞고 검사기 새 오류가 없다. 복제한 행의 서식 참조는 원형과 같다 |
+| B4 | 한컴 대조(선택 실행): 결과를 한컴으로 열어 표 속성(글자처럼 취급, 쪽 나눔, 제목 행 반복, 너비)과 행·열 수를 읽으면 요청과 같다. 쪽 수가 터무니없이 변하지 않는다 |
+| B5 | 잘림 해소: "글자처럼 취급" 표의 셀에 긴 조각을 넣고 `fitTable: "allowBreak"`를 쓰면 한컴 PDF에서 내용이 끝까지 보인다 |
+| B6 | 행 반복: 배열 길이 0·1·여러 개, 병합 셀이 든 원형 행, 제목 행 반복이 켜진 표 |
+| B7 | 실제 문서 표 표본(병합·중첩 포함)에 무작위로 설정·크기·행 조작을 적용해 검사기 새 오류 0, 한컴 표본 열림 |
 
 ## 8. S3 — 검사·채움·템플릿·CLI
 
@@ -756,12 +805,15 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 구현 상태: E1~E13, G1~G6 통과(테스트 98개). 오라클 교차 18건 통과(rhwp 파싱·쪽 수·누름틀 값, Python 검사기 오류 증가 없음). CLI로 만든 8종을 한컴 13이 모두 열었고 쪽 수가 원본과 같았다. 한컴이 저장한 PDF에서 누름틀 값(본문 글자모양), 조건 삭제, 그림 조각 삽입, 표 행 삭제, 셀 채움, 텍스트 삽입을 눈으로 확인했다.
 
 - **적용 방식**: 채움·삭제·행 삭제·텍스트 삽입·줄 배치 캐시 제거는 원본 좌표의 계획 하나로 적용한다. 조각 주입은 그 결과를 다시 파싱해 하나씩 이어서 가져온다(독립 계획은 새 id가 겹치므로 합치지 않는다). 단계마다 보존·수량·값 재읽기를 확인한다.
-- **건너뜀과 오류**: 건너뜀(`skipped`)은 `FILL_CROSSES_MARKUP`, `FILL_MIXED_FORMAT` 둘뿐이다. 그 밖(`FILL_HAS_OBJECT`, `FIELD_UNSUPPORTED_SHAPE`, `FILL_LAST_PARAGRAPH` 등)은 오류로 전체를 막는다.
+- **건너뜀과 오류**: 건너뜀(`skipped`)은 `FILL_CROSSES_MARKUP`, `FILL_SPLITS_CLUSTER`(구간 경계가 글자 묶음 가운데), `FILL_MIXED_FORMAT` 셋이다. 그 밖(`FILL_HAS_OBJECT`, `FIELD_UNSUPPORTED_SHAPE`, `FILL_LAST_PARAGRAPH` 등)은 오류로 전체를 막는다.
 - 구역 설정과 단 설정만 든 컨트롤은 `FILL_HAS_OBJECT`의 객체로 세지 않는다(한컴 문서의 첫 문단은 항상 이것을 갖는다).
 - **누름틀 승격**: `fieldid`는 한컴 저장본에서 관측한 고정값을 쓴다. 시작 id만 문서에서 겹치지 않는 값을 준다. 한컴 13이 승격본을 열고, 필드 목록에서 승격한 이름들을 누름틀로 돌려준다(COM으로 확인). 채운 문서의 누름틀 값도 한컴이 그대로 읽는다.
 - `insertText`는 새 문단의 쪽 나눔·단 나눔 속성을 `0`으로 둔다.
 - 마지막 남은 행까지 지우면, 표를 담은 문단에 표만 있으면 문단째, 다른 글이 있으면 표 요소만 지운다.
-- 조건 비교: 한쪽이 숫자이고 다른 쪽이 숫자로 읽히는 글이면 숫자로 견준다. 경로가 없으면 `ne`와 `empty`는 참, 그 밖은 거짓이다.
+- 조건 비교: 한쪽이 숫자이고 다른 쪽이 숫자로 읽히는 글이면 숫자로 견준다. "숫자로 읽히는 글"은 앞뒤 공백 없는 10진수다(부호·소수점 허용, `1e3` 같은 지수 표기는 글). 경로가 없으면 `ne`와 `empty`는 참, 그 밖은 거짓이다. `data`의 값이 null이면 `derived`를 본다. 빈 `all`은 참, 빈 `any`는 거짓. `length*`는 배열은 원소 수, 문자열은 UTF-16 단위.
+- 정규식 조건의 한도: 패턴 200자 초과와 중첩 수량자 형태(`(a+)+` 등)는 템플릿을 읽을 때 `TPL_CONDITION`으로 거절한다. 평가할 글이 10,000자를 넘으면 `TPL_CONDITION`으로 중단한다. 보수적인 휴리스틱이라 무해한 패턴 일부도 거절한다.
+- 게이트의 상속 설명에는 개수 상한이 있다: (코드, id 공간, 값)별 오류 증가분이 조각의 상속 기록 개수 이하일 때만 설명하고, 넘는 부분은 새 오류로 막는다.
+- 기준선에서 관용 경고(`RES_DANGLING_TOLERATED`)였던 같은 참조가 결과에서 오류(`RES_DANGLING`)로 올라가면 원래 있던 문제로 센다(빈 목록에 항목이 생기면 검사기가 같은 참조를 오류로 올린다). `strict`에서는 막는다.
 - `repair` 방식: 보정 결과를 원본으로 삼고 그 위에서 기준선 방식으로 판정한다. 보정이 새 오류를 만들면 `GATE_REPAIR_REGRESSED`.
 - 게이트 실패 코드: `GATE_NEW_ERRORS`, `PRESERVE_SPAN`, `PRESERVE_CENSUS`, `PRESERVE_RECORD_CHANGED`, `REREAD_TEXT`, `REREAD_FIELD`.
 - 입력을 열 수 없으면 `generate`는 `HwpxError`를 던진다. 게이트 실패는 `{ ok: false, report }`다.

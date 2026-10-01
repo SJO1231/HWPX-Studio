@@ -8,10 +8,10 @@ import { decodeEntities, escapeAttr } from "../xml/chars.ts";
 import { parseXmlBytes } from "../xml/parse.ts";
 import { attrNode, attrValue, childEl, childEls, subElements, elIs, nsRole, walkElements, type XElement } from "../xml/tree.ts";
 import { validateFragment } from "./json.ts";
-import { createFingerprinter, makeLookup, resourceRefs } from "./resources.ts";
+import { createFingerprinter, danglingIdsOf, makeLookup } from "./resources.ts";
 import { paragraphsAt, sectionAt } from "./select.ts";
 import type { Fragment, FragmentResource, ImportOptions, ImportPlan, InheritedDuplicate, InsertPoint } from "./types.ts";
-import { applyReps, isNoRef, missingDeclarations, scanInstanceAttrs, sha256Hex, type Rep } from "./util.ts";
+import { applyReps, missingDeclarations, scanInstanceAttrs, sha256Hex, type Rep } from "./util.ts";
 
 // 자원 종류 → header의 목록 요소(local 이름)
 const LIST_NAME: Record<string, string> = {
@@ -86,9 +86,12 @@ function mapResources(target: HwpxDocument, fragment: Fragment): ResourcePlan {
   const lookup = makeLookup(target);
   const fingerprint = createFingerprinter(lookup);
 
-  // 종류(글꼴은 언어별) 안의 지문 → id 목록, 다음 새 id(그 종류에서 가장 큰 숫자 id + 1, 항목이 없으면 0)
-  const groups = new Map<string, { byFp: Map<string, string[]>; next: number }>();
-  const groupOf = (kind: string, lang: string | undefined): { byFp: Map<string, string[]>; next: number } => {
+  // 종류(글꼴은 언어별) 안의 지문 → id 목록, 다음 새 id(그 종류에서 가장 큰 숫자 id + 1, 항목이 없으면 0)와 건너뛸 id
+  // (대상에서 없는 자원을 가리키던 참조의 id: 새 자원이 받으면 기존 문단·자원이 새 자원을 가리키게 된다)
+  const danglingIds = danglingIdsOf(target, lookup);
+  type Group = { byFp: Map<string, string[]>; next: number; skip: ReadonlySet<string> };
+  const groups = new Map<string, Group>();
+  const groupOf = (kind: string, lang: string | undefined): Group => {
     const key = refKey(kind, lang, "");
     let group = groups.get(key);
     if (group === undefined) {
@@ -104,7 +107,7 @@ function mapResources(target: HwpxDocument, fragment: Fragment): ResourcePlan {
         else ids.push(item.id);
         if (isNumericId(item.id)) max = Math.max(max, Number(item.id));
       }
-      group = { byFp, next: max + 1 };
+      group = { byFp, next: max + 1, skip: danglingIds(kind, lang) };
       groups.set(key, group);
     }
     return group;
@@ -127,6 +130,7 @@ function mapResources(target: HwpxDocument, fragment: Fragment): ResourcePlan {
         list = makeNewList(target, res);
         created.set(key, list);
       }
+      while (group.skip.has(String(group.next))) group.next++;
       newId = String(group.next++);
       group.byFp.set(res.fingerprint, [newId]);
       const entry: AddedResource = { res, newId, list };
@@ -142,47 +146,6 @@ function mapResources(target: HwpxDocument, fragment: Fragment): ResourcePlan {
     ids.set(refKey(res.kind, res.lang, res.id), newId);
   }
   return { ids, added };
-}
-
-/**
- * 새로 추가하는 자원의 id가, 대상에서 없는 자원을 가리키던 참조의 id와 같으면 경고를 낸다. 그런 참조(예: 탭 목록이 비었는데 0번을
- * 가리키는 문단모양)는 가져온 뒤 새 자원을 가리키게 되어 기존 문단의 모양이 달라질 수 있다. id 배정은 바꾸지 않는다.
- * 대상의 header 자원이 가리키는 참조와 본문 참조를 모두 보고, 같은 종류·id는 한 경고로 묶는다. 이진 자료 참조는 보지 않는다.
- */
-function fillsDangling(target: HwpxDocument, added: AddedResource[]): Issue[] {
-  if (added.length === 0) return [];
-  const lookup = makeLookup(target);
-  const dangling = new Map<string, number>();
-  const note = (kind: string, lang: string | undefined, id: string): void => {
-    if (isNoRef(id) || lookup.resource(kind, lang, id) !== undefined) return;
-    const key = refKey(kind, lang, id);
-    dangling.set(key, (dangling.get(key) ?? 0) + 1);
-  };
-  for (const items of Object.values(target.header.resources)) {
-    for (const item of items) {
-      for (const ref of resourceRefs(item)) if (ref.kind !== "binaryItem") note(ref.kind, ref.lang, ref.id);
-    }
-  }
-  for (const section of target.sections) {
-    for (const ref of section.bodyRefs) {
-      if (ref.kind !== "unknown" && ref.kind !== "memoShape" && ref.kind !== "binaryItem") note(ref.kind, undefined, ref.id);
-    }
-  }
-  const issues: Issue[] = [];
-  for (const { res, newId } of added) {
-    const n = dangling.get(refKey(res.kind, res.lang, newId));
-    if (n === undefined) continue;
-    const label = res.lang === undefined ? `${res.kind} ${newId}` : `${res.kind}(${res.lang}) ${newId}`;
-    issues.push(
-      makeIssue(
-        "warning",
-        "FRAG_FILLS_DANGLING",
-        `${label}이(가) 대상에 없는데 ${n}곳에서 가리킵니다. 새로 추가하는 자원이 이 id를 받아 그 참조가 새 자원을 가리키게 되므로 기존 문단의 모양이 달라질 수 있습니다.`,
-        target.pkg.headerEntry,
-      ),
-    );
-  }
-  return issues;
 }
 
 /** 추가할 자원의 원문을 새 id·새 참조·새 이름으로 고친다. */
@@ -574,7 +537,6 @@ export function planImport(target: HwpxDocument, fragment: Fragment, at: InsertP
 
   // 2. 자원 대응과 header 편집
   const resources = mapResources(target, fragment);
-  issues.push(...fillsDangling(target, resources.added));
   const byList = new Map<TargetList, { items: string[]; reason: string }>();
   const headerDeclarations = new Map<string, string>();
   for (const entry of resources.added) {

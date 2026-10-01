@@ -15,6 +15,6 @@ export {
   type LedgerAction,
   type ValidationSummary,
 } from "./gate.ts";
-export { explainInherited, mergeInherited, noInherited } from "./inherited.ts";
+export { explainInherited, mergeInherited, noInherited, splitTolerated } from "./inherited.ts";
 export { planCompile, compileDocument, type CompileTarget, type CompileResult, type CompileReport } from "./compile.ts";
 export { findCandidates, type Candidate, type CandidateKind, type AnchorDraft } from "./candidates.ts";

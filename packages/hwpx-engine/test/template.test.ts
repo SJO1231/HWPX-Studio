@@ -252,7 +252,7 @@ const CASES: { op: string; true: [unknown, unknown][]; false: [unknown, unknown]
   { op: "contains", true: [["서울 강남", "강남"], [["a", "b"], "b"], [["1", "2"], 2]], false: [["서울", "부산"], [["a"], "b"], [5, 5], [null, "x"]] },
   { op: "in", true: [["a", ["a", "b"]], [2, ["1", "2"]], [true, ["true"]]], false: [["c", ["a", "b"]], [null, ["a"]], [[1], [1]]] },
   { op: "matches", true: [["INV-2026-0042", "^INV-\\d{4}-\\d+$"], [12, "^1"]], false: [["INV-26", "^INV-\\d{4}"], [null, ".*"], [[1], "1"]] },
-  { op: "lengthEq", true: [["abc", 3], [[1, 2], 2], ["가나다", 3], ["😀", 1]], false: [["abc", 2], [5, 1], [null, 0]] },
+  { op: "lengthEq", true: [["abc", 3], [[1, 2], 2], ["가나다", 3], ["😀", 2]], false: [["abc", 2], [5, 1], [null, 0], ["😀", 1]] },
   { op: "lengthGt", true: [["abc", 2], [[1, 2], 1]], false: [["abc", 3], [5, 0]] },
   { op: "lengthLt", true: [["abc", 4], [[1], 2]], false: [["abc", 3], [5, 9]] },
 ];
@@ -323,4 +323,120 @@ test("규칙 선별: 조건이 참이거나 없는 규칙만 템플릿 순서대
   const sel = selectRules(t, { data: { k: "a" }, derived: {} });
   assert.deepEqual(sel.active.map((r) => r.id), ["r1", "r2"]);
   assert.deepEqual(sel.inactive.map((r) => r.id), ["r3"]);
+});
+
+// ── 조건 평가의 명세 빈틈(결정) ──────────────────────────────────────
+
+test("G1 결정: 숫자로 읽히는 글은 선행·후행 공백 없는 10진수(부호·소수점 허용, 지수 표기는 숫자가 아니다)", () => {
+  const ev = (left: unknown, op: string, arg: unknown): boolean => evaluateCondition({ path: "v", op, value: arg } as Condition, { data: { v: left }, derived: {} });
+  // 숫자로 읽히는 글
+  for (const text of ["5", "+5", "-5", "5.0", ".5", "5.", "-0.5", "007"]) assert.equal(ev(text, "eq", Number(text)), true, `eq(${JSON.stringify(text)})`);
+  assert.equal(ev("10", "gt", 9), true, "숫자로 견주면 10 > 9");
+  assert.equal(ev("-0.5", "lt", 0), true);
+  // 숫자로 읽히지 않는 글: 공백이 붙었거나, 지수 표기, 16진수, 천 단위 쉼표, 단위
+  for (const text of [" 5", "5 ", " 5 ", "\t5", "5\n", "1e3", "1E3", "0x10", "1,000", "5원"]) {
+    assert.equal(ev(text, "eq", Number.parseFloat(text) || 5), false, `eq(${JSON.stringify(text)})는 글로 견준다`);
+  }
+  // 글로 견주므로 문자열 순서다: " 5"는 "10"보다 앞, "1e3"은 "999"보다 앞(숫자였다면 1000 > 999)
+  assert.equal(ev(" 5", "lt", 10), true, "글 비교: ' 5' < '10'");
+  assert.equal(ev("1e3", "gt", 999), false, "1e3은 숫자가 아니라 글 비교: '1e3' < '999'");
+  assert.equal(ev("1e3", "lt", 999), true);
+  // 양쪽이 숫자 값이면 그대로 숫자다
+  assert.equal(ev(1000, "gt", 999), true);
+});
+
+test("G1 결정: data의 값이 null이면 derived를 본다(derived에도 없으면 null로 남는다)", () => {
+  const ds: Dataset = { data: { a: null, b: null, c: "원천", n: { x: null } }, derived: { a: "파생", c: "파생", n: { x: 7 }, d: "파생만" } };
+  assert.deepEqual(lookupPath(ds, "a"), { found: true, value: "파생" });
+  assert.deepEqual(lookupPath(ds, "n.x"), { found: true, value: 7 });
+  assert.deepEqual(lookupPath(ds, "b"), { found: true, value: null }, "derived에도 없으면 null이다");
+  assert.deepEqual(lookupPath(ds, "c"), { found: true, value: "원천" }, "null이 아니면 data가 먼저다");
+  const ev = (c: Condition): boolean => evaluateCondition(c, ds);
+  assert.equal(ev({ path: "a", op: "exists" }), true);
+  assert.equal(ev({ path: "a", op: "eq", value: "파생" }), true);
+  assert.equal(ev({ path: "a", op: "empty" }), false);
+  assert.equal(ev({ path: "b", op: "exists" }), false);
+  assert.equal(ev({ path: "b", op: "empty" }), true);
+  // 값 해석도 같다: null인 data 대신 derived의 값을 글로 쓴다
+  assert.deepEqual(resolveValue(ds, { path: "a" }, "error"), { kind: "text", text: "파생", path: "a" });
+  assert.equal(resolveValue(ds, { path: "b" }, "error").kind, "error");
+});
+
+test("G1 결정: 빈 all은 참이고 빈 any는 거짓이다(읽을 때도 거절하지 않는다)", () => {
+  const t = readTemplate({
+    schema: "hwpx-studio/template@1",
+    anchors: [{ id: "f", kind: "field", name: "x" }],
+    rules: [
+      { id: "all0", when: { all: [] }, do: { type: "fill", anchor: "f", value: { text: "1" } } },
+      { id: "any0", when: { any: [] }, do: { type: "fill", anchor: "f", value: { text: "2" } } },
+      { id: "not-any0", when: { not: { any: [] } }, do: { type: "fill", anchor: "f", value: { text: "3" } } },
+      { id: "not-all0", when: { not: { all: [] } }, do: { type: "fill", anchor: "f", value: { text: "4" } } },
+    ],
+  });
+  const sel = selectRules(t, { data: {}, derived: {} });
+  assert.deepEqual(sel.active.map((r) => r.id), ["all0", "not-any0"]);
+  assert.deepEqual(sel.inactive.map((r) => r.id), ["any0", "not-all0"]);
+});
+
+test("G1 결정: length*는 배열이면 원소 수, 문자열이면 UTF-16 단위 길이다(이모지 2, 결합 글자는 각각)", () => {
+  const ev = (v: unknown, op: "lengthEq" | "lengthGt" | "lengthLt", n: number): boolean => evaluateCondition({ path: "v", op, value: n }, { data: { v }, derived: {} });
+  assert.equal(ev("😀", "lengthEq", 2), true);
+  assert.equal(ev("😀", "lengthEq", 1), false);
+  assert.equal(ev("😀", "lengthGt", 1), true);
+  assert.equal(ev("a😀b", "lengthEq", 4), true);
+  assert.equal(ev("e\u0301", "lengthEq", 2), true, "결합 글자는 묶지 않고 단위로 센다");
+  assert.equal(ev("가나다", "lengthEq", 3), true);
+  assert.equal(ev(["😀"], "lengthEq", 1), true, "배열은 원소 수");
+  assert.equal(ev(["a", "b", "c"], "lengthLt", 4), true);
+  assert.equal(ev(12, "lengthEq", 2), false, "숫자는 길이가 없다");
+});
+
+// ── 정규식 조건의 실행 시간 막기 ─────────────────────────────────────
+
+const whenMatches = (pattern: unknown): unknown => ({
+  schema: "hwpx-studio/template@1",
+  anchors: [{ id: "f", kind: "field", name: "x" }],
+  rules: [{ id: "r", when: { path: "a", op: "matches", value: pattern }, do: { type: "fill", anchor: "f", value: { text: "x" } } }],
+});
+
+test("TPL_CONDITION: matches 패턴이 200자를 넘으면 읽을 때 거절한다(200자는 통과)", () => {
+  assert.doesNotThrow(() => readTemplate(whenMatches("a".repeat(200))));
+  assert.equal(code(() => readTemplate(whenMatches("a".repeat(201)))), "TPL_CONDITION");
+  assert.equal(code(() => readTemplate(whenMatches(`^${"(ab)".repeat(60)}$`))), "TPL_CONDITION", "길이만 본다");
+});
+
+test("TPL_CONDITION: 수량자가 붙은 묶음 안에 다시 수량자가 있는 중첩 수량자 패턴은 읽을 때 거절한다", () => {
+  for (const pattern of ["^(a+)+$", "(a*)*", "(a+)*", "(a*)+", "(a{2,})+", "(a+){2,}", "^(\\w+\\s?)*$", "^(?:a+)+$", "^((ab)+c)+$", "^(a|b+)*$", "(x(y+)z)+", "^(a{1,3})+$", "^(.*)*$", "^(?<n>a+)+$"]) {
+    assert.equal(code(() => readTemplate(whenMatches(pattern))), "TPL_CONDITION", pattern);
+  }
+});
+
+test("TPL_CONDITION: 중첩 수량자가 아닌 일상적인 패턴은 통과한다(이스케이프·문자 클래스 안의 기호, 묶음만, 수량자만, 고정 횟수)", () => {
+  for (const pattern of [
+    "^INV-\\d{4}-\\d+$",
+    "^(\\d{3})-(\\d{4})$",
+    "^(\\d+)-(\\d+)$",
+    "^(?:abc|def)+$",
+    "^[a+]+$",
+    "^([+*])+$",
+    "^\\(a+\\)$",
+    "^(a{3})+$",
+    "^a+b*c?$",
+    "^(a)(b)+$",
+    "(?=a+)b",
+    "^[^()]+(\\+[0-9]+)?$",
+  ]) {
+    assert.doesNotThrow(() => readTemplate(whenMatches(pattern)), pattern);
+  }
+});
+
+test("TPL_CONDITION: matches 평가는 입력 글을 10,000자까지만 본다(넘으면 거짓이 아니라 TPL_CONDITION으로 중단, 10,000자는 평가한다)", () => {
+  const cond: Condition = { path: "v", op: "matches", value: "^a+$" };
+  const ev = (v: unknown): boolean => evaluateCondition(cond, { data: { v }, derived: {} });
+  assert.equal(ev("a".repeat(10_000)), true);
+  assert.equal(ev(`${"a".repeat(9_999)}b`), false);
+  assert.equal(code(() => ev("a".repeat(10_001))), "TPL_CONDITION");
+  // 없는 값·배열은 지금처럼 거짓이다(오류가 아니다)
+  assert.equal(ev(["a".repeat(20_000)]), false);
+  assert.equal(evaluateCondition(cond, { data: {}, derived: {} }), false);
 });

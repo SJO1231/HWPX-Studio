@@ -11,11 +11,21 @@ const BODY_REF_KINDS = new Map<string, BodyRefKind>([
   ["binaryItemIDRef", "binaryItem"],
   ["outlineShapeIDRef", "numbering"],
   ["memoShapeIDRef", "memoShape"],
+  // hp:t·hp:ctrl의 글자 스타일 참조. 실제 문서 모음에서 799곳이 전부 type="CHAR"인 스타일의 id였다.
+  ["charStyleIDRef", "style"],
 ]);
+
+// 요소 이름까지 맞아야 대상이 정해지는 속성(요소 이름:속성 이름). 글자 겹침(hp:compose) 안 `charPr` 요소의 `prIDRef`는 글자모양을 가리킨다:
+// 실제 문서 모음에서 "참조 없음"을 뺀 156곳이 전부 글자모양 id였다(문단모양은 154곳, 테두리는 142곳만 맞았다).
+// `prIDRef`가 다른 요소에서 무엇을 가리키는지는 근거가 없어 unknown으로 둔다.
+const ELEMENT_REF_KINDS = new Map<string, BodyRefKind>([["charPr:prIDRef", "charPr"]]);
 
 // 이름은 IDRef로 끝나지만 자원 참조가 아닌 속성: 누름틀 짝(FieldMark)을 가리키는 beginIDRef,
 // 하위 목록(subList)의 연결 속성 linkListIDRef·linkListNextIDRef
 const NON_RESOURCE_ATTRS = new Set(["beginIDRef", "linkListIDRef", "linkListNextIDRef"]);
+
+// "참조 없음"을 뜻하는 관례값. 글자 겹침(hp:compose)의 charPr prIDRef가 실제 문서에서 대부분 이 값이다.
+const NO_REF = new Set(["4294967295", "-1"]);
 
 // 메모 모양 목록(memoProperties) 참조. 목록이 없거나 값이 "없음"(0, 4294967295, -1)이면 확인하지 않는다.
 const MEMO_LIST = "other:memoProperties";
@@ -26,7 +36,7 @@ export function collectBodyRefs(element: XElement): BodyRef[] {
   const refs: BodyRef[] = [];
   for (const el of walkElements(element)) {
     for (const attr of el.attrs) {
-      const kind = BODY_REF_KINDS.get(attr.qname);
+      const kind = BODY_REF_KINDS.get(attr.qname) ?? ELEMENT_REF_KINDS.get(`${el.local}:${attr.qname}`);
       if (kind !== undefined) {
         refs.push({ kind, id: attr.value, element: el, attr });
       } else if (attr.qname.endsWith("IDRef") && !NON_RESOURCE_ATTRS.has(attr.qname)) {
@@ -82,6 +92,7 @@ export function checkReferences(pkg: HwpxPackage, header: HeaderModel, sections:
   }
   for (const sec of sections) {
     for (const ref of sec.bodyRefs) {
+      if (ref.kind !== "unknown" && NO_REF.has(ref.id)) continue; // "참조 없음" 관례값(검사기도 대상을 확인하지 않는다)
       if (ref.kind === "unknown") {
         const name = ref.attr.qname;
         tally(unknown, `${sec.entryName}\u0000${name}`, (n) => `자원 참조로 해석하지 못한 ${name} 속성이 ${n}곳 있습니다.`);

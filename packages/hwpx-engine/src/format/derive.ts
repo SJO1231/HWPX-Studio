@@ -1,7 +1,7 @@
 import type { EditPlan } from "../edit/plan.ts";
 import { HwpxError } from "../errors.ts";
 import { findList, listEdits } from "../fragment/import.ts";
-import { createFingerprinter, makeLookup } from "../fragment/resources.ts";
+import { createFingerprinter, danglingIdsOf, makeLookup } from "../fragment/resources.ts";
 import { parseHeader } from "../model/header.ts";
 import type { HwpxDocument, ResourceItem } from "../model/types.ts";
 import { tokenize } from "../xml/tokenizer.ts";
@@ -15,6 +15,8 @@ type Group = {
   /** 지문 → id 목록(문서 순서) */
   byFp: Map<string, string[]>;
   next: number;
+  /** 건너뛸 id: 문서에서 없는 자원을 가리키던 참조의 id(새 자원이 받으면 기존 문단·자원이 새 자원을 가리키게 된다) */
+  skip: ReadonlySet<string>;
   list: XElement;
   items: ResourceItem[];
   pending: string[];
@@ -34,6 +36,7 @@ export function createDeriver(doc: HwpxDocument): Deriver {
   const env: EditEnv = makeEditEnv(header.root);
   const lookup = makeLookup(doc);
   const fingerprint = createFingerprinter(lookup);
+  const danglingIds = danglingIdsOf(doc, lookup);
   const groups = new Map<string, Group>();
   let reusedCount = 0;
 
@@ -52,7 +55,7 @@ export function createDeriver(doc: HwpxDocument): Deriver {
       else ids.push(item.id);
       if (/^\d+$/.test(item.id) && Number(item.id) < 4294967295) max = Math.max(max, Number(item.id));
     }
-    group = { byFp, next: max + 1, list, items, pending: [] };
+    group = { byFp, next: max + 1, skip: danglingIds(kind), list, items, pending: [] };
     groups.set(kind, group);
     return group;
   };
@@ -90,6 +93,7 @@ export function createDeriver(doc: HwpxDocument): Deriver {
       reusedCount++;
       return { id: known.includes(baseId) ? baseId : (known[0] ?? baseId), reused: true };
     }
+    while (group.skip.has(String(group.next))) group.next++;
     const id = String(group.next++);
     group.byFp.set(fp, [id]);
     group.pending.push(withId(text, env, id));

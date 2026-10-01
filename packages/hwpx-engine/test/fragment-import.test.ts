@@ -328,11 +328,12 @@ test("F4 F3 결과에서 모든 본문 참조·자원 참조의 대상이 있다
   const target = loadDoc("D1");
   const r = runDocs(d5, 7, 7, target, endOf(target));
   assertRefsResolve(r, "D5 표 → D1");
-  // D1에는 원래 tabPr 0이 없다는 오류 하나(8곳)가 있다. 목록이 비어 있어 새 tabPr이 id 0부터 받으므로 그 참조는 채워진다
+  // D1에는 원래 tabPr 0이 없다는 오류 하나(8곳)가 있다. 새 tabPr은 그 id(0)를 건너뛰므로(7.5 "없는 자원을 가리키던 참조의 id를 건너뛴다")
+  // 그 참조는 채워지지 않고 그대로 없는 대상을 가리킨다. 가져오기가 기존 문단의 모양을 바꾸지 않는다
   assert.equal(missingMessages(r.target).length, 1);
   assert.ok(missingMessages(r.target)[0]?.startsWith("tabPr 0이(가) 없는데 8곳"));
-  assert.deepEqual(missingMessages(r.result), []);
-  assert.deepEqual((r.result.header.resources["tabPr"] ?? []).map((t) => t.id).slice(0, 1), ["0"]);
+  assert.deepEqual(missingMessages(r.result), missingMessages(r.target));
+  assert.deepEqual((r.result.header.resources["tabPr"] ?? []).map((t) => t.id).slice(0, 1), ["1"]);
 });
 
 test("F4 한컴 문서와 합성 문서 사이에서도 대상이 모두 있다", () => {
@@ -708,6 +709,32 @@ test("7.5-4 객체 id가 자리값(0)이면 새 값을 받는다. instId도 같�
   assert.deepEqual(objectIdsIn(r.result.sections[0]?.text ?? ""), ["0", "7", "10"]);
 });
 
+test("7.5-4 조각 안 자리값(0, 빈 값)의 객체 id·instId는 대상에 같은 값이 없어도 새 값으로 재발급한다(대상과의 충돌 때문이 아니다)", () => {
+  // 위 시험은 대상에도 자리값 0이 있어 "대상에 이미 있다"는 갈래로도 바뀐다. 여기서는 대상에 0·빈 값이 없고 id 5·instId 7뿐이다.
+  const body = (inner: string): string => `<hp:p paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0">${inner}</hp:run></hp:p>`;
+  const pic = (id: string, inst: string): string => `<hp:pic id="${id}" instid="${inst}"><hp:sz width="1" height="1"/></hp:pic>`;
+  const rect = (id: string, inst: string): string => `<hp:rect id="${id}" instid="${inst}"/>`;
+  const src = parseSynthetic([body(pic("0", "0") + rect("", ""))]);
+  const target = parseSynthetic([body(pic("5", "7"))]);
+  const targetText = target.sections[0]?.text ?? "";
+  assert.ok(!objectIdsIn(targetText).some((v) => v === "0" || v === "") && !instIdsIn(targetText).some((v) => v === "0" || v === ""), "전제: 대상에 자리값이 없다");
+  const f = extractFragment(src, sel(0, 0));
+  assert.deepEqual(f.instanceIds.map((x) => `${x.role}:${x.value}`), ["object:0", "inst:0", "object:", "inst:"]);
+
+  const r = runDocs(src, 0, 0, target, endOf(target), { fragment: f });
+  assert.equal(r.plan.summary["reissuedIds"], 4, "자리값 넷 모두");
+  const objects = objectIdsIn(r.block);
+  const insts = instIdsIn(r.block);
+  assert.equal(objects.length, 2);
+  assert.equal(insts.length, 2);
+  for (const v of [...objects, ...insts]) assert.ok(/^[1-9]\d*$/.test(v) && Number(v) > 7, `새 값 ${JSON.stringify(v)}: 자리값이 아니고 대상과 조각의 가장 큰 숫자(7)보다 크다`);
+  // 객체 id끼리, instId끼리 겹치지 않고 대상의 id와도 겹치지 않는다
+  assert.deepEqual(duplicates([...objectIdsIn(r.result.sections[0]?.text ?? "")]), []);
+  assert.deepEqual(duplicates([...instIdsIn(r.result.sections[0]?.text ?? "")]), []);
+  assert.deepEqual([...new Set([...objects, ...insts])].sort(), ["10", "11", "8", "9"], "대상과 조각을 합친 가장 큰 숫자 + 1부터 차례로");
+  assert.ok(objectIdsIn(r.result.sections[0]?.text ?? "").includes("5"), "대상의 기존 id는 그대로");
+});
+
 // ── 삽입 지점 ───────────────────────────────────────────────────────────
 
 test("7.5-7 표 셀 안 문단 앞뒤에도 넣을 수 있다 (parentPath = [문단, 하위목록])", () => {
@@ -860,7 +887,7 @@ test("7.5-2 대상 header에 해당 목록 요소가 없으면 만든다(캠페�
   );
 });
 
-test("7.5-2 자기 닫힘 목록(<hh:tabProperties itemCnt=\"0\"/>)은 펼치고 개수를 추가한 만큼으로 한다. 새 id는 0부터 준다", () => {
+test("7.5-2 자기 닫힘 목록(<hh:tabProperties itemCnt=\"0\"/>)은 펼치고 개수를 추가한 만큼으로 한다. 새 id는 없는 tabPr 0을 건너뛰어 1부터 준다", () => {
   const target = loadDoc("D1");
   assert.ok(target.header.text.includes('<hh:tabProperties itemCnt="0"/>'));
   const r = runDocs(loadDoc("D5"), 4, 6, target, endOf(target));
@@ -870,7 +897,8 @@ test("7.5-2 자기 닫힘 목록(<hh:tabProperties itemCnt=\"0\"/>)은 펼치고
   assert.equal(Number(tab[1]), tabs.length);
   assert.equal([...(tab[2] ?? "").matchAll(/<hh:tabPr /g)].length, tabs.length);
   assert.ok(tabs.length >= 1);
-  assert.deepEqual(tabs.map((x) => x.id), tabs.map((_, i) => String(i)), "항목이 없던 목록이라 0부터 준다");
+  // 항목이 없던 목록이라 보통은 0부터 주지만, D1의 문단모양 8곳이 없는 tabPr 0을 가리키므로 0은 건너뛴다
+  assert.deepEqual(tabs.map((x) => x.id), tabs.map((_, i) => String(i + 1)));
 });
 
 // ── 새 id 규칙 ──────────────────────────────────────────────────────────
@@ -1173,43 +1201,48 @@ test("7.5-4 같은 조각을 몇 번 가져와도 문단 id는 겹치지 않고,
   assert.deepEqual(planImport(target, again, endOf(target)), planImport(target, fragment, endOf(target)));
 });
 
-// ── 없는 참조를 채우는 경우 (FRAG_FILLS_DANGLING) ───────────────────────
+// ── 없는 참조를 새 자원이 차지하지 않는다 ─────────────────────────────────────
+// 새 자원의 id는 "가장 큰 숫자 + 1"이지만, 대상에서 없는 자원을 가리키던 참조의 id(같은 종류)는 건너뛴다.
+// 그렇지 않으면 대상의 기존 문단·자원이 새 자원을 가리키게 되어 기존 내용의 모양이 달라질 수 있다.
 
 const fillsOf = (plan: EditPlan) => plan.issues.filter((i) => i.code === "FRAG_FILLS_DANGLING");
 
-test("7.65 D5 표를 D1에 가져오면 D1에서 없던 tabPr 0을 새 자원이 차지하므로 FRAG_FILLS_DANGLING 경고가 하나 나온다", () => {
+test("7.5 D5 표를 D1에 가져오면 D1에서 없던 tabPr 0을 새 탭이 차지하지 않는다: 새 탭은 0이 아닌 id를 받고 D1 기존 참조는 여전히 없는 대상을 가리킨다", () => {
   const d5 = loadDoc("D5");
   const target = loadDoc("D1");
   const { from, to } = selectTable(d5, 0, 4).selection;
   const r = runDocs(d5, from, to, target, endOf(target));
-  const warnings = fillsOf(r.plan);
-  assert.equal(warnings.length, 1, "같은 종류·id는 한 경고로 묶는다(D1에서 tabPr 0을 가리키는 참조는 8곳)");
-  assert.equal(warnings[0]?.severity, "warning");
-  assert.ok(warnings[0]?.message.includes("tabPr 0"), warnings[0]?.message);
-  assert.equal(warnings[0]?.where, HEADER);
-  // 경고의 근거: 대상에서 tabPr 0은 없었고(모델의 없는 참조), 가져온 뒤에는 있다. 그 참조들이 새 자원을 가리키게 된다
-  assert.ok(missingMessages(target).some((m) => m.startsWith("tabPr 0이(가) 없는데")));
-  assert.ok(!missingMessages(r.result).some((m) => m.startsWith("tabPr 0")));
-  assert.ok((r.result.header.resources["tabPr"] ?? []).some((t) => t.id === "0"));
-  // 경고만 더하고 동작은 그대로다: 가져오기는 되고, 새 id는 0부터, 계획의 다른 경고는 조각이 가져온 것뿐이다
-  assert.deepEqual(r.plan.issues.filter((i) => i.code !== "FRAG_FILLS_DANGLING"), r.fragment.issues);
+  // 전제: D1에는 tabPr 목록이 비어 있는데 문단모양 8곳이 tabPr 0을 가리킨다
+  assert.deepEqual(target.header.resources["tabPr"] ?? [], []);
+  assert.ok(missingMessages(target).some((m) => m.startsWith("tabPr 0이(가) 없는데 8곳")));
+  // 새 탭이 들어오되 0은 건너뛴다
+  const tabIds = (r.result.header.resources["tabPr"] ?? []).map((t) => t.id);
+  assert.ok(tabIds.length > 0, "D5 표가 쓰는 탭이 들어온다");
+  assert.ok(!tabIds.includes("0"), `새 탭 id ${tabIds.join(",")}`);
+  assert.equal(Math.min(...tabIds.map(Number)), 1);
+  // 기존 문단의 tabPrIDRef="0"은 여전히 없는 대상을 가리킨다(8곳 그대로)
+  assert.ok(missingMessages(r.result).some((m) => m.startsWith("tabPr 0이(가) 없는데 8곳")), missingMessages(r.result).join("|"));
+  // 채우는 일이 없으므로 경고도 없다. 계획의 경고는 조각이 가져온 것뿐이다
+  assert.deepEqual(fillsOf(r.plan), []);
+  assert.deepEqual(r.plan.issues, r.fragment.issues);
   assert.equal(r.plan.summary["addedResources"], expectedAdded(r));
+  // 가져온 표의 문단모양이 가리키는 탭은 새 탭이다(전개가 원본과 같다)
+  assertSameTextAndFormat(r, "D5 표 → D1");
 });
 
-test("7.65 경고가 없는 경우: 한컴 저장본끼리, 새 id가 없던 참조와 겹치지 않을 때, 자원을 추가하지 않을 때", () => {
+test("7.5 경고가 없는 경우: 한컴 저장본끼리, 자원을 추가하지 않을 때도 FRAG_FILLS_DANGLING은 나오지 않는다", () => {
   const cases: [string, number, number, string][] = [
     ["hancom/picture", 1, 1, "hancom/blocks"],
     ["hancom-merged", 1, 8, "hancom/blocks"],
     ["hancom/ph-table", 1, 1, "hancom/blocks"],
     ["D5", 4, 6, "hancom/blocks"],
-    ["D1", 9, 9, "D1"], // D1에는 없는 tabPr 0이 있어도 자원을 추가하지 않으면 채우지 않는다
+    ["D1", 9, 9, "D1"],
     ["D1", 1, 12, "D1"],
   ];
   for (const [src, from, to, tgt] of cases) {
     const r = run(src, from, to, tgt);
     assert.deepEqual(fillsOf(r.plan), [], `${src}[${from}~${to}] → ${tgt}`);
   }
-  // 위 경우들 가운데 자원을 추가하는 경우가 있어야 "추가가 없어서"가 아니라 "id가 겹치지 않아서"가 된다
   assert.ok((run("D5", 4, 6, "hancom/blocks").plan.summary["addedResources"] ?? 0) > 0);
   assert.equal(run("D1", 1, 12, "D1").plan.summary["addedResources"], 0);
 });
@@ -1220,29 +1253,28 @@ assert.notEqual(FILL_SRC_HEADER, MINIMAL_HEADER);
 const charRun = (charPrId: string): string =>
   `<hp:p paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="${charPrId}"><hp:t>x</hp:t></hp:run></hp:p>`;
 
-test("7.65 본문이 없는 글자모양을 가리키고 새 글자모양이 그 id를 받으면 경고하고, 받지 않으면 경고하지 않는다", () => {
+test("7.5 본문이 없는 글자모양 2를 가리키면 새 글자모양은 2를 건너뛰어 3을 받고, 그 참조는 여전히 없는 대상이다. 가리키지 않으면 그대로 2를 받는다", () => {
   const src = parseSynthetic([charRun("0")], FILL_SRC_HEADER);
-  // 대상의 글자모양은 0·1이라 새 id는 2다. 본문의 charPr 2(없음)를 새 자원이 채운다
-  const filled = parseSynthetic([charRun("0"), charRun("2")]);
-  assert.ok(missingMessages(filled).some((m) => m.startsWith("charPr 2이(가) 없는데 1곳")));
-  const r = runDocs(src, 0, 0, filled, endOf(filled));
+  // 대상의 글자모양은 0·1이라 보통은 새 id가 2다. 본문의 charPr 2(없음)를 새 자원이 채우지 않도록 3을 받는다
+  const dangling = parseSynthetic([charRun("0"), charRun("2")]);
+  assert.ok(missingMessages(dangling).some((m) => m.startsWith("charPr 2이(가) 없는데 1곳")));
+  const r = runDocs(src, 0, 0, dangling, endOf(dangling));
   assert.ok((r.plan.summary["addedResources"] ?? 0) >= 1);
-  const warnings = fillsOf(r.plan);
-  assert.equal(warnings.length, 1, JSON.stringify(warnings));
-  assert.equal(warnings[0]?.severity, "warning");
-  assert.ok(warnings[0]?.message.includes("charPr 2"), warnings[0]?.message);
-  assert.ok(!missingMessages(r.result).some((m) => m.startsWith("charPr 2")), "실제로 채워졌다");
-  // 없는 참조가 다른 id(9)면 새 id 2와 겹치지 않는다
+  assert.deepEqual((r.result.header.resources["charPr"] ?? []).map((c) => c.id), ["0", "1", "3"]);
+  assert.ok(missingMessages(r.result).some((m) => m.startsWith("charPr 2이(가) 없는데 1곳")), "기존 참조는 채워지지 않았다");
+  assert.deepEqual(fillsOf(r.plan), []);
+  // 새 글자모양을 가리키는 것은 가져온 문단뿐이다
+  assert.deepEqual(attrsOf(r.block, "charPrIDRef"), ["3"]);
+  // 대조군: 없는 참조가 다른 id(9)면 새 id는 그대로 2다
   const apart = parseSynthetic([charRun("0"), charRun("9")]);
   const r2 = runDocs(src, 0, 0, apart, endOf(apart));
-  assert.ok((r2.plan.summary["addedResources"] ?? 0) >= 1);
-  assert.deepEqual(fillsOf(r2.plan), []);
-  // 대상에 없는 참조가 없으면 경고도 없다
+  assert.deepEqual((r2.result.header.resources["charPr"] ?? []).map((c) => c.id), ["0", "1", "2"]);
+  // 대조군: 없는 참조가 없으면 새 id는 2다
   const clean = parseSynthetic([charRun("0")]);
-  assert.deepEqual(fillsOf(runDocs(src, 0, 0, clean, endOf(clean)).plan), []);
+  assert.deepEqual((runDocs(src, 0, 0, clean, endOf(clean)).result.header.resources["charPr"] ?? []).map((c) => c.id), ["0", "1", "2"]);
 });
 
-test("7.65 없는 참조를 채우는 경고는 종류별로 따로 나온다 (본문의 없는 문단모양, header의 없는 테두리)", () => {
+test("7.5 건너뛰는 id는 종류별이다: 본문의 없는 문단모양 1과 header의 없는 테두리 2를 새 자원이 차지하지 않는다", () => {
   // 대상: paraPr 1·borderFill 2가 없는데 문단이 paraPr 1을, 글자모양 1이 borderFill 2를 가리킨다
   const header = MINIMAL_HEADER.replace('<hh:charPr id="1" height="1200" borderFillIDRef="1">', '<hh:charPr id="1" height="1200" borderFillIDRef="2">');
   assert.notEqual(header, MINIMAL_HEADER);
@@ -1257,10 +1289,12 @@ test("7.65 없는 참조를 채우는 경고는 종류별로 따로 나온다 (�
   assert.notEqual(srcHeader, MINIMAL_HEADER);
   const src = parseSynthetic(['<hp:p paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0"><hp:t>x</hp:t></hp:run></hp:p>'], srcHeader);
   const r = runDocs(src, 0, 0, target, endOf(target));
-  const kinds = fillsOf(r.plan).map((w) => w.message.slice(0, w.message.indexOf("이(가)")));
-  // 새 borderFill은 id 2를(대상의 borderFill은 1뿐이라), 새 paraPr은 id 1을(대상의 paraPr은 0뿐이라) 받는다
-  assert.ok(kinds.some((m) => m.startsWith("paraPr 1")), JSON.stringify(fillsOf(r.plan)));
-  assert.ok(kinds.some((m) => m.startsWith("borderFill 2")), JSON.stringify(fillsOf(r.plan)));
+  // 새 borderFill은 2를 건너뛰어 3을, 새 paraPr은 1을 건너뛰어 2를 받는다
+  assert.deepEqual((r.result.header.resources["borderFill"] ?? []).map((b) => b.id), ["1", "3"]);
+  assert.deepEqual((r.result.header.resources["paraPr"] ?? []).map((p) => p.id), ["0", "2"]);
+  const after = missingMessages(r.result);
+  assert.ok(after.some((m) => m.startsWith("paraPr 1이(가) 없는데")) && after.some((m) => m.startsWith("borderFill 2이(가) 없는데")), after.join("|"));
+  assert.deepEqual(fillsOf(r.plan), []);
 });
 
 // ── rootfile ────────────────────────────────────────────────────────────
@@ -1285,4 +1319,138 @@ test("7.5-6 이진 자료 등록은 container.xml이 가리키는 패키지 문�
   assertPictureImported(r, "picture → 옮긴 rootfile");
   assert.ok(decode(readEntry(r.result.pkg.archive, r.bytes, moved)).includes(PICTURE_ITEM("image1", "BinData/image1.png")));
   assert.equal(r.result.pkg.rootfile, moved);
+});
+
+// ── 본문 참조 종류 보강: hp:t의 charStyleIDRef(글자 스타일), hp:compose 안 charPr의 prIDRef(글자모양) ──────────────
+// 근거(실제 문서 모음 642건 집계): hp:t의 charStyleIDRef 799곳(13건)은 전부 type="CHAR"인 스타일의 id였고,
+// hp:compose 안 charPr의 prIDRef는 "참조 없음"을 뺀 156곳(13건)이 전부 글자모양 id였다(문단모양은 154곳, 테두리는 142곳만 맞았다).
+// 이 시험의 문서는 합성이고, 기대는 "그 참조가 가리키는 자원의 전개(참조까지 푼 모양)가 소스와 같다"는 것이다.
+
+// 글자모양 7(높이 1700)과, 그것을 쓰는 글자 스타일 5가 더 있는 원본 header
+const SRC7_HEADER = MINIMAL_HEADER.replace('<hh:charProperties itemCnt="2">', '<hh:charProperties itemCnt="3">')
+  .replace("</hh:charProperties>", '<hh:charPr id="7" height="1700" borderFillIDRef="1"><hh:fontRef hangul="0"/></hh:charPr></hh:charProperties>')
+  .replace('<hh:styles itemCnt="1">', '<hh:styles itemCnt="2">')
+  .replace("</hh:styles>", '<hh:style id="5" type="CHAR" name="강조" paraPrIDRef="0" charPrIDRef="7" nextStyleIDRef="5"/></hh:styles>');
+assert.notEqual(SRC7_HEADER, MINIMAL_HEADER);
+const CHAR_STYLE_BODY = '<hp:p paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0"><hp:t charStyleIDRef="5">강조 글</hp:t></hp:run></hp:p>';
+const COMPOSE_BODY =
+  '<hp:p paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0"><hp:compose circleType="SHAPE_CIRCLE" charSz="-3" composeType="SPREAD" composeText="가나" charPrCnt="1"><hp:charPr prIDRef="7"/></hp:compose></hp:run></hp:p>';
+const END_BODY = '<hp:p paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0"><hp:t>끝</hp:t></hp:run></hp:p>';
+
+const attrsOf = (block: string, name: string): string[] => [...block.matchAll(new RegExp(`\\s${name}="([^"]*)"`, "g"))].map((m) => m[1] ?? "");
+
+test("5.2 본문 참조 분류: hp:t의 charStyleIDRef는 스타일, hp:compose 안 charPr의 prIDRef는 글자모양이고, 다른 *IDRef는 계속 unknown이다", () => {
+  const doc = parseSynthetic(
+    [
+      CHAR_STYLE_BODY +
+        COMPOSE_BODY +
+        '<hp:p paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0"><hp:foo prIDRef="3"/><hp:checkBtn borderTypeIDRef="4"/><hp:ctrl charStyleIDRef="5"/></hp:run></hp:p>',
+    ],
+    SRC7_HEADER,
+  );
+  const refs = doc.sections[0]?.bodyRefs ?? [];
+  const named = (attr: string): string[] => refs.filter((r) => r.attr.qname === attr).map((r) => `${r.element.local}:${r.kind}:${r.id}`);
+  assert.deepEqual(named("charStyleIDRef"), ["t:style:5", "ctrl:style:5"]);
+  assert.deepEqual(named("prIDRef"), ["charPr:charPr:7", "foo:unknown:3"], "prIDRef는 charPr 요소에서만 글자모양이다(근거가 그 요소뿐)");
+  assert.deepEqual(named("borderTypeIDRef"), ["checkBtn:unknown:4"], "값이 테두리 id 집합에 들어맞지 않아 대상을 정하지 못했다");
+});
+
+test("5.2 모델의 참조 확인: 없는 스타일·글자모양을 가리키는 charStyleIDRef·prIDRef는 MODEL_REF_MISSING이고, 있으면 조용하다", () => {
+  const broken = parseSynthetic([CHAR_STYLE_BODY.replace('"5"', '"9"') + COMPOSE_BODY.replace('"7"', '"8"')], SRC7_HEADER);
+  assert.deepEqual(missingMessages(broken), ["charPr 8이(가) 없는데 1곳에서 가리킵니다.", "style 9이(가) 없는데 1곳에서 가리킵니다."]);
+  assert.deepEqual(broken.issues.filter((i) => i.code === "MODEL_UNKNOWN_REF"), []);
+  const fine = parseSynthetic([CHAR_STYLE_BODY + COMPOSE_BODY], SRC7_HEADER);
+  assert.deepEqual(missingMessages(fine), []);
+  assert.deepEqual(fine.issues.filter((i) => i.code === "MODEL_UNKNOWN_REF"), []);
+  // "참조 없음"(4294967295, -1)은 실제 문서의 compose에서 prIDRef 값의 90%다: 없는 대상으로 세지 않는다(검사기와 같다)
+  const none = parseSynthetic([COMPOSE_BODY.replace('"7"', '"4294967295"') + COMPOSE_BODY.replace('"7"', '"-1"')], SRC7_HEADER);
+  assert.deepEqual(missingMessages(none), []);
+});
+
+const CHAR_STYLE_TARGETS: [string, string][] = [
+  ["대상에 그 스타일이 없다", MINIMAL_HEADER],
+  [
+    "대상에 같은 id의 다른 모양 스타일이 있다",
+    MINIMAL_HEADER.replace('<hh:styles itemCnt="1">', '<hh:styles itemCnt="2">').replace(
+      "</hh:styles>",
+      '<hh:style id="5" type="PARA" name="다른" paraPrIDRef="0" charPrIDRef="0" nextStyleIDRef="5"/></hh:styles>',
+    ),
+  ],
+];
+
+for (const [name, header] of CHAR_STYLE_TARGETS) {
+  test(`7.5 charStyleIDRef(hp:t): ${name} — 가져온 뒤 참조가 가리키는 스타일의 전개가 소스와 같다`, () => {
+    const src = parseSynthetic([CHAR_STYLE_BODY], SRC7_HEADER);
+    const target = parseSynthetic([END_BODY], header);
+    const f = extractFragment(src, sel(0, 0));
+    assert.ok(f.refs.some((r) => r.kind === "style" && r.id === "5"), "본문 참조에 charStyleIDRef가 든다");
+    assert.ok(f.resources.some((r) => r.kind === "style" && r.id === "5") && f.resources.some((r) => r.kind === "charPr" && r.id === "7"), "자원 의존 닫힘에 스타일과 그 글자모양이 든다");
+    assert.equal(f.prints.length, f.refs.length, "지문은 참조마다 하나다");
+    assert.deepEqual(f.issues.filter((i) => i.code === "FRAG_UNKNOWN_REF"), []);
+    const r = runDocs(src, 0, 0, target, endOf(target), { fragment: f });
+    const [ref] = attrsOf(r.block, "charStyleIDRef");
+    assert.ok(ref !== undefined);
+    assert.deepEqual(expandResource(r.result, "style", ref), expandResource(src, "style", "5"), `결과의 style ${ref}`);
+    assert.ok(!missingMessages(r.result).some((m) => m.startsWith("style")), "없는 스타일을 가리키지 않는다");
+    assert.equal(r.plan.summary["addedResources"], 2, "글자 스타일과 그 글자모양이 새로 들어온다");
+    // 대상의 기존 스타일 원문은 그대로다
+    for (const s of target.header.resources["style"] ?? []) assert.ok(r.result.header.text.includes(target.header.text.slice(s.element.start, s.element.end)));
+  });
+}
+
+test("7.5 charStyleIDRef(hp:t) 대조군: 대상에 같은 모양의 스타일이 다른 id로 있으면 그것을 재사용한다(자원 추가 0)", () => {
+  const header = MINIMAL_HEADER.replace('<hh:charProperties itemCnt="2">', '<hh:charProperties itemCnt="3">')
+    .replace("</hh:charProperties>", '<hh:charPr id="4" height="1700" borderFillIDRef="1"><hh:fontRef hangul="0"/></hh:charPr></hh:charProperties>')
+    .replace('<hh:styles itemCnt="1">', '<hh:styles itemCnt="2">')
+    .replace("</hh:styles>", '<hh:style id="3" type="CHAR" name="강조" paraPrIDRef="0" charPrIDRef="4" nextStyleIDRef="3"/></hh:styles>');
+  const src = parseSynthetic([CHAR_STYLE_BODY], SRC7_HEADER);
+  const target = parseSynthetic([END_BODY], header);
+  const r = runDocs(src, 0, 0, target, endOf(target));
+  assert.equal(r.plan.summary["addedResources"], 0);
+  assert.deepEqual(attrsOf(r.block, "charStyleIDRef"), ["3"]);
+  assert.deepEqual(expandResource(r.result, "style", "3"), expandResource(src, "style", "5"));
+});
+
+const COMPOSE_TARGETS: [string, string][] = [
+  ["대상에 그 글자모양이 없다", MINIMAL_HEADER],
+  [
+    "대상에 같은 id의 다른 모양 글자모양이 있다",
+    MINIMAL_HEADER.replace('<hh:charProperties itemCnt="2">', '<hh:charProperties itemCnt="3">').replace(
+      "</hh:charProperties>",
+      '<hh:charPr id="7" height="900" borderFillIDRef="1"><hh:fontRef hangul="0"/></hh:charPr></hh:charProperties>',
+    ),
+  ],
+];
+
+for (const [name, header] of COMPOSE_TARGETS) {
+  test(`7.5 prIDRef(hp:compose의 charPr): ${name} — 가져온 뒤 참조가 가리키는 글자모양의 전개가 소스와 같다`, () => {
+    const src = parseSynthetic([COMPOSE_BODY], SRC7_HEADER);
+    const target = parseSynthetic([END_BODY], header);
+    const f = extractFragment(src, sel(0, 0));
+    assert.ok(f.refs.some((r) => r.kind === "charPr" && r.id === "7"), "본문 참조에 prIDRef가 든다");
+    assert.ok(f.resources.some((r) => r.kind === "charPr" && r.id === "7"));
+    assert.equal(f.prints.length, f.refs.length);
+    assert.deepEqual(f.issues.filter((i) => i.code === "FRAG_UNKNOWN_REF"), []);
+    const r = runDocs(src, 0, 0, target, endOf(target), { fragment: f });
+    const [ref] = attrsOf(r.block, "prIDRef");
+    assert.ok(ref !== undefined);
+    assert.deepEqual(expandResource(r.result, "charPr", ref), expandResource(src, "charPr", "7"), `결과의 charPr ${ref}`);
+    assert.ok(!missingMessages(r.result).some((m) => m.startsWith("charPr")), "없는 글자모양을 가리키지 않는다");
+  });
+}
+
+test("7.3 여전히 unknown인 참조(borderTypeIDRef)가 든 조각은 FRAG_UNKNOWN_REF 경고를 내고, 문구는 '번역하지 않고 원래 값 그대로 옮긴다'고 사실대로 말한다", () => {
+  const src = parseSynthetic(
+    ['<hp:p paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0"><hp:checkBtn borderTypeIDRef="4"/><hp:t charStyleIDRef="5">x</hp:t></hp:run></hp:p>'],
+    SRC7_HEADER,
+  );
+  const f = extractFragment(src, sel(0, 0));
+  const unknown = f.issues.filter((i) => i.code === "FRAG_UNKNOWN_REF");
+  assert.equal(unknown.length, 1, JSON.stringify(f.issues));
+  assert.ok(unknown[0]?.message.includes("borderTypeIDRef"));
+  assert.ok(unknown[0]?.message.includes("번역하지 않고 원래 값 그대로 옮깁니다"), unknown[0]?.message);
+  assert.ok(!unknown[0]?.message.includes("옮기지 않습니다"), "옛 문구('조각이 옮기지 않습니다')는 사실과 다르다");
+  const target = parseSynthetic([END_BODY]);
+  const r = runDocs(src, 0, 0, target, endOf(target), { fragment: f });
+  assert.deepEqual(attrsOf(r.block, "borderTypeIDRef"), ["4"], "값은 그대로 옮긴다");
 });

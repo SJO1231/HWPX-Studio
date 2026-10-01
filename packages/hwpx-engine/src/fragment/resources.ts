@@ -2,7 +2,7 @@ import type { HwpxDocument, ResourceItem, ResourceRef } from "../model/types.ts"
 import { findEntry, readEntry } from "../package/zip-read.ts";
 import type { XAttr } from "../xml/tokenizer.ts";
 import { attrNode, isElement, walkElements, type XElement } from "../xml/tree.ts";
-import { isNoRefOf, sha256Hex } from "./util.ts";
+import { isNoRef, isNoRefOf, sha256Hex } from "./util.ts";
 
 /** 지문 계산이 다른 자원과 이진 자료를 찾는 방법 */
 export type FingerprintLookup = {
@@ -39,6 +39,37 @@ export function makeLookup(doc: HwpxDocument): FingerprintLookup {
       return hashes.get(id);
     },
   };
+}
+
+/**
+ * 문서에서 없는 자원을 가리키는 참조의 id를 종류(글꼴은 언어)별로 돌려주는 함수. 새 자원이 이 id를 받으면 그 참조가 새 자원을 가리키게 되어
+ * 기존 문단·자원의 모양이 달라지므로, 새 id를 줄 때는 이 값을 건너뛴다(조각 가져오기와 서식 파생이 함께 쓴다).
+ * header 자원이 가리키는 참조(이진 자료 제외)와 본문 참조(해석하지 못한 참조·메모 모양·이진 자료 제외)를 본다. "참조 없음" 관례값은 뺀다.
+ * 문서는 처음 부를 때 한 번만 훑는다.
+ */
+export function danglingIdsOf(doc: HwpxDocument, lookup: FingerprintLookup = makeLookup(doc)): (kind: string, lang?: string) => ReadonlySet<string> {
+  let index: Map<string, Set<string>> | undefined;
+  const build = (): Map<string, Set<string>> => {
+    const found = new Map<string, Set<string>>();
+    const note = (kind: string, lang: string | undefined, id: string): void => {
+      if (isNoRef(id) || lookup.resource(kind, lang, id) !== undefined) return;
+      const key = JSON.stringify([kind, lang ?? ""]);
+      const ids = found.get(key);
+      if (ids === undefined) found.set(key, new Set([id]));
+      else ids.add(id);
+    };
+    for (const items of Object.values(doc.header.resources)) {
+      for (const item of items) for (const ref of resourceRefs(item)) if (ref.kind !== "binaryItem") note(ref.kind, ref.lang, ref.id);
+    }
+    for (const section of doc.sections) {
+      for (const ref of section.bodyRefs) {
+        if (ref.kind !== "unknown" && ref.kind !== "memoShape" && ref.kind !== "binaryItem") note(ref.kind, undefined, ref.id);
+      }
+    }
+    return found;
+  };
+  const none: ReadonlySet<string> = new Set();
+  return (kind, lang) => (index ??= build()).get(JSON.stringify([kind, lang ?? ""])) ?? none;
 }
 
 /**

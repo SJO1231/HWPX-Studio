@@ -70,7 +70,7 @@ const show = (name: string, reproduced: boolean, detail: string): void => {
   show("D3 대상 header에 bullets 목록이 없으면 거절(FRAG_NO_LIST)", r.error === "FRAG_NO_LIST", r.error ?? `거절되지 않음(새 오류 ${r.newErrors.length}건)`);
 }
 
-// 4) 소스에서 이미 없는 대상(탭 목록 3번)을 가리키는 문단모양은, 대상에 같은 id의 탭 목록이 있으면 그 자원을 가리키게 되고(FRAG_FILLS_DANGLING이 아닌 소스 쪽 사정),
+// 4) 소스에서 이미 없는 대상(탭 목록 3번)을 가리키는 문단모양은, 대상에 같은 id의 탭 목록이 있으면 그 자원을 가리키게 되고(대상 쪽의 없는 참조를 채우는 일과는 다른, 소스 쪽 사정),
 //    같은 조각을 두 번째 가져올 때는 지문이 달라 자원이 또 추가된다(명세 7.65: 소스에서 없는 대상을 가리키던 참조는 그대로 옮긴다).
 {
   const srcHeader = MINIMAL_HEADER.replace('<hh:paraProperties itemCnt="1">', '<hh:paraProperties itemCnt="2">').replace(

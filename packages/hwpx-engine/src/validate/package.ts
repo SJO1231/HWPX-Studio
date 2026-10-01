@@ -106,7 +106,7 @@ export function checkPackage(ctx: Ctx): { sections: string[]; manifest: Manifest
   const sections = [...nameset].filter((n) => n.startsWith("Contents/section") && n.toLowerCase().endsWith(".xml")).sort();
   if (sections.length === 0) log.err("PKG_MISSING", "Contents/section*.xml 이 하나도 없음");
   if (!nameset.has("META-INF/manifest.xml")) {
-    log.warn("PKG_NO_ODF_MANIFEST", "META-INF/manifest.xml 없음(한컴 저장본에는 있고 kordoc 합성본에는 없음)");
+    log.warn("PKG_NO_ODF_MANIFEST", "META-INF/manifest.xml 없음(한컴 저장본에는 있고 합성 문서에는 없음)");
   }
 
   for (const n of sortedNames(ctx)) {

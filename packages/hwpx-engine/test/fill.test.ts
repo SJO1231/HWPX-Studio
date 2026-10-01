@@ -260,6 +260,41 @@ test("E4: 글 사이에 탭이 낀 표기는 치환하지 않고 FILL_CROSSES_MA
   assert.equal(paragraphTexts(reparse(r.output))[2], "담당: {{manager.name\t}}");
 });
 
+// 구간 경계가 글자 묶음(grapheme cluster) 한가운데면 치환하지 않고 FILL_SPLITS_CLUSTER로 건너뛴다(FILL_CROSSES_MARKUP이 아니다)
+const clusterDoc = (inner: string): Uint8Array =>
+  buildHwpx([`<hp:p id="1" paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0"><hp:t>${inner}</hp:t></hp:run></hp:p>`]);
+const JAMO = "\u{1140}\u{1161}\u{11AB}"; // 옛한글 초성+중성+종성: 묶음 하나(논리 텍스트에서 2·3·4번 글자)
+
+test("E4: word 앵커의 경계가 글자 묶음 한가운데면 skipped: FILL_SPLITS_CLUSTER, 묶음 전체를 감싸거나 비껴가면 치환한다", () => {
+  const logical = `AB${JAMO}CD`;
+  const bytes = clusterDoc(logical);
+  const run = (target: string, value = "X") => {
+    const t = tpl({ anchors: [wordAnchor("w", [0], logical, target)], rules: [fillRule("r", "w", { text: value })] });
+    return done(generate(bytes, t, ds({})));
+  };
+  // 시작이 묶음 가운데, 끝이 묶음 가운데
+  for (const target of ["\u{1161}\u{11AB}C", "B\u{1140}\u{1161}", "\u{11AB}", "\u{1140}\u{1161}"]) {
+    const r = run(target);
+    assert.deepEqual(r.report.plan.skipped.map((s) => [s.ruleId, s.code]), [["r", "FILL_SPLITS_CLUSTER"]], JSON.stringify(target));
+    assert.equal(paragraphTexts(reparse(r.output))[0], logical, "건너뛴 자리는 원문 그대로");
+  }
+  // 묶음 전체, 묶음을 통째로 감싸는 구간, 묶음 앞뒤는 치환한다
+  assert.deepEqual(paragraphTexts(reparse(run(JAMO).output))[0], "ABXCD");
+  assert.deepEqual(paragraphTexts(reparse(run(`B${JAMO}C`).output))[0], "AXD");
+  assert.deepEqual(paragraphTexts(reparse(run("AB").output))[0], `X${JAMO}CD`);
+  assert.equal(run(JAMO).report.plan.skipped.length, 0);
+  // mixedFormat "first"는 글자모양이 갈린 구간을 허용할 뿐 글자 묶음을 가르는 것까지 허용하지 않는다
+  const t = tpl({ anchors: [wordAnchor("w", [0], logical, "\u{1161}\u{11AB}C")], rules: [fillRule("r", "w", { text: "X" })] });
+  assert.deepEqual(done(generate(bytes, t, ds({}), { mixedFormat: "first" })).report.plan.skipped.map((s) => s.code), ["FILL_SPLITS_CLUSTER"]);
+});
+
+test("E4: {{}} 표기 바로 뒤에 결합 부호가 붙어 끝 경계가 묶음 가운데면 FILL_SPLITS_CLUSTER로 건너뛴다", () => {
+  const bytes = clusterDoc("가 {{x}}\u{301} 나 {{y}}");
+  const r = done(generate(bytes, emptyTemplate(), ds({ x: "값", y: "와이" })));
+  assert.deepEqual(r.report.plan.skipped.map((s) => [s.code, s.anchor]), [["FILL_SPLITS_CLUSTER", "{{x}}"]]);
+  assert.equal(paragraphTexts(reparse(r.output))[0], "가 {{x}}\u{301} 나 와이");
+});
+
 // ── E5 ─────────────────────────────────────────────────────────
 
 test("E5: 셀 앵커로 빈 칸(자기닫힘 run)을 채운다 — 값 일치, 셀 서식 불변", () => {

@@ -1,3 +1,5 @@
+import { HwpxError } from "../errors.ts";
+import { MAX_MATCH_INPUT } from "./regex.ts";
 import type { Condition, Dataset } from "./types.ts";
 import { lookupPath } from "./value.ts";
 
@@ -6,7 +8,8 @@ import { lookupPath } from "./value.ts";
 const isScalar = (v: unknown): v is string | number | boolean =>
   typeof v === "string" || typeof v === "number" || typeof v === "boolean";
 
-const NUMERIC_TEXT = /^\s*[+-]?(?:\d+\.?\d*|\.\d+)\s*$/;
+// 숫자로 읽히는 글: 선행·후행 공백이 없는 10진수(부호·소수점 허용). 지수 표기(`1e3`)·16진수·쉼표·단위는 숫자가 아니다.
+const NUMERIC_TEXT = /^[+-]?(?:\d+\.?\d*|\.\d+)$/;
 
 function asNumber(v: unknown): number | undefined {
   if (typeof v === "number") return Number.isFinite(v) ? v : undefined;
@@ -32,8 +35,9 @@ function compare(a: unknown, b: unknown): number | undefined {
 
 const equals = (a: unknown, b: unknown): boolean => compare(a, b) === 0;
 
+// 문자열 길이는 UTF-16 단위(`String.prototype.length`)다. 배열은 원소 수.
 function lengthOf(v: unknown): number | undefined {
-  if (typeof v === "string") return [...v].length;
+  if (typeof v === "string") return v.length;
   if (Array.isArray(v)) return v.length;
   return undefined;
 }
@@ -70,8 +74,15 @@ function leaf(c: { path: string; op: string; value?: unknown }, dataset: Dataset
       return false;
     case "in":
       return present && Array.isArray(arg) && arg.some((x) => equals(v, x));
-    case "matches":
-      return present && isScalar(v) && typeof arg === "string" && new RegExp(arg).test(String(v));
+    case "matches": {
+      if (!(present && isScalar(v) && typeof arg === "string")) return false;
+      const input = String(v);
+      // 정규식 실행 시간을 막는다: 입력 글이 한도를 넘으면 거짓으로 넘기지 않고 오류로 중단한다(패턴은 읽을 때 걸러진다)
+      if (input.length > MAX_MATCH_INPUT) {
+        throw new HwpxError("TPL_CONDITION", `matches 조건의 입력 글이 ${MAX_MATCH_INPUT}자를 넘어 평가하지 않습니다(${input.length}자).`);
+      }
+      return new RegExp(arg).test(input);
+    }
     case "lengthEq":
     case "lengthGt":
     case "lengthLt": {

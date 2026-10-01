@@ -67,7 +67,8 @@ function rhwpInfo(file: string): { status: number | null; info?: RhwpInfo; stder
   return { status: 0, info: JSON.parse(r.stdout) as RhwpInfo, stderr: r.stderr };
 }
 
-type PyReport = { errors: { code: string; msg: string; where: string; count: number }[]; warnings: unknown[] };
+type PyIssue = { code: string; msg: string; where: string; count: number };
+type PyReport = { errors: PyIssue[]; warnings: PyIssue[] };
 function validate(file: string): PyReport {
   const out = `${file}.json`;
   spawnSync("python", [VALIDATOR, file, "--json", out, "--quiet"], { encoding: "utf8", timeout: 120_000 });
@@ -78,6 +79,24 @@ function validate(file: string): PyReport {
 }
 const errorCount = (r: PyReport): number => r.errors.length;
 const errorTotal = (r: PyReport): number => r.errors.reduce((n, e) => n + e.count, 0);
+
+/**
+ * 결과의 오류에서 "원래 있던 문제"를 뺀다. 검사기는 "탭 목록이 비었는데 tabPrIDRef=0"을 경고(RES_DANGLING_TOLERATED)로 두지만 목록에 항목이 생기면
+ * 같은 참조를 오류(RES_DANGLING)로 올린다. 새 탭은 없는 tabPr 0을 건너뛰어 목록이 차므로(명세 7.5) 기준선에서 관용 경고였던 같은 (종류, id)의 오류는
+ * 가져오기가 만든 새 오류가 아니다(엔진의 저장 게이트와 같은 규칙).
+ */
+function withoutTolerated(after: PyReport, before: PyReport): PyIssue[] {
+  const tolerated = new Set(
+    before.warnings.flatMap((w) => {
+      const m = w.code === "RES_DANGLING_TOLERATED" ? /(\w+)IDRef='([^']*)'/.exec(w.msg) : null;
+      return m === null ? [] : [`${m[1]}|${m[2]}`];
+    }),
+  );
+  return after.errors.filter((e) => {
+    const m = e.code === "RES_DANGLING" ? /^\w+='(.*)' 가 가리키는 (\w+) 가 없음$/s.exec(e.msg) : null;
+    return m === null || !tolerated.has(`${m[2]}|${m[1]}`);
+  });
+}
 
 for (const c of CASES) {
   test(`오라클 rhwp: 가져오기 결과를 종료 코드 0으로 파싱한다 (${c.name})`, { skip: skipRhwp }, () => {
@@ -97,7 +116,9 @@ for (const c of CASES) {
   test(`오라클 Python 검사기: 오류 수가 대상 원본보다 늘지 않는다 (${c.name})`, { skip: skipPython }, () => {
     const { result, original } = write(c);
     const before = validate(original);
-    const after = validate(result);
+    const raw = validate(result);
+    // 기준선에서 관용 경고였던 같은 참조가 목록이 차서 오류로 올라온 것은 원래 있던 문제로 센다
+    const after: PyReport = { errors: withoutTolerated(raw, before), warnings: raw.warnings };
     assert.ok(errorCount(after) <= errorCount(before), `오류 ${errorCount(before)} → ${errorCount(after)}: ${JSON.stringify(after.errors)}`);
     assert.ok(errorTotal(after) <= errorTotal(before), `오류 합계 ${errorTotal(before)} → ${errorTotal(after)}`);
     // 새 오류 코드·메시지가 없다

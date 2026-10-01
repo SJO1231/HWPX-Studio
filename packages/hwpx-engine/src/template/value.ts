@@ -20,10 +20,15 @@ function walk(root: unknown, path: string): Lookup {
   return cur === undefined ? { found: false } : { found: true, value: cur };
 }
 
-/** `data`에서 경로를 찾고, 없으면 `derived`에서 찾는다. 배열은 숫자 이름으로 가리킨다. */
+/**
+ * `data`에서 경로를 찾고, 없거나 값이 null이면 `derived`에서 찾는다. 배열은 숫자 이름으로 가리킨다.
+ * `derived`에도 없으면 `data`의 결과(없음 또는 null)를 그대로 돌려준다.
+ */
 export function lookupPath(dataset: Dataset, path: string): Lookup {
   const inData = walk(dataset.data, path);
-  return inData.found ? inData : walk(dataset.derived, path);
+  if (inData.found && inData.value !== null) return inData;
+  const inDerived = walk(dataset.derived, path);
+  return inDerived.found ? inDerived : inData;
 }
 
 // XML 1.0이 허용하지 않는 문자: 제어 문자, U+FFFE·U+FFFF, 짝이 맞지 않는 서로게이트

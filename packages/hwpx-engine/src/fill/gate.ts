@@ -6,7 +6,7 @@ import { canonicalJson, sha256Hex } from "../template/hash.ts";
 import type { Dataset, FillReport, Template } from "../template/types.ts";
 import { compareToBaseline, validateDocument, type ValidationIssue, type ValidationReport } from "../validate/index.ts";
 import { executeFillPlan, type ExecuteHooks } from "./execute.ts";
-import { explainInherited, noInherited } from "./inherited.ts";
+import { explainInherited, noInherited, splitTolerated } from "./inherited.ts";
 import { buildFillPlan, type FillOptions } from "./plan.ts";
 import { verifyChain } from "./verify.ts";
 
@@ -161,17 +161,20 @@ export function generate(bytes: Uint8Array, template: Template, dataset: Dataset
   // 4. 검사와 판정
   const after = validateDocument(output, { strict: mode === "strict" });
   const cmp = compareToBaseline(before, after);
-  // 조각이 소스에서부터 갖고 있던 문제로 설명되는 새 오류는 새 오류로 세지 않고 상속으로 따로 보고한다(strict는 가리지 않는다)
-  const { explained, unexplained } = mode === "strict" ? { explained: [], unexplained: cmp.newErrors } : explainInherited(cmp.newErrors, exec.inherited);
+  // 기준선에서 한컴이 받아 주는 경고였던 같은 참조가 오류로 올라온 것(탭 목록이 비었다가 찬 경우 등)은 원래 있던 문제다.
+  // 조각이 소스에서부터 갖고 있던 문제로 설명되는 새 오류는 새 오류로 세지 않고 상속으로 따로 보고한다(strict는 둘 다 가리지 않는다)
+  const { original, rest } = mode === "strict" ? { original: [], rest: cmp.newErrors } : splitTolerated(cmp.newErrors, before.warnings);
+  const { explained, unexplained } = mode === "strict" ? { explained: [], unexplained: rest } : explainInherited(rest, exec.inherited, before.errors);
   report.inherited.errors = explained;
   report.validation = {
     before: summary(before),
     after: summary(after),
     newErrors: unexplained,
-    preexisting: cmp.preexisting,
+    preexisting: [...cmp.preexisting, ...original],
     resolved: cmp.resolved,
   };
   for (const v of cmp.preexisting) issues.push(toIssue(v, "warning", "원래 있던 오류: "));
+  for (const v of original) issues.push(toIssue(v, "warning", "원래 있던 문제(기준선에서는 한컴이 받아 주는 경고였음): "));
   for (const v of explained) issues.push(makeIssue("warning", "GATE_INHERITED", `조각이 소스에서 갖고 있던 문제로 설명되는 오류[${v.code}]: ${v.message}${v.count > 1 ? ` (${v.count}건)` : ""}`, v.where));
   if (mode === "strict") {
     if (after.errors.length > 0) {

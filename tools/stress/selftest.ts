@@ -308,10 +308,11 @@ test("V-f: 스타일 이름이 겹치게 가져오면(이름을 바꾸지 않으
   assert.ok(codes(docCheck(step, ctx, bad)).includes("V-f:STYLE_NAME_DUPLICATED"));
 });
 
-test("V-e: 대상에서 없던 참조를 가져온 자원이 조용히 채우면(경고 없이) 잡는다", () => {
+test("V-e: 대상에서 없던 참조를 새 자원이 채우면(id를 건너뛰지 않으면) 잡고, 건너뛴 정상 결과는 통과한다", () => {
   let found = false;
   for (const s of SOURCES()) {
-    for (const t of NAMES) {
+    for (const t of ["D1", "D7"]) {
+      // D1·D7은 탭 목록이 비었는데 문단모양이 없는 tabPr 0을 가리킨다. 새 탭은 그 id(0)를 건너뛰어야 한다.
       if (s === t) continue;
       const ctx = ctxFor(s, t);
       let out;
@@ -321,15 +322,18 @@ test("V-e: 대상에서 없던 참조를 가져온 자원이 조용히 채우면
         continue;
       }
       const step = out.steps[0] as Step;
-      if (!step.plan.issues.some((i) => i.code === "FRAG_FILLS_DANGLING")) continue;
+      const tab = step.result.header.resources["tabPr"]?.[0];
+      if (tab === undefined || (ctx.tgt.doc.header.resources["tabPr"] ?? []).length > 0) continue;
       found = true;
-      assert.ok(!codes(docCheck(step, ctx, step.result)).includes("V-e:FILLS_DANGLING_SILENT"), "경고가 있으면 통과");
-      const silent: Step = { ...step, plan: { ...step.plan, issues: step.plan.issues.filter((i) => i.code !== "FRAG_FILLS_DANGLING") } };
-      assert.ok(codes(docCheck(silent, ctx, step.result, [silent])).includes("V-e:FILLS_DANGLING_SILENT"));
+      assert.notEqual(tab.id, "0", "새 탭은 없는 tabPr 0을 건너뛴다");
+      assert.ok(!codes(docCheck(step, ctx, step.result)).includes("V-e:FILLS_DANGLING"), "건너뛴 결과는 통과");
+      // 새 탭의 id를 0으로 바꿔 대상에서 없던 참조를 채우게 만든다
+      const filled = withBytes(step.result, HEADER, (text) => text.replace(`<hh:tabPr id="${tab.id}"`, '<hh:tabPr id="0"'));
+      assert.ok(codes(docCheck(step, ctx, filled)).includes("V-e:FILLS_DANGLING"));
       return;
     }
   }
-  assert.ok(found, "합성 문서 중에 FRAG_FILLS_DANGLING이 나오는 쌍이 있다");
+  assert.ok(found, "합성 문서 중에 새 탭이 들어오는 쌍이 있다");
 });
 
 test("V-b: 소스가 이미 가진 id 중복을 옮긴 것은 inFragment로 가른다", () => {
