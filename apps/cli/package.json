@@ -1,0 +1,12 @@
+{
+  "name": "@hwpx-studio/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "hwpx": "./src/main.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}

@@ -20,10 +20,16 @@
 
 | 목적 | 명령 | 상태 |
 | --- | --- | --- |
-| 설치 | `npm install` | 예정(S1) |
-| 형 검사 | `npm run typecheck` | 예정(S1) |
-| 테스트 | `npm test` | 예정(S1) |
-| CLI | `node apps/cli/src/main.ts <명령>` | 예정(S3) |
+| 설치 | `npm install` | 확인 |
+| 형 검사 | `npm run typecheck` | 확인 |
+| 테스트 | `npm test` | 확인 |
+| 오라클 포함 테스트 | `HWPX_ORACLES=1 npm test` (rhwp 실행 파일과 Python이 있을 때) | 확인 |
+| 실제 문서 보정 집계 | `HWPX_CORPUS_DIR=<폴더> node --test packages/hwpx-engine/test/repair-corpus.test.ts` | 확인 |
+| CLI | `node apps/cli/src/main.ts <명령>` (`--help`로 명령 8종) | 확인 |
+| 한컴으로 열기·PDF | `python tools/com/open_check.py --out 결과.json [--pdf-dir 폴더] 파일...` | 확인(한컴 13) |
+| 한컴 시험 문서 다시 만들기 | `python tools/com/make_fixtures.py` | 확인 |
+
+- 한컴 COM을 쓰는 작업은 한 번에 하나만 돌린다. 여러 작업이 동시에 한컴을 띄우면 서로의 실행이 실패한다(확인).
 
 ## 폴더 구조
 

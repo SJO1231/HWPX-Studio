@@ -1,0 +1,672 @@
+import type { EditPlan, SpanEdit } from "../edit/plan.ts";
+import { HwpxError, makeIssue, type Issue } from "../errors.ts";
+import { parseFragment } from "../fragment/json.ts";
+import type { Fragment } from "../fragment/types.ts";
+import { walkParagraphs } from "../model/paragraph.ts";
+import type { HwpxDocument, ObjectNode, ParagraphNode, SectionModel, TableNode } from "../model/types.ts";
+import { canonicalJson, sha256Hex } from "../template/hash.ts";
+import { selectRules } from "../template/rules.ts";
+import {
+  emptyFillReport,
+  type Dataset,
+  type FillReport,
+  type MissingPolicy,
+  type MixedFormatPolicy,
+  type Position,
+  type Template,
+  type ValueDigest,
+} from "../template/types.ts";
+import { digestValue, resolveValue } from "../template/value.ts";
+import { resolveAnchors, type ResolvedAnchor } from "./anchors.ts";
+import { addDelta, deltaOfElements, deltaRecord, zeroDelta, type Delta } from "./census.ts";
+import { applyRepls, contentObjects, groupBy, hasSecPr, siblingsAtPath, type Repl } from "./doc.ts";
+import { planFieldFill } from "./fields.ts";
+import { fillFragment } from "./fragment-fill.ts";
+import { fillPlaceholders } from "./placeholders.ts";
+import { buildParagraphs, planRowDeletes, splitLines } from "./structure.ts";
+import { planClear, planLineFill, planRangeReplace, span, type Ctx, type TextPlan } from "./text.ts";
+
+export type FillOptions = {
+  /** 누락 정책. 템플릿의 `options.missing`보다 앞선다. 기본 `error`. */
+  missing?: MissingPolicy;
+  /** 글자모양이 갈린 `word`·`{{}}`의 처리. 템플릿의 `options.mixedFormat`보다 앞선다. 기본 `skip`. */
+  mixedFormat?: MixedFormatPolicy;
+  /** 규칙의 `fragment` 경로 → 조각(객체 또는 JSON 글). 엔진은 파일을 읽지 않으므로 읽는 쪽이 채워 넘긴다. */
+  fragments?: Record<string, Fragment | string>;
+};
+
+/** 채운 뒤 다시 읽어 확인할 기대값. 위치는 계획이 기준으로 삼은 문서(편집 전)의 오프셋이다. */
+export type Expectation =
+  | { kind: "field"; entry: string; beginStart: number; name: string; value: string; setsDirty: boolean }
+  | { kind: "text"; entry: string; paragraphStart: number; text: string };
+
+/** 주 계획 적용 뒤 하나씩 이어서 적용하는 조각 주입. */
+export type InjectStep = {
+  ruleId: string;
+  anchor: string;
+  entry: string;
+  /** 앵커 문단 요소의 시작 오프셋(편집 전 문서) */
+  paragraphStart: number;
+  position: Position;
+  /** `{{}}`를 채운 조각 */
+  fragment: Fragment;
+  /** 채운 조각 안 모든 문단의 논리 텍스트 */
+  texts: string[];
+  /** 조각 최상위 문단 수 */
+  topLevel: number;
+  /** 이 주입이 더하는 수량(이진 자료 제외). `replace`면 지워지는 앵커 문단의 수량을 뺀 값 */
+  delta: Delta;
+  /** `replace`일 때 지워지는 앵커 문단의 수량(delta에 이미 반영됨) */
+  replacedDelta?: Delta;
+};
+
+/**
+ * 채움 계획. 주 계획(EditPlan: 채움·삭제·문단 삽입·줄 배치 캐시 제거)은 편집 전 문서의 좌표 하나로 만들고,
+ * 조각 주입(`injects`)은 새 id를 서로 겹치지 않게 주려고 주 계획을 적용한 문서에서 하나씩 이어서 만든다.
+ */
+export type FillPlan = EditPlan & {
+  injects: InjectStep[];
+  /** 주 계획 적용 뒤 확인할 기대값 */
+  expectations: Expectation[];
+  /** 주 계획이 더하는 수량(삭제는 음수, 문단 삽입은 양수) */
+  delta: Delta;
+  /** 규칙이 쓴 조각의 지문(키는 조각 경로나 `inline:<규칙 id>`) */
+  fragmentDigests: { key: string; sha256: string }[];
+};
+
+type Range = { entry: string; start: number; end: number };
+const within = (outer: Range, inner: Range): boolean => outer.entry === inner.entry && outer.start <= inner.start && inner.end <= outer.end;
+const same = (a: Range, b: Range): boolean => a.entry === b.entry && a.start === b.start && a.end === b.end;
+const rangeOf = (section: SectionModel, el: { start: number; end: number }): Range => ({ entry: section.entryName, start: el.start, end: el.end });
+
+type Tagged = { edit: SpanEdit; label: string };
+
+type DeleteCand = {
+  kind: "paragraph" | "element" | "rows";
+  /** 문단·객체 요소·표 요소의 범위 */
+  range: Range;
+  /** 실제로 지워지는 구간(`rows`는 지워지는 `tr`들) */
+  parts: Range[];
+  edits: SpanEdit[];
+  delta: Delta;
+  rules: { ruleId: string; anchor: string }[];
+  paragraph?: ParagraphNode;
+  section: SectionModel;
+};
+
+/** 오류 메시지 앞에 붙일 이름: 규칙은 `규칙 r1`, 문서 안 `{{경로}}` 자리는 그 표기. */
+const labelOf = (id: string): string => (id.startsWith("{{") ? id : `규칙 ${id}`);
+const issueFor = (code: string, message: string, id: string): Issue => makeIssue("error", code, `${labelOf(id)}: ${message}`, id);
+
+function isOnlyObject(par: ParagraphNode, obj: ObjectNode): boolean {
+  return par.pieces.every((_, i) => i === obj.pieceIndex);
+}
+
+export function loadFragment(
+  spec: string | Record<string, unknown>,
+  fragments: FillOptions["fragments"],
+): { fragment: Fragment; key: string } {
+  if (typeof spec === "string") {
+    const given = fragments?.[spec];
+    if (given === undefined) throw new HwpxError("TPL_FRAGMENT_MISSING", `조각 '${spec}'을(를) 받지 못했습니다(fragments 옵션에 넣어야 합니다).`);
+    return { fragment: parseFragment(typeof given === "string" ? given : JSON.stringify(given)), key: spec };
+  }
+  return { fragment: parseFragment(JSON.stringify(spec)), key: "" };
+}
+
+/**
+ * 규칙을 평가하고 앵커를 풀어 채움 계획과 보고서를 만든다. 문서를 바꾸지 않는다.
+ *
+ * 1. 규칙을 순서대로 평가해 참인 것만 남긴다.
+ * 2. 삭제 범위 안의 채움·삽입은 버리고 `report.dropped`에 적는다. 같은 자리에 값이 다른 채움이 둘이면 `TPL_CONFLICT`.
+ * 3. 글이 바뀌는 구역의 줄 배치 캐시 요소를 전부 지우는 편집을 더한다(삭제 범위와 겹치는 것은 뺀다).
+ * 4. 보고서: 적용할 액션, 건너뛴 자리와 사유, 필요한 데이터 경로, 다시 찾은 앵커, 예상 수량 증감.
+ *
+ * 보고서에 오류(`severity: "error"`)가 있으면 계획은 쓰지 않는다.
+ */
+export function buildFillPlan(
+  doc: HwpxDocument,
+  template: Template,
+  dataset: Dataset,
+  options: FillOptions = {},
+): { plan: FillPlan; report: FillReport } {
+  const policy: MissingPolicy = options.missing ?? template.options.missing ?? "error";
+  const mixed: MixedFormatPolicy = options.mixedFormat ?? template.options.mixedFormat ?? "skip";
+  const report = emptyFillReport();
+  const issues = report.issues;
+  const required = new Set<string>();
+  const missingPaths = new Set<string>();
+  const keptPaths = new Map<string, number>();
+  const reportedErrors = new Set<string>();
+
+  const ctxs = new Map<string, Ctx>();
+  const ctxOf = (section: SectionModel): Ctx => {
+    let ctx = ctxs.get(section.entryName);
+    if (ctx === undefined) ctxs.set(section.entryName, (ctx = { entry: section.entryName, text: section.text }));
+    return ctx;
+  };
+
+  // ── 1. 규칙과 앵커 ──────────────────────────────────────────
+  const { active, inactive } = selectRules(template, dataset);
+  report.inactiveRules = inactive.map((r) => r.id);
+  const resolution = resolveAnchors(doc, template, new Set(active.map((r) => r.do.anchor)));
+  issues.push(...resolution.issues);
+  for (const i of resolution.issues) if (i.code === "ANCHOR_RELOCATED") report.relocated.push({ anchor: i.where ?? "", message: i.message });
+  const anchorOf = (id: string): ResolvedAnchor | undefined => resolution.anchors.get(id);
+
+  const valueError = (ruleId: string, code: string, message: string, path: string | undefined): void => {
+    if (code === "DATA_MISSING" && path !== undefined) missingPaths.add(path);
+    const key = `${code}\u0000${path ?? ruleId}`;
+    if (reportedErrors.has(key)) return;
+    reportedErrors.add(key);
+    issues.push(issueFor(code, message, ruleId));
+  };
+
+  // ── 2a. 삭제 후보 ───────────────────────────────────────────
+  const cands: DeleteCand[] = [];
+  const pushCand = (cand: DeleteCand): void => {
+    const found = cands.find((c) => c.kind === cand.kind && same(c.range, cand.range));
+    if (found === undefined) cands.push(cand);
+    else found.rules.push(...cand.rules);
+  };
+  const paragraphDelete = (section: SectionModel, paragraph: ParagraphNode, rule: { ruleId: string; anchor: string }): void => {
+    if (hasSecPr(paragraph)) {
+      issues.push(issueFor("FILL_SECTION_PROPS", "구역 설정(secPr)이 든 문단은 지울 수 없습니다.", rule.ruleId));
+      return;
+    }
+    const ctx = ctxOf(section);
+    pushCand({
+      kind: "paragraph",
+      range: rangeOf(section, paragraph.element),
+      parts: [rangeOf(section, paragraph.element)],
+      edits: [span(ctx, paragraph.element.start, paragraph.element.end, "", "문단 삭제")],
+      delta: deltaOfElements([paragraph.element], section.entryName, -1),
+      rules: [rule],
+      paragraph,
+      section,
+    });
+  };
+  const objectDelete = (section: SectionModel, paragraph: ParagraphNode, object: ObjectNode, rule: { ruleId: string; anchor: string }): void => {
+    if (isOnlyObject(paragraph, object)) {
+      paragraphDelete(section, paragraph, rule);
+      return;
+    }
+    const ctx = ctxOf(section);
+    pushCand({
+      kind: "element",
+      range: rangeOf(section, object.element),
+      parts: [rangeOf(section, object.element)],
+      edits: [span(ctx, object.element.start, object.element.end, "", "객체 삭제")],
+      delta: deltaOfElements([object.element], section.entryName, -1),
+      rules: [rule],
+      section,
+    });
+  };
+
+  type RowReq = { rule: { ruleId: string; anchor: string }; section: SectionModel; owner: ParagraphNode; table: TableNode; row: number };
+  const rowReqs: RowReq[] = [];
+  for (const rule of active) {
+    const action = rule.do;
+    if (action.type !== "delete") continue;
+    const anchor = anchorOf(action.anchor);
+    if (anchor === undefined) continue;
+    const who = { ruleId: rule.id, anchor: action.anchor };
+    if (anchor.kind === "line") paragraphDelete(anchor.section, anchor.paragraph, who);
+    else if (anchor.kind === "object") objectDelete(anchor.section, anchor.paragraph, anchor.object, who);
+    else if (anchor.kind === "cell") rowReqs.push({ rule: who, section: anchor.section, owner: anchor.owner, table: anchor.table, row: anchor.cell.row });
+  }
+  const tables = groupBy(rowReqs, (r) => r.table);
+  for (const [table, reqs] of tables) {
+    const first = reqs[0];
+    if (first === undefined) continue;
+    const ctx = ctxOf(first.section);
+    const result = planRowDeletes(ctx, table.element, reqs.map((r) => r.row));
+    const rules = reqs.map((r) => r.rule);
+    if ("fail" in result) {
+      for (const r of rules) issues.push(issueFor(result.fail.code, result.fail.message, r.ruleId));
+    } else if ("allRows" in result) {
+      // 마지막 남은 행까지 지우면 표를 담은 문단(그 문단에 표만 있으면 문단째, 아니면 표 요소만)을 지운다
+      for (const rule of rules) objectDelete(first.section, first.owner, table, rule);
+    } else {
+      pushCand({
+        kind: "rows",
+        range: rangeOf(first.section, table.element),
+        parts: result.trs.map((tr) => rangeOf(first.section, tr)),
+        edits: result.edits,
+        delta: deltaOfElements(result.trs, first.section.entryName, -1),
+        rules,
+        section: first.section,
+      });
+    }
+  }
+
+  // ── 2a'. `replace` 앵커(삭제 + 삽입) ─────────────────────────
+  const replaceRanges: { range: Range; ruleId: string; type: "inject" | "insertText" }[] = [];
+  for (const rule of active) {
+    const action = rule.do;
+    if ((action.type !== "inject" && action.type !== "insertText") || action.position !== "replace") continue;
+    const anchor = anchorOf(action.anchor);
+    if (anchor === undefined || anchor.kind !== "line") continue;
+    const range = rangeOf(anchor.section, anchor.paragraph.element);
+    if (hasSecPr(anchor.paragraph)) {
+      issues.push(issueFor("FILL_SECTION_PROPS", "구역 설정(secPr)이 든 문단은 교체할 수 없습니다.", rule.id));
+      continue;
+    }
+    const clash = replaceRanges.find((r) => same(r.range, range));
+    if (clash !== undefined) {
+      issues.push(issueFor("TPL_CONFLICT", `규칙 ${clash.ruleId}와 같은 문단을 교체합니다.`, rule.id));
+      continue;
+    }
+    replaceRanges.push({ range, ruleId: rule.id, type: action.type });
+  }
+  // 교체되는 문단 안의 채움은 버린다(삽입 지점인 문단 자신의 앞뒤는 그대로 쓴다)
+  const isReplaced = (r: Range): boolean => replaceRanges.some((x) => within(x.range, r));
+
+  // ── 2b. 삭제·교체 범위 안의 삭제는 버린다 ────────────────────────
+  const kept: DeleteCand[] = [];
+  for (const cand of cands) {
+    const outer = cands.find((o) => o !== cand && o.kind !== "rows" && within(o.range, cand.range) && !(cand.kind !== "rows" && same(o.range, cand.range)));
+    const replaced = replaceRanges.some((x) => within(x.range, cand.range) && !same(x.range, cand.range));
+    if (outer === undefined && !replaced) kept.push(cand);
+    else for (const r of cand.rules) report.dropped.push({ ruleId: r.ruleId, anchor: r.anchor, reason: "다른 삭제나 교체의 범위 안이라 버렸습니다." });
+  }
+  // 마지막 남은 문단은 지울 수 없다(같은 목록의 형제 문단이 모두 지워지면 문서 순서상 마지막 삭제가 막힌다)
+  const lists = groupBy(
+    kept.flatMap((cand) => {
+      const list = cand.kind === "paragraph" && cand.paragraph !== undefined ? siblingsAtPath(cand.section, cand.paragraph.path) : undefined;
+      return list === undefined ? [] : [{ list, cand }];
+    }),
+    (x) => x.list,
+  );
+  const refused = new Set<DeleteCand>();
+  for (const [list, entries] of lists) {
+    const group = entries.map((x) => x.cand);
+    if (group.length < list.length) continue;
+    const last = [...group].sort((a, b) => a.range.start - b.range.start).at(-1);
+    if (last === undefined) continue;
+    refused.add(last);
+    for (const r of last.rules) issues.push(issueFor("FILL_LAST_PARAGRAPH", "그 부모의 마지막 남은 문단은 지울 수 없습니다.", r.ruleId));
+  }
+  const deletes = kept.filter((c) => !refused.has(c));
+  const deleteRanges: Range[] = deletes.flatMap((c) => c.parts);
+  const isDeleted = (r: Range): boolean => deleteRanges.some((d) => within(d, r));
+
+  // ── 3. 채움·삽입·주입 ───────────────────────────────────────
+  const tagged: Tagged[] = [];
+  const touched = new Map<ParagraphNode, { entry: string; repls: Repl[] }>();
+  const expectations: Expectation[] = [];
+  const noteRepls = (section: SectionModel, par: ParagraphNode, repls: Repl[]): void => {
+    const slot = touched.get(par) ?? { entry: section.entryName, repls: [] };
+    for (const r of repls) {
+      if (!slot.repls.some((x) => x.start === r.start && x.end === r.end && x.text === r.text)) slot.repls.push(r);
+    }
+    touched.set(par, slot);
+  };
+  const commit = (label: string, section: SectionModel, plan: TextPlan, par: ParagraphNode): void => {
+    for (const edit of plan.edits) tagged.push({ edit, label });
+    if (plan.edits.length > 0 || plan.repls.length > 0) noteRepls(section, par, plan.repls);
+  };
+
+  const insertEdits: SpanEdit[] = [];
+  let insertDelta = zeroDelta();
+  const injects: InjectStep[] = [];
+  const fragmentDigests: { key: string; sha256: string }[] = [];
+  const touchedEntries = new Set<string>();
+
+  const explicit: { ruleId: string; type: "fill" | "insertText" | "inject"; anchor: string; targets: number; position?: Position; value?: ValueDigest }[] = [];
+
+  for (const rule of active) {
+    const action = rule.do;
+    if (action.type === "delete") continue;
+    const anchor = anchorOf(action.anchor);
+    if (anchor === undefined) continue;
+    const who = { ruleId: rule.id, anchor: action.anchor };
+
+    if (action.type === "fill") {
+      const value = resolveValue(dataset, action.value, policy);
+      if ("path" in action.value) required.add(action.value.path);
+      if (value.kind === "error") {
+        valueError(rule.id, value.code, value.message, value.path ?? ("path" in action.value ? action.value.path : undefined));
+        continue;
+      }
+      if (value.kind === "keep") {
+        keptPaths.set(value.path, (keptPaths.get(value.path) ?? 0) + 1);
+        missingPaths.add(value.path);
+        continue;
+      }
+      if (value.kind === "empty") missingPaths.add(value.path);
+      const text = value.kind === "text" ? value.text : "";
+      const digest = digestValue(text);
+      let targets = 0;
+      let droppedCount = 0;
+      const dropIf = (section: SectionModel, par: ParagraphNode): boolean => {
+        const r = rangeOf(section, par.element);
+        if (isDeleted(r) || isReplaced(r)) {
+          droppedCount++;
+          return true;
+        }
+        return false;
+      };
+      const reason = `규칙 ${rule.id}: 채움`;
+
+      if (anchor.kind === "field") {
+        for (const target of anchor.targets) {
+          if (dropIf(target.section, target.paragraph)) continue;
+          const plan = planFieldFill(ctxOf(target.section), target, text, reason);
+          if ("fail" in plan) {
+            issues.push(issueFor(plan.fail.code, plan.fail.message, rule.id));
+            continue;
+          }
+          commit(rule.id, target.section, plan, target.paragraph);
+          expectations.push({ kind: "field", entry: target.section.entryName, ...plan.check });
+          targets++;
+        }
+      } else if (anchor.kind === "word") {
+        if (!dropIf(anchor.section, anchor.paragraph)) {
+          const plan = planRangeReplace(ctxOf(anchor.section), anchor.paragraph, anchor.start, anchor.end, text, mixed, reason);
+          if ("skip" in plan) {
+            report.skipped.push({ ruleId: rule.id, anchor: action.anchor, code: plan.skip.code, message: plan.skip.message });
+          } else {
+            commit(rule.id, anchor.section, plan, anchor.paragraph);
+            targets++;
+          }
+        }
+      } else if (anchor.kind === "line") {
+        if (!dropIf(anchor.section, anchor.paragraph)) {
+          if (contentObjects(anchor.paragraph).length > 0) {
+            issues.push(issueFor("FILL_HAS_OBJECT", "문단에 객체(표·그림·누름틀 등)가 있어 문단 글을 바꿀 수 없습니다.", rule.id));
+          } else {
+            const plan = planLineFill(ctxOf(anchor.section), anchor.paragraph, text, reason);
+            if ("fail" in plan) issues.push(issueFor(plan.fail.code, plan.fail.message, rule.id));
+            else {
+              commit(rule.id, anchor.section, plan, anchor.paragraph);
+              targets++;
+            }
+          }
+        }
+      } else if (anchor.kind === "cell") {
+        const paragraphs = anchor.cell.subList?.paragraphs ?? [];
+        const first = paragraphs[0];
+        if (first === undefined) {
+          issues.push(issueFor("ANCHOR_NOT_FOUND", "셀에 문단이 없습니다.", rule.id));
+        } else if (paragraphs.some((p) => contentObjects(p).length > 0 || p.subLists.length > 0)) {
+          issues.push(issueFor("FILL_HAS_OBJECT", "셀 안에 객체(표·그림·누름틀 등)가 있어 셀 글을 바꿀 수 없습니다.", rule.id));
+        } else if (!paragraphs.some((p) => dropIf(anchor.section, p))) {
+          const ctx = ctxOf(anchor.section);
+          const plan = planLineFill(ctx, first, text, reason);
+          if ("fail" in plan) {
+            issues.push(issueFor(plan.fail.code, plan.fail.message, rule.id));
+          } else {
+            commit(rule.id, anchor.section, plan, first);
+            for (const p of paragraphs.slice(1)) commit(rule.id, anchor.section, planClear(ctx, p, reason), p);
+            targets++;
+          }
+        }
+      }
+      if (droppedCount > 0) report.dropped.push({ ruleId: rule.id, anchor: action.anchor, reason: `삭제·교체되는 범위 안의 자리 ${droppedCount}곳을 버렸습니다.` });
+      if (targets > 0) explicit.push({ ruleId: rule.id, type: "fill", anchor: action.anchor, targets, value: digest });
+      continue;
+    }
+
+    // insertText·inject: 앵커는 line
+    if (anchor.kind !== "line") continue;
+    const anchorRange = rangeOf(anchor.section, anchor.paragraph.element);
+    // 앵커 문단이 지워지거나, 다른 문단의 교체 범위 안(자기 자신을 교체하는 것은 제외)이면 버린다
+    if (isDeleted(anchorRange) || replaceRanges.some((x) => within(x.range, anchorRange) && !same(x.range, anchorRange))) {
+      report.dropped.push({ ruleId: rule.id, anchor: action.anchor, reason: "앵커 문단이 삭제·교체되는 범위 안이라 버렸습니다." });
+      continue;
+    }
+    if (replaceRanges.some((x) => same(x.range, anchorRange) && x.type === "insertText" && x.ruleId !== rule.id)) {
+      issues.push(issueFor("TPL_CONFLICT", `규칙 ${replaceRanges.find((x) => same(x.range, anchorRange))?.ruleId ?? ""}가 insertText로 이 문단을 교체하므로 다른 삽입·주입을 이 문단에 할 수 없습니다.`, rule.id));
+      continue;
+    }
+    const ctx = ctxOf(anchor.section);
+    const warnBeforeSecPr = (): void => {
+      if (action.position === "before" && hasSecPr(anchor.paragraph)) {
+        issues.push(makeIssue("warning", "FILL_BEFORE_SECPR", `규칙 ${rule.id}: 구역 설정(secPr)이 든 문단 앞에 넣으면 구역 설정이 첫 문단이 아니게 됩니다.`, rule.id));
+      }
+    };
+
+    if (action.type === "insertText") {
+      const value = resolveValue(dataset, action.value, policy, true);
+      if ("path" in action.value) required.add(action.value.path);
+      if (value.kind === "error") {
+        valueError(rule.id, value.code, value.message, value.path ?? ("path" in action.value ? action.value.path : undefined));
+        continue;
+      }
+      if (value.kind === "keep") {
+        keptPaths.set(value.path, (keptPaths.get(value.path) ?? 0) + 1);
+        missingPaths.add(value.path);
+        continue;
+      }
+      if (value.kind === "empty") missingPaths.add(value.path);
+      const text = value.kind === "text" ? value.text : "";
+      if (text === "") continue;
+      const par = anchor.paragraph;
+      let style: { paraPrIDRef: string; styleIDRef: string; charPrIDRef: string };
+      if (action.style === "inherit") {
+        const charPr = par.runs[0]?.charPrIDRef;
+        if (charPr === null || charPr === undefined) {
+          issues.push(issueFor("FILL_NO_RUN", "앵커 문단에 글자모양을 가진 run이 없어 서식을 이어받을 수 없습니다.", rule.id));
+          continue;
+        }
+        style = { paraPrIDRef: par.attrs.paraPrIDRef ?? "0", styleIDRef: par.attrs.styleIDRef ?? "0", charPrIDRef: charPr };
+      } else {
+        style = action.style;
+        const missing = (
+          [
+            ["paraPr", style.paraPrIDRef],
+            ["charPr", style.charPrIDRef],
+            ["style", style.styleIDRef],
+          ] as const
+        ).filter(([kind, id]) => !(doc.header.resources[kind] ?? []).some((r) => r.id === id));
+        if (missing.length > 0) {
+          issues.push(issueFor("FILL_STYLE_MISSING", `문서에 없는 서식 참조입니다: ${missing.map(([k, id]) => `${k} ${id}`).join(", ")}.`, rule.id));
+          continue;
+        }
+      }
+      const lines = splitLines(text);
+      const xml = buildParagraphs(par, lines, style);
+      warnBeforeSecPr();
+      const at = action.position === "after" ? par.element.end : par.element.start;
+      insertEdits.push(span(ctx, at, at, xml, `규칙 ${rule.id}: 문단 삽입`));
+      if (action.position === "replace") {
+        insertEdits.push(span(ctx, par.element.start, par.element.end, "", `규칙 ${rule.id}: 문단 교체`));
+        insertDelta = addDelta(insertDelta, deltaOfElements([par.element], anchor.section.entryName, -1));
+      }
+      insertDelta = { ...insertDelta, paragraphs: insertDelta.paragraphs + lines.length };
+      touchedEntries.add(anchor.section.entryName);
+      explicit.push({ ruleId: rule.id, type: "insertText", anchor: action.anchor, targets: lines.length, position: action.position, value: digestValue(text) });
+      continue;
+    }
+
+    // inject
+    let loaded: { fragment: Fragment; key: string };
+    try {
+      loaded = loadFragment(action.fragment, options.fragments);
+    } catch (e) {
+      if (!(e instanceof HwpxError)) throw e;
+      issues.push(issueFor(e.code, e.message, rule.id));
+      continue;
+    }
+    const key = loaded.key === "" ? `inline:${rule.id}` : loaded.key;
+    if (!fragmentDigests.some((d) => d.key === key)) fragmentDigests.push({ key, sha256: sha256Hex(canonicalJson(loaded.fragment)) });
+    let filled;
+    try {
+      filled = fillFragment(loaded.fragment, dataset, policy, mixed);
+    } catch (e) {
+      if (!(e instanceof HwpxError)) throw e;
+      issues.push(issueFor(e.code, `조각을 읽을 수 없습니다: ${e.message}`, rule.id));
+      continue;
+    }
+    for (const e of filled.outcome.errors) valueError(rule.id, e.code, `조각 안 {{${e.path}}}: ${e.message}`, e.path);
+    for (const path of filled.outcome.missing.keys()) {
+      required.add(path);
+      missingPaths.add(path);
+    }
+    for (const f of filled.outcome.filled) required.add(f.path);
+    for (const [path, n] of filled.outcome.kept) keptPaths.set(path, (keptPaths.get(path) ?? 0) + n);
+    for (const s of filled.outcome.skipped) {
+      report.skipped.push({ ruleId: rule.id, anchor: action.anchor, code: s.code, message: `조각 안 {{${s.path}}}: ${s.message}` });
+    }
+    warnBeforeSecPr();
+    let delta = filled.delta;
+    let replacedDelta: Delta | undefined;
+    if (action.position === "replace") {
+      replacedDelta = deltaOfElements([anchor.paragraph.element], anchor.section.entryName, -1);
+      delta = addDelta(delta, replacedDelta);
+    }
+    const step: InjectStep = {
+      ruleId: rule.id,
+      anchor: action.anchor,
+      entry: anchor.section.entryName,
+      paragraphStart: anchor.paragraph.element.start,
+      position: action.position,
+      fragment: filled.fragment,
+      texts: filled.texts,
+      topLevel: filled.topLevel,
+      delta,
+    };
+    if (replacedDelta !== undefined) step.replacedDelta = replacedDelta;
+    injects.push(step);
+    touchedEntries.add(anchor.section.entryName);
+    explicit.push({ ruleId: rule.id, type: "inject", anchor: action.anchor, targets: filled.topLevel, position: action.position });
+  }
+
+  // 주입 순서: 앵커 옆에 하나씩 이어 넣으므로 같은 앵커의 `after`는 규칙 반대 순서로 넣어야 규칙 순서대로 놓이고,
+  // `replace`는 앵커 문단을 지우므로 같은 앵커의 앞뒤 주입이 끝난 뒤에 한다.
+  const ordered = injects.filter((i) => i.position !== "replace");
+  const slots = new Map<string, number[]>();
+  ordered.forEach((step, i) => {
+    if (step.position === "after") slots.set(`${step.entry}|${step.paragraphStart}`, [...(slots.get(`${step.entry}|${step.paragraphStart}`) ?? []), i]);
+  });
+  for (const idx of slots.values()) {
+    const steps = idx.map((i) => ordered[i]);
+    steps.reverse().forEach((step, k) => {
+      const at = idx[k];
+      if (step !== undefined && at !== undefined) ordered[at] = step;
+    });
+  }
+  injects.splice(0, injects.length, ...ordered, ...injects.filter((i) => i.position === "replace"));
+
+  // ── 3b. 문서 안 `{{경로}}` ──────────────────────────────────
+  const implicit = new Map<string, { count: number; value: ValueDigest }>();
+  const implicitDropped = new Map<string, number>();
+  for (const section of doc.sections) {
+    const outcome = fillPlaceholders(
+      ctxOf(section),
+      walkParagraphs(section.paragraphs),
+      dataset,
+      policy,
+      mixed,
+      (par) => {
+        const r = rangeOf(section, par.element);
+        return isDeleted(r) || isReplaced(r);
+      },
+    );
+    for (const e of outcome.errors) valueError(`{{${e.path}}}`, e.code, e.message, e.path);
+    for (const path of outcome.missing.keys()) missingPaths.add(path);
+    for (const [path, n] of outcome.kept) keptPaths.set(path, (keptPaths.get(path) ?? 0) + n);
+    for (const [path, n] of outcome.dropped) implicitDropped.set(path, (implicitDropped.get(path) ?? 0) + n);
+    for (const s of outcome.skipped) {
+      report.skipped.push({ ruleId: "implicit", anchor: `{{${s.path}}}`, code: s.code, message: s.message, where: `${section.entryName} [${s.address.join(", ")}]` });
+    }
+    for (const f of outcome.filled) {
+      required.add(f.path);
+      implicit.set(f.path, { count: (implicit.get(f.path)?.count ?? 0) + 1, value: f.digest });
+    }
+    for (const edit of outcome.edits) tagged.push({ edit, label: "{{}}" });
+    for (const [par, repls] of outcome.repls) noteRepls(section, par, repls);
+  }
+  for (const [path, x] of [...implicit].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    report.actions.push({ ruleId: "implicit", type: "fill", anchor: `{{${path}}}`, targets: x.count, value: x.value });
+  }
+  for (const [path, n] of [...implicitDropped].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    report.dropped.push({ ruleId: "implicit", anchor: `{{${path}}}`, reason: `삭제·교체되는 범위 안의 자리 ${n}곳을 버렸습니다.` });
+  }
+
+  // ── 4. 같은 자리 충돌과 중복 정리 ───────────────────────────
+  const edits: SpanEdit[] = [];
+  for (const list of groupBy(tagged, (t) => t.edit.entry).values()) {
+    const sorted = list
+      .map((t, i) => ({ t, i }))
+      .sort((a, b) => a.t.edit.start - b.t.edit.start || a.t.edit.end - b.t.edit.end || a.i - b.i)
+      .map((x) => x.t);
+    let prev: Tagged | undefined;
+    for (const cur of sorted) {
+      // 글을 같은 글로 바꾸는 편집은 하지 않는다(채울 것이 없으면 바이트가 그대로여야 한다)
+      if (cur.edit.replacement === cur.edit.expected) continue;
+      if (prev !== undefined) {
+        const e = prev.edit;
+        const c = cur.edit;
+        if (e.start === c.start && e.end === c.end && e.replacement === c.replacement) continue;
+        if (c.start < e.end || (c.start === e.start && c.end === e.end)) {
+          if (!reportedErrors.has(`conflict\u0000${prev.label}\u0000${cur.label}`)) {
+            reportedErrors.add(`conflict\u0000${prev.label}\u0000${cur.label}`);
+            issues.push(makeIssue("error", "TPL_CONFLICT", `${prev.label}와 ${cur.label}이(가) 같은 자리를 서로 다른 값으로 바꿉니다.`, cur.label));
+          }
+          continue;
+        }
+      }
+      edits.push(cur.edit);
+      prev = cur;
+    }
+  }
+  for (const d of deletes) edits.push(...d.edits);
+  edits.push(...insertEdits);
+
+  // ── 5. 줄 배치 캐시 ─────────────────────────────────────────
+  const changed = new Set<string>(touchedEntries);
+  for (const e of edits) changed.add(e.entry);
+  for (const section of doc.sections) {
+    if (!changed.has(section.entryName)) continue;
+    for (const par of walkParagraphs(section.paragraphs)) {
+      const seg = par.lineSegArray;
+      if (seg === undefined || isDeleted(rangeOf(section, seg)) || isReplaced(rangeOf(section, par.element))) continue;
+      edits.push(span(ctxOf(section), seg.start, seg.end, "", "줄 배치 캐시 제거"));
+    }
+  }
+
+  // ── 6. 기대값 ───────────────────────────────────────────────
+  for (const [par, slot] of touched) {
+    if (!isDeleted({ entry: slot.entry, start: par.element.start, end: par.element.end })) {
+      expectations.push({ kind: "text", entry: slot.entry, paragraphStart: par.element.start, text: applyRepls(par.logicalText, slot.repls) });
+    }
+  }
+
+  // ── 7. 보고서 ───────────────────────────────────────────────
+  for (const x of explicit) {
+    const entry: FillReport["actions"][number] = { ruleId: x.ruleId, type: x.type, anchor: x.anchor, targets: x.targets };
+    if (x.position !== undefined) entry.position = x.position;
+    if (x.value !== undefined) entry.value = x.value;
+    report.actions.push(entry);
+  }
+  for (const d of deletes) {
+    for (const r of d.rules) {
+      const found = report.actions.find((a) => a.ruleId === r.ruleId && a.type === "delete");
+      if (found === undefined) report.actions.push({ ruleId: r.ruleId, type: "delete", anchor: r.anchor, targets: d.parts.length });
+      else found.targets += d.parts.length;
+    }
+  }
+  let delta = zeroDelta();
+  for (const d of deletes) delta = addDelta(delta, d.delta);
+  delta = addDelta(delta, insertDelta);
+  let expected = delta;
+  for (const step of injects) expected = addDelta(expected, step.delta);
+  report.expected = deltaRecord(expected);
+  report.requiredPaths = [...required].sort();
+  report.missingPaths = [...missingPaths].sort();
+  report.kept = [...keptPaths].sort(([a], [b]) => (a < b ? -1 : 1)).map(([path, count]) => ({ path, count }));
+
+  const plan: FillPlan = {
+    edits,
+    additions: [],
+    summary: { edits: edits.length, deletes: deletes.length, injects: injects.length },
+    issues: [],
+    injects,
+    expectations,
+    delta,
+    fragmentDigests,
+  };
+  return { plan, report };
+}

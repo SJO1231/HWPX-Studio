@@ -1,0 +1,54 @@
+import { candidates, compile, diff, fill, fragmentCommand, inspect, validate } from "./commands.ts";
+import { InputError, UsageError, type Out } from "./io.ts";
+
+export const USAGE = `사용법: hwpx <명령> [옵션]
+
+명령
+  inspect <파일> [--json] [--model 출력.json]            구역·문단·표·누름틀·{{}}·자원 요약
+  candidates <파일> [--json]                            채울 자리 후보 목록
+  fragment extract <파일> --section N --from A --to B [--parent 주소] -o 조각.json
+  fragment import <대상> <조각.json> --section N --index I [--parent 주소] [--before] -o 출력.hwpx
+  fill <파일> --data d.json [--template t.json] -o 출력 [--mode baseline|strict|repair]
+       [--missing error|empty|keep] [--dry-run] [--report r.json] [--overwrite]
+  validate <파일> [--baseline 원본] [--strict] [--json]  검사
+  diff <원본> <결과> [--json]                            항목별 동일 여부와 수량 비교
+  compile <파일> -o 승격본 --experimental                {{}}를 누름틀로(실험)
+
+종료 코드: 0 성공, 1 검사·게이트 실패, 2 사용법 오류·읽을 수 없는 입력`;
+
+/** 명령줄을 실행하고 종료 코드를 돌려준다. 출력은 `out`으로만 한다. */
+export async function run(argv: string[], out: Out): Promise<number> {
+  const [command, ...rest] = argv;
+  try {
+    switch (command) {
+      case "inspect":
+        return inspect(rest, out);
+      case "candidates":
+        return candidates(rest, out);
+      case "fragment":
+        return await fragmentCommand(rest, out);
+      case "fill":
+        return await fill(rest, out);
+      case "validate":
+        return validate(rest, out);
+      case "diff":
+        return diff(rest, out);
+      case "compile":
+        return compile(rest, out);
+      case "help":
+      case "--help":
+      case "-h":
+        out.log(USAGE);
+        return 0;
+      default:
+        out.err(command === undefined ? USAGE : `알 수 없는 명령입니다: ${command}\n\n${USAGE}`);
+        return 2;
+    }
+  } catch (e) {
+    if (e instanceof UsageError || e instanceof InputError) {
+      out.err(`오류: ${e.message}`);
+      return 2;
+    }
+    throw e;
+  }
+}
