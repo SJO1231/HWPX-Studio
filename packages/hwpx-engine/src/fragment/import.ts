@@ -28,7 +28,7 @@ const MAX_ID = 4294967295;
 const isNumericId = (v: string): boolean => /^\d+$/.test(v) && Number(v) < MAX_ID;
 const refKey = (kind: string, lang: string | undefined, id: string): string => JSON.stringify([kind, lang ?? "", id]);
 
-function findList(header: HeaderModel, kind: string, lang: string | undefined): XElement | undefined {
+export function findList(header: HeaderModel, kind: string, lang: string | undefined): XElement | undefined {
   const refList = childEl(header.root, "head", "refList");
   if (refList === undefined) return undefined;
   for (const list of elementChildren(refList)) {
@@ -174,7 +174,7 @@ function declarationEdit(entry: string, root: XElement, missing: Map<string, str
 }
 
 /** 목록 요소 끝에 항목 원문을 더하고 개수 속성을 고치는 편집들. */
-function listEdits(header: HeaderModel, headerEntry: string, list: XElement, items: string[], reason: string): SpanEdit[] {
+export function listEdits(header: HeaderModel, headerEntry: string, list: XElement, items: string[], reason: string): SpanEdit[] {
   const text = items.join("");
   const edits: SpanEdit[] = [];
   if (list.end === list.openEnd) {

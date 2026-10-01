@@ -63,3 +63,4 @@ export { serializeFragment, parseFragment } from "./fragment/json.ts";
 export * from "./repair/index.ts";
 export * from "./template/index.ts";
 export * from "./fill/index.ts";
+export * from "./format/index.ts";
