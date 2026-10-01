@@ -48,7 +48,7 @@ class HwpxError extends Error { code: string; where?: string }
 type Issue = { severity: "error" | "warning"; code: string; message: string; where?: string }
 ```
 
-코드는 `영역_내용` 형식의 대문자다. 영역: `PKG`(패키지·ZIP), `XML`, `MODEL`, `EDIT`, `FRAG`, `FMT`(서식), `TPL`(템플릿), `DATA`, `FILL`, `VAL`(검사), `REPAIR`, `DIFF`.
+코드는 `영역_내용` 형식의 대문자다. 영역: `PKG`(패키지·ZIP), `XML`, `MODEL`, `EDIT`, `FRAG`, `FMT`(서식), `TPL`(템플릿), `DATA`, `FILL`, `VAL`(검사), `REPAIR`, `GATE`, `PRESERVE`, `REREAD`, `TEXT`, `DIFF`.
 
 ## 3. S1 — 패키지 (`src/package/`)
 
@@ -758,3 +758,21 @@ HWPX가 우선이다. md·txt는 같은 규칙·데이터 계층(8.2의 조건·
 | T4 | 줄바꿈 방식과 BOM 보존, 손대지 않은 블록은 문자 그대로 |
 | T5 | 코드 블록 안 `{{}}`는 기본으로 그대로 |
 | T6 | 같은 템플릿 규칙·데이터 묶음을 hwpx와 md 양쪽에 써서 같은 값이 들어간다 |
+
+### 9.1 S4 구현에서 확정한 것 (2026-10-01)
+
+구현 상태: T1~T6 통과(테스트 84개). 같은 `rules`와 같은 데이터 묶음을 HWPX와 Markdown 양쪽에 적용해 같은 값이 들어가는 것을 확인했다(누락 정책 3종의 결과와 실패 코드, 채움 내역, 지워진 줄의 처리까지 같다).
+
+- md의 빈 줄 덩어리는 블록이 아니라 구분이다. 블록 서수는 비어 있지 않은 블록만 센다. txt는 빈 줄도 블록이다.
+- 줄·단어 앵커의 지문은 블록의 논리 글(줄을 `
+`으로 이은 것) 기준이다. 줄바꿈 방식이 달라도 같은 앵커를 쓴다.
+- 규칙이 가리키는 `{{이름}}`은 그 규칙이 맡고 암묵 채움에서 빠진다.
+- 표 값: `|`는 `\|`로, 그 앞의 백슬래시는 두 배로 쓴다. 줄바꿈은 거부한다.
+- 표 행을 모두 지우면 머리행만 남는다(머리행 삭제는 거부).
+- md 삽입은 이웃의 구분(빈 줄 방식)을 따른다. `insertText`의 `style`은 무시한다.
+- 조각: `{ schema: "hwpx-studio/text-fragment@1", blocks: string[] }`.
+- 결과: `{ ok, dryRun, output?, report }`. 원장은 없다.
+- 추가한 코드: `FILL_TABLE_HEADER`, `VAL_TABLE_COLS`, `VAL_ENCODING`, `TEXT_ENCODING`, `TEXT_FENCE_UNCLOSED`(경고). 원래부터 열 수가 어긋난 표는 경고, 편집이 어긋나게 만든 표는 오류다.
+- Markdown 지원 범위: 빈 줄 덩어리, 울타리 코드 블록, 파이프 표, 한 줄 `#` 제목. 목록·인용문·HTML 블록·들여쓴 코드·front matter는 구조를 해석하지 않고 문단으로 다룬다. 목록·인용문 안의 울타리와 인라인 코드는 보호하지 않는다. 값의 Markdown 특수문자는 이스케이프하지 않는다.
+- 템플릿과 데이터 묶음은 `readTemplate`·`readDataset`으로 읽은 것을 넘긴다(읽기 함수가 기본 옵션을 채운다).
+- 규모: 48,000블록 0.26초.
