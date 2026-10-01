@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { readdirSync } from "node:fs";
 import { crc32 } from "node:zlib";
 import {
   HwpxError,
@@ -552,4 +553,220 @@ test("3.3 열기는 입력 바이트와 archive를 그대로 노출한다", () =
   assert.equal(pkg.bytes, bytes);
   assert.equal(pkg.archive.entries.length, readArchive(bytes).entries.length);
   assert.equal(cdRecords(copyOf(bytes)).length, pkg.archive.entries.length);
+});
+
+// ── 18개 정상 fixtures ───────────────────────────────────────────────────
+
+/** test/fixtures 바로 아래, hancom/, extra/ 의 모든 .hwpx (확장자 뺀 상대 경로) */
+function allFixtureNames(): string[] {
+  const root = new URL("./fixtures/", import.meta.url);
+  const out: string[] = [];
+  for (const dir of ["", "hancom/", "extra/"]) {
+    for (const f of readdirSync(new URL(dir, root)).sort()) {
+      if (f.endsWith(".hwpx")) out.push(`${dir}${f.slice(0, -5)}`);
+    }
+  }
+  return out;
+}
+
+test("정상 fixtures는 18개이고 모두 열리며 모든 항목이 CRC까지 읽힌다", () => {
+  const names = allFixtureNames();
+  assert.equal(names.length, 18);
+  for (const name of names) {
+    const bytes = readFixture(name);
+    const pkg = openPackage(bytes);
+    assert.ok(pkg.sectionEntries.length >= 1, name);
+    for (const e of pkg.archive.entries) {
+      if (!e.isDirectory) readEntry(pkg.archive, bytes, e.name);
+    }
+  }
+});
+
+// ── 교체 항목의 범용 플래그 (3.2 보강: 바꾸는 플래그는 bit 3 하나뿐) ──────────────────
+
+/** 이름 항목 하나의 로컬 헤더와 CD 레코드 플래그를 같은 값으로 바꾼 사본 */
+function withFlags(zip: Uint8Array, name: string, flags: number): Buffer {
+  const buf = copyOf(zip);
+  const e = readArchive(buf).entries.find((x) => x.name === name);
+  assert.ok(e !== undefined, name);
+  buf.writeUInt16LE(flags, e.localStart + 6);
+  buf.writeUInt16LE(flags, e.cdRecord.start + 8);
+  return buf;
+}
+
+test("3.2 교체한 항목의 플래그는 bit 3만 꺼진다 (UTF-8 이름 표시 등 나머지 15비트는 원본 그대로)", () => {
+  const NAME = "Contents/한글 이름.xml";
+  const body = utf8("<a>가나다</a>".repeat(20));
+  // [원본 플래그, 기대 플래그]. 기대값은 원본 & ~0x0008을 손으로 적은 것이다.
+  const cases: [number, number][] = [
+    [0x0800, 0x0800],
+    [0x0808, 0x0800],
+    [0x080a, 0x0802],
+    [0x1800, 0x1800],
+    [0x9808, 0x9800],
+  ];
+  for (const [orig, expected] of cases) {
+    for (const method of [0, 8] as const) {
+      const base = buildZip([
+        { name: "mimetype", data: utf8("application/hwp+zip") },
+        { name: NAME, data: body, method, descriptor: (orig & 0x0008) !== 0 },
+        { name: "tail.txt", data: utf8("tail") },
+      ]);
+      const zip = withFlags(base, NAME, orig);
+      const archive = readArchive(zip);
+      assert.equal(archive.entries.find((e) => e.name === NAME)?.flags, orig, "준비: 원본 플래그");
+      for (const [label, content] of [
+        ["같은 내용", body],
+        ["다른 내용", utf8("<b>다른 내용</b>".repeat(7))],
+      ] as const) {
+        const ctx = `플래그 0x${orig.toString(16)}, 방식 ${method}, ${label}`;
+        const out = rewriteArchive(zip, archive, { replace: new Map([[NAME, content]]) });
+        const o = readArchive(out);
+        const e = o.entries.find((x) => x.name === NAME);
+        assert.ok(e !== undefined, ctx);
+        const buf = Buffer.from(out);
+        assert.equal(buf.readUInt16LE(e.localStart + 6), expected, `${ctx}: 로컬 헤더 플래그`);
+        assert.equal(buf.readUInt16LE(e.cdRecord.start + 8), expected, `${ctx}: CD 레코드 플래그`);
+        assert.equal(e.flags, expected, ctx);
+        assert.ok(bytesEqual(readEntry(o, out, NAME), content), `${ctx}: 내용`);
+        // 바꾸지 않은 항목의 플래그는 그대로
+        const tail = o.entries.find((x) => x.name === "tail.txt");
+        assert.equal(tail?.flags, 0, ctx);
+      }
+    }
+  }
+});
+
+test("3.2 플래그 비트별로: 교체 항목에서 bit 3 외의 비트는 하나도 바뀌지 않는다 (암호화 비트 제외)", () => {
+  for (let bit = 0; bit < 16; bit++) {
+    if (bit === 0 || bit === 6 || bit === 13) continue; // 읽기 단계에서 거부되는 비트
+    const orig = 1 << bit;
+    const base = buildZip([
+      { name: "mimetype", data: utf8("application/hwp+zip") },
+      { name: "한글.txt", data: utf8("abc"), method: 0, descriptor: bit === 3 },
+    ]);
+    const zip = withFlags(base, "한글.txt", orig);
+    const out = rewriteArchive(zip, readArchive(zip), { replace: new Map([["한글.txt", utf8("changed")]]) });
+    const e = readArchive(out).entries.find((x) => x.name === "한글.txt");
+    assert.ok(e !== undefined);
+    const buf = Buffer.from(out);
+    const expected = orig & ~0x0008;
+    assert.equal(buf.readUInt16LE(e.localStart + 6), expected, `bit ${bit}: 로컬 헤더`);
+    assert.equal(buf.readUInt16LE(e.cdRecord.start + 8), expected, `bit ${bit}: CD 레코드`);
+  }
+});
+
+// ── 암호화 플래그 (3.1 보강: CD 또는 로컬 헤더의 bit 0, 6, 13) ───────────────────────
+
+test("3.1 암호화 비트(bit 0, 6, 13)는 CD 레코드나 로컬 헤더 한쪽에만 있어도 PKG_ENCRYPTED, 다른 비트는 거부하지 않는다", () => {
+  const base = buildZip([
+    { name: "mimetype", data: utf8("application/hwp+zip") },
+    { name: "a.txt", data: utf8("abc".repeat(30)), method: 8 },
+    { name: "b.txt", data: utf8("tail") },
+  ]);
+  const found = readArchive(base).entries.find((e) => e.name === "a.txt");
+  assert.ok(found !== undefined);
+  const encrypting = new Set([0, 6, 13]);
+  for (let bit = 0; bit < 16; bit++) {
+    for (const side of ["cd", "local"] as const) {
+      const buf = copyOf(base);
+      if (side === "cd") buf.writeUInt16LE(1 << bit, found.cdRecord.start + 8);
+      else buf.writeUInt16LE(1 << bit, found.localStart + 6);
+      const ctx = `bit ${bit}, ${side}`;
+      if (encrypting.has(bit)) {
+        const e = throwsCode(() => readArchive(buf), "PKG_ENCRYPTED");
+        assert.equal(e.where, "a.txt", ctx);
+      } else {
+        assert.equal(readArchive(buf).entries.length, 3, ctx);
+      }
+    }
+  }
+});
+
+test("3.1 로컬 헤더에만 bit 0이 있어도 openPackage는 PKG_ENCRYPTED", () => {
+  const buf = copyOf(readFixture("D1"));
+  const e = readArchive(buf).entries.find((x) => x.name === "Contents/section0.xml");
+  assert.ok(e !== undefined);
+  buf.writeUInt16LE(buf.readUInt16LE(e.localStart + 6) | 0x0001, e.localStart + 6);
+  assert.equal(buf.readUInt16LE(e.cdRecord.start + 8) & 0x2041, 0, "준비: CD 레코드에는 표시가 없다");
+  throwsCode(() => openPackage(buf), "PKG_ENCRYPTED");
+});
+
+test("3.1 CD 레코드의 bit 13(CD 암호화)은 PKG_ENCRYPTED", () => {
+  const buf = copyOf(readFixture("hancom-field"));
+  const rec = cdRecordOf(buf, "Contents/header.xml");
+  buf.writeUInt16LE(buf.readUInt16LE(rec + 8) | 0x2000, rec + 8);
+  throwsCode(() => openPackage(buf), "PKG_ENCRYPTED");
+});
+
+// ── 역슬래시 이름 (3.3 보강) ─────────────────────────────────────────────
+
+/** 이름을 바꾼 사본(내용은 그대로). 기본은 `/`를 `\`로 바꾼다. 디렉터리 항목은 뺀다. */
+function renamed(name: string, rename: (entryName: string) => string = (n) => n.replaceAll("/", "\\")): Uint8Array {
+  const bytes = readFixture(name);
+  const archive = readArchive(bytes);
+  return buildZip(
+    archive.entries
+      .filter((e) => !e.isDirectory)
+      .map((e) => ({ name: rename(e.name), data: readEntry(archive, bytes, e.name), method: e.method })),
+  );
+}
+
+test("3.3 항목 이름의 구분자가 모두 역슬래시이면 PKG_BACKSLASH_NAMES (PKG_MISSING이 아니다)", () => {
+  for (const name of ["D1", "hancom-field"]) {
+    const zip = renamed(name);
+    assert.ok(readArchive(zip).entries.some((e) => e.name === "Contents\\header.xml"), "준비: 이름이 역슬래시다");
+    throwsCode(() => openPackage(zip), "PKG_BACKSLASH_NAMES");
+  }
+  // 대조: 이름을 건드리지 않은 같은 내용은 열린다
+  assert.equal(openPackage(renamed("D1", (n) => n)).headerEntry, "Contents/header.xml");
+});
+
+test("3.3 필수 항목 하나만 역슬래시 이름이어도, manifest 쪽 경로까지 역슬래시여도 PKG_BACKSLASH_NAMES", () => {
+  // header만 역슬래시
+  throwsCode(
+    () => openPackage(renamed("D1", (n) => (n === "Contents/header.xml" ? "Contents\\header.xml" : n))),
+    "PKG_BACKSLASH_NAMES",
+  );
+  // 구역만 역슬래시
+  throwsCode(
+    () => openPackage(renamed("D1", (n) => (n === "Contents/section0.xml" ? "Contents\\section0.xml" : n))),
+    "PKG_BACKSLASH_NAMES",
+  );
+  // 이름과 content.hpf의 href가 함께 역슬래시: 구역 파일을 못 찾는 경로
+  const bytes = readFixture("D1");
+  const archive = readArchive(bytes);
+  const zip = buildZip(
+    archive.entries
+      .filter((e) => !e.isDirectory)
+      .map((e) => {
+        let data = readEntry(archive, bytes, e.name);
+        if (e.name === "Contents/content.hpf") data = utf8(new TextDecoder().decode(data).replaceAll('href="Contents/', 'href="Contents\\'));
+        const name = e.name.startsWith("Contents/") && e.name !== "Contents/content.hpf" ? e.name.replace("/", "\\") : e.name;
+        return { name, data, method: e.method };
+      }),
+  );
+  assert.ok(new TextDecoder().decode(readEntry(readArchive(zip), zip, "Contents/content.hpf")).includes('href="Contents\\section0.xml"'));
+  throwsCode(() => openPackage(zip), "PKG_BACKSLASH_NAMES");
+});
+
+test("3.3 역슬래시 이름이 없으면 PKG_MISSING 그대로, 필수 항목이 다 있으면 역슬래시 이름은 열기를 막지 않는다", () => {
+  const bytes = readFixture("D1");
+  const archive = readArchive(bytes);
+  const without = (skip: string, extra: { name: string; data: Uint8Array }[] = []) =>
+    buildZip([
+      ...archive.entries
+        .filter((e) => !e.isDirectory && e.name !== skip)
+        .map((e) => ({ name: e.name, data: readEntry(archive, bytes, e.name), method: e.method })),
+      ...extra,
+    ]);
+  // 필수 항목이 없고 역슬래시 이름도 없다
+  throwsCode(() => openPackage(without("Contents/header.xml")), "PKG_MISSING");
+  throwsCode(() => openPackage(without("META-INF/container.xml")), "PKG_MISSING");
+  throwsCode(() => openPackage(without("Contents/section0.xml")), "PKG_MISSING");
+  // 필수 항목을 못 찾았고 다른 항목 이름에 역슬래시가 있으면 원인을 구별해 알린다
+  throwsCode(() => openPackage(without("Contents/header.xml", [{ name: "BinData\\a.png", data: new Uint8Array([1]) }])), "PKG_BACKSLASH_NAMES");
+  // 필수 항목이 모두 있으면 역슬래시 이름이 있어도 열린다
+  const pkg = openPackage(without("", [{ name: "BinData\\a.png", data: new Uint8Array([1]) }]));
+  assert.equal(pkg.headerEntry, "Contents/header.xml");
 });

@@ -40,6 +40,8 @@ const SIG_LOCAL = 0x04034b50;
 const EOCD_SIZE = 22;
 const CD_FIXED = 46;
 const LOCAL_FIXED = 30;
+/** 범용 플래그의 암호화 관련 비트: bit 0(암호화), bit 6(강한 암호화), bit 13(중앙 디렉터리 암호화). CD 레코드와 로컬 헤더 모두에서 본다. */
+const FLAGS_ENCRYPTED = 0x0001 | 0x0040 | 0x2000;
 
 const nameDecoder = new TextDecoder("utf-8", { fatal: true });
 
@@ -115,7 +117,7 @@ export function readArchive(bytes: Uint8Array): Archive {
     } catch {
       throw new HwpxError("PKG_NAME_ENCODING", `${i}번째 항목 이름이 UTF-8이 아닙니다.`);
     }
-    if ((flags & 0x0001) !== 0 || (flags & 0x0040) !== 0) {
+    if ((flags & FLAGS_ENCRYPTED) !== 0) {
       throw new HwpxError("PKG_ENCRYPTED", "암호화된 항목은 지원하지 않습니다.", name);
     }
     if (csize === 0xffffffff || size === 0xffffffff || localStart === 0xffffffff) {
@@ -164,6 +166,9 @@ export function readArchive(bytes: Uint8Array): Archive {
   for (const e of entries) {
     if (e.localStart + LOCAL_FIXED > cdStart || u32(bytes, e.localStart) !== SIG_LOCAL) {
       throw new HwpxError("PKG_TRUNCATED", "로컬 레코드 위치가 범위 밖이거나 서명이 맞지 않습니다.", e.name);
+    }
+    if ((u16(bytes, e.localStart + 6) & FLAGS_ENCRYPTED) !== 0) {
+      throw new HwpxError("PKG_ENCRYPTED", "암호화된 항목은 지원하지 않습니다.", e.name);
     }
     e.dataStart = e.localStart + LOCAL_FIXED + u16(bytes, e.localStart + 26) + u16(bytes, e.localStart + 28);
     if (e.dataStart + e.compressedSize > cdStart) {

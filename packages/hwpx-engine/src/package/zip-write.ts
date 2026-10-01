@@ -1,6 +1,6 @@
 import { crc32, deflateRawSync } from "node:zlib";
 import { HwpxError } from "../errors.ts";
-import { copyRange, put16, put32 } from "./le.ts";
+import { copyRange, put16, put32, u16 } from "./le.ts";
 import { LIMITS, type Archive, type ArchiveEntry } from "./zip-read.ts";
 
 export type AddedEntry = { name: string; data: Uint8Array; method: 0 | 8 };
@@ -72,7 +72,8 @@ export function rewriteArchive(bytes: Uint8Array, archive: Archive, changes: Arc
     const fix: Fix = { crc: crc32(replacement), csize: data.length, size: replacement.length };
     fixes.set(e.name, fix);
     const header = copyRange(bytes, e.localStart, e.dataStart);
-    put16(header, 6, (header[6] ?? 0) & ~FLAG_DATA_DESCRIPTOR);
+    // 바꾸는 플래그는 데이터 설명자 비트(bit 3) 하나뿐이다. 16비트 전체를 읽어 나머지(UTF-8 이름 bit 11 등)를 보존한다.
+    put16(header, 6, u16(header, 6) & ~FLAG_DATA_DESCRIPTOR);
     put32(header, 14, fix.crc);
     put32(header, 18, fix.csize);
     put32(header, 22, fix.size);
@@ -110,7 +111,7 @@ export function rewriteArchive(bytes: Uint8Array, archive: Archive, changes: Arc
     put32(rec, 42, newStart.get(e.name) ?? 0);
     const fix = fixes.get(e.name);
     if (fix !== undefined) {
-      put16(rec, 8, (rec[8] ?? 0) & ~FLAG_DATA_DESCRIPTOR);
+      put16(rec, 8, u16(rec, 8) & ~FLAG_DATA_DESCRIPTOR);
       put32(rec, 16, fix.crc);
       put32(rec, 20, fix.csize);
       put32(rec, 24, fix.size);

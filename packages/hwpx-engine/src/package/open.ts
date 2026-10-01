@@ -41,8 +41,19 @@ function checkMimetype(archive: Archive, bytes: Uint8Array, issues: Issue[]): vo
   }
 }
 
+/**
+ * 필수 항목을 찾지 못했을 때의 오류. 항목 이름에 역슬래시가 하나라도 있으면 원인을 구별해 PKG_BACKSLASH_NAMES로 낸다.
+ * 구분자가 역슬래시인 파일은 1차에서 읽지 않는다. 그 밖의 경우는 PKG_MISSING이다.
+ */
+function missing(archive: Archive, message: string, where: string): HwpxError {
+  if (archive.entries.some((e) => e.name.includes("\\"))) {
+    return new HwpxError("PKG_BACKSLASH_NAMES", `항목 이름의 구분자가 역슬래시(\\)인 파일은 지원하지 않습니다. ${message}`, where);
+  }
+  return new HwpxError("PKG_MISSING", message, where);
+}
+
 function requireEntry(archive: Archive, name: string): void {
-  if (findEntry(archive, name) === undefined) throw new HwpxError("PKG_MISSING", `필수 항목이 없습니다: ${name}`, name);
+  if (findEntry(archive, name) === undefined) throw missing(archive, `필수 항목이 없습니다: ${name}`, name);
 }
 
 export function openPackage(bytes: Uint8Array): HwpxPackage {
@@ -61,7 +72,7 @@ export function openPackage(bytes: Uint8Array): HwpxPackage {
   const rootfile =
     rootfiles.find((r) => r.mediaType === "application/hwpml-package+xml") ?? rootfiles.find((r) => r.path.endsWith(".hpf"));
   if (rootfile === undefined) {
-    throw new HwpxError("PKG_MISSING", "container.xml에 패키지 루트 파일(rootfile)이 없습니다.", CONTAINER_ENTRY);
+    throw missing(archive, "container.xml에 패키지 루트 파일(rootfile)이 없습니다.", CONTAINER_ENTRY);
   }
   requireEntry(archive, rootfile.path);
   const hpf = parseXmlBytes(readEntry(archive, bytes, rootfile.path), rootfile.path);
@@ -92,7 +103,7 @@ export function openPackage(bytes: Uint8Array): HwpxPackage {
     spineItems.find((m) => m.id === "header" || /(?:^|\/)header\.xml$/i.test(m.href)) ??
     manifestItems.find((m) => m.id === "header" || /(?:^|\/)header\.xml$/i.test(m.href));
   if (header === undefined) {
-    throw new HwpxError("PKG_MISSING", "manifest에 header 항목이 없습니다.", rootfile.path);
+    throw missing(archive, "manifest에 header 항목이 없습니다.", rootfile.path);
   }
   requireEntry(archive, header.href);
 
@@ -107,7 +118,7 @@ export function openPackage(bytes: Uint8Array): HwpxPackage {
     issues.push(makeIssue("warning", "PKG_SECTION_NOT_IN_SPINE", "spine에 없는 구역 파일을 번호순으로 뒤에 붙였습니다.", x.name));
   }
   if (sectionEntries.length === 0) {
-    throw new HwpxError("PKG_MISSING", "구역 파일(section<N>.xml)이 없습니다.", rootfile.path);
+    throw missing(archive, "구역 파일(section<N>.xml)이 없습니다.", rootfile.path);
   }
   for (const name of sectionEntries) requireEntry(archive, name);
 

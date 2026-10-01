@@ -39,26 +39,49 @@ export function assertLegalChars(value: string, what: string): void {
   }
 }
 
+const MAX_CODE_POINT = 0x10ffff;
+
+/** 숫자 문자의 값. radix 안의 숫자가 아니면 -1. */
+function digitValue(code: number, radix: 10 | 16): number {
+  if (code >= 0x30 && code <= 0x39) return code - 0x30;
+  if (radix === 16) {
+    if (code >= 0x41 && code <= 0x46) return code - 0x41 + 10;
+    if (code >= 0x61 && code <= 0x66) return code - 0x61 + 10;
+  }
+  return -1;
+}
+
 /**
  * `text[at]`이 `&`일 때 엔티티 참조 하나를 읽는다.
  * 반환: 참조 끝 다음 위치와 해독한 문자열. 문법이 틀리면 null. 숫자 참조가 금지된 문자를 가리키면 예외.
+ *
+ * 숫자 참조는 자릿수가 아니라 값으로 판정한다. 앞자리 0은 몇 개든 정형이다.
+ * 값이 U+10FFFF를 넘으면 더 키우지 않고 끝까지 자릿수만 읽으므로, 참조 길이에 비례한 시간만 든다.
  */
 export function readReference(text: string, at: number): { end: number; value: string } | null {
-  const semi = text.indexOf(";", at + 1);
-  if (semi < 0 || semi - at > 12) return null;
-  const body = text.slice(at + 1, semi);
-  if (body.startsWith("#")) {
-    const hex = body.startsWith("#x");
-    const digits = body.slice(hex ? 2 : 1);
-    if (!(hex ? /^[0-9A-Fa-f]+$/ : /^[0-9]+$/).test(digits)) return null;
-    const cp = parseInt(digits, hex ? 16 : 10);
-    if (!isXmlCodePoint(cp)) {
-      throw new HwpxError("XML_ILLEGAL_CHAR", `숫자 참조 &${body};가 허용되지 않는 문자를 가리킵니다.`);
+  if (text.charCodeAt(at + 1) !== 0x23 /* # */) {
+    for (const [name, value] of PREDEFINED) {
+      if (text.startsWith(name + ";", at + 1)) return { end: at + 1 + name.length + 1, value };
     }
-    return { end: semi + 1, value: String.fromCodePoint(cp) };
+    return null;
   }
-  const v = PREDEFINED.get(body);
-  return v === undefined ? null : { end: semi + 1, value: v };
+  let p = at + 2;
+  const radix = text.charCodeAt(p) === 0x78 /* x */ ? 16 : 10;
+  if (radix === 16) p++;
+  const digitsStart = p;
+  let cp = 0;
+  for (; p < text.length; p++) {
+    const d = digitValue(text.charCodeAt(p), radix);
+    if (d < 0) break;
+    if (cp <= MAX_CODE_POINT) cp = cp * radix + d;
+  }
+  if (p === digitsStart || text.charCodeAt(p) !== 0x3b /* ; */) return null;
+  if (!isXmlCodePoint(cp)) {
+    const body = text.slice(at + 1, p);
+    const shown = body.length > 24 ? `${body.slice(0, 24)}…` : body;
+    throw new HwpxError("XML_ILLEGAL_CHAR", `숫자 참조 &${shown};가 허용되지 않는 문자를 가리킵니다.`);
+  }
+  return { end: p + 1, value: String.fromCodePoint(cp) };
 }
 
 export function decodeEntities(raw: string): string {

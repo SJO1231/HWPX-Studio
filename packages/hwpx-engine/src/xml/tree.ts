@@ -137,11 +137,19 @@ export function buildTree(text: string, tokens: Token[]): XElement {
       const { line, column } = lineColumn(text, tok.start);
       throw new HwpxError("XML_MALFORMED", `이름 ${qname}이 네임스페이스 규칙에 맞지 않습니다 (줄 ${line}, 열 ${column})`, `${line}:${column}`);
     }
+    const ns = resolve(prefix, tok.start);
+    // 접두사가 붙은 속성은 그 접두사가 선언돼 있어야 한다. xmlns 선언은 검사 대상이 아니고, xml: 접두사는 처음부터 선언된 것으로 본다.
+    // (기본 네임스페이스는 속성에 적용되지 않으므로 접두사 없는 속성은 볼 것이 없다.)
+    for (const a of attrs) {
+      if (a.qname === NS_ATTR_PREFIX || a.qname.startsWith(NS_ATTR_PREFIX + ":")) continue;
+      const attrColon = a.qname.indexOf(":");
+      if (attrColon > 0) resolve(a.qname.slice(0, attrColon), a.nameStart);
+    }
     const el: XElement = {
       qname,
       prefix,
       local,
-      ns: resolve(prefix, tok.start),
+      ns,
       attrs,
       start: tok.start,
       openEnd: tok.end,

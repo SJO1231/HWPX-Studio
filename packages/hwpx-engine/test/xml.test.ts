@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readdirSync } from "node:fs";
 import { test } from "node:test";
 import {
   HwpxError,
@@ -21,6 +22,21 @@ import {
   type XElement,
 } from "../src/index.ts";
 import { FIXTURE_NAMES, bytesEqual, isXmlEntryName, mutateEntryText, readFixture } from "./helpers.ts";
+
+/** test/fixtures 바로 아래, hancom/, extra/ 의 모든 .hwpx (확장자 뺀 상대 경로). 정상 문서 18개. */
+const ALL_FIXTURES: string[] = (() => {
+  const root = new URL("./fixtures/", import.meta.url);
+  const out: string[] = [];
+  for (const dir of ["", "hancom/", "extra/"]) {
+    for (const f of readdirSync(new URL(dir, root)).sort()) {
+      if (f.endsWith(".hwpx")) out.push(`${dir}${f.slice(0, -5)}`);
+    }
+  }
+  return out;
+})();
+test("정상 fixtures는 18개다", () => {
+  assert.equal(ALL_FIXTURES.length, 18);
+});
 
 function throwsCode(fn: () => unknown, code: string): HwpxError {
   try {
@@ -291,6 +307,61 @@ test("4.3 decodeEntities: 5개 이름 참조와 숫자 참조", () => {
   throwsCode(() => decodeEntities("&#1;"), "XML_ILLEGAL_CHAR");
 });
 
+test("4.3 숫자 참조는 앞자리 0이 길어도 값으로 판정한다", () => {
+  assert.equal(decodeEntities("&#00000000065;"), "A");
+  assert.equal(decodeEntities("&#x0000000041;"), "A");
+  assert.equal(decodeEntities("x&#0000000000000000000000000000000000065;&#x000000000000000000000000000001F600;y"), "xA😀y");
+  assert.equal(decodeEntities("&#x000010FFFF;"), "\u{10FFFF}");
+  // 같은 참조가 속성값과 텍스트에서도 풀린다
+  const text = '<a v="&#00000000065;">&#x0000000042;</a>';
+  const root = buildTree(text, tokenize(text));
+  assert.equal(root.attrs[0]?.value, "A");
+  assert.equal((root.children[0] as { value: string }).value, "B");
+  // 값이 XML 문자 범위 밖이면 자릿수와 관계없이 거부한다
+  throwsCode(() => decodeEntities("&#0000000000;"), "XML_ILLEGAL_CHAR");
+  throwsCode(() => decodeEntities("&#x0000000000;"), "XML_ILLEGAL_CHAR");
+  throwsCode(() => decodeEntities("&#0000000000000000001;"), "XML_ILLEGAL_CHAR");
+  throwsCode(() => decodeEntities("&#00001114112;"), "XML_ILLEGAL_CHAR"); // 0x110000
+  throwsCode(() => decodeEntities("&#x00110000;"), "XML_ILLEGAL_CHAR");
+  throwsCode(() => decodeEntities("&#xD800;"), "XML_ILLEGAL_CHAR");
+  throwsCode(() => decodeEntities("&#99999999999999999999;"), "XML_ILLEGAL_CHAR");
+  throwsCode(() => decodeEntities("&#xFFFFFFFFFFFFFFFFFFFF;"), "XML_ILLEGAL_CHAR");
+  throwsCode(() => tokenize('<a v="&#x00000000110000;"/>'), "XML_ILLEGAL_CHAR");
+  // 형식이 틀리면 XML_MALFORMED: 세미콜론 없음, 숫자 없음, 숫자가 아닌 문자, 대문자 X
+  throwsCode(() => decodeEntities("&#65"), "XML_MALFORMED");
+  throwsCode(() => decodeEntities("&#65 x;"), "XML_MALFORMED");
+  throwsCode(() => decodeEntities("&#00000000065"), "XML_MALFORMED");
+  throwsCode(() => decodeEntities("&#x41"), "XML_MALFORMED");
+  throwsCode(() => decodeEntities("&#;"), "XML_MALFORMED");
+  throwsCode(() => decodeEntities("&#x;"), "XML_MALFORMED");
+  throwsCode(() => decodeEntities("&#6x5;"), "XML_MALFORMED");
+  throwsCode(() => decodeEntities("&#xG1;"), "XML_MALFORMED");
+  throwsCode(() => decodeEntities("&#X41;"), "XML_MALFORMED");
+  throwsCode(() => decodeEntities("&#-65;"), "XML_MALFORMED");
+});
+
+test("4.3 지나치게 긴 숫자 참조도 시간이 폭증하지 않는다", () => {
+  const n = 2_000_000;
+  const t0 = performance.now();
+  assert.equal(decodeEntities(`&#${"0".repeat(n)}65;`), "A");
+  assert.equal(decodeEntities(`&#x${"0".repeat(n)}41;`), "A");
+  throwsCode(() => decodeEntities(`&#${"9".repeat(n)};`), "XML_ILLEGAL_CHAR");
+  throwsCode(() => decodeEntities(`&#x${"F".repeat(n)};`), "XML_ILLEGAL_CHAR");
+  throwsCode(() => decodeEntities(`&#${"0".repeat(n)}65`), "XML_MALFORMED");
+  // 세미콜론이 없는 참조가 수없이 이어져도 첫 오류에서 끝난다
+  throwsCode(() => decodeEntities("&#6".repeat(300_000)), "XML_MALFORMED");
+  // 참조 수십만 개가 정상으로 이어지는 입력은 선형으로 풀린다
+  assert.equal(decodeEntities("&#00065;".repeat(300_000)).length, 300_000);
+  const ms = performance.now() - t0;
+  assert.ok(ms < 5000, `${ms}ms가 걸렸다`);
+  // 속성값과 텍스트 경로(토크나이저)도 같다
+  const t1 = performance.now();
+  const tokens = tokenize(`<a v="&#${"0".repeat(n)}65;">&#x${"0".repeat(n)}42;</a>`);
+  assert.equal(tokens.length, 3);
+  throwsCode(() => tokenize(`<a>&#${"7".repeat(n)};</a>`), "XML_ILLEGAL_CHAR");
+  assert.ok(performance.now() - t1 < 5000);
+});
+
 test("4.3 escapeText는 & < >만, escapeAttr는 추가로 \"만 바꾼다", () => {
   assert.equal(escapeText(`a&b<c>d"e'f`), `a&amp;b&lt;c&gt;d"e'f`);
   assert.equal(escapeAttr(`a&b<c>d"e'f`), `a&amp;b&lt;c&gt;d&quot;e'f`);
@@ -334,6 +405,67 @@ test("4.2 네임스페이스는 선언 범위를 따르고 기본 네임스페�
   assert.equal(by("f").ns, "", "빈 기본 네임스페이스는 이름공간 없음");
   assert.equal(by("c").parent, by("b"));
 });
+
+// ── 속성의 접두사 (4.1 보강) ─────────────────────────────────────────────
+
+function treeOf(text: string): XElement {
+  return buildTree(text, tokenize(text));
+}
+
+test("4.1 선언되지 않은 접두사를 가진 속성은 XML_MALFORMED (줄·열 포함)", () => {
+  const e = throwsCode(() => treeOf('<a p:x="1"/>'), "XML_MALFORMED");
+  assert.ok(e.message.includes("p"), e.message);
+  assert.ok(/줄 1, 열 4/.test(e.message), `속성 이름 위치(1줄 4열)가 있어야 한다: ${e.message}`);
+  throwsCode(() => treeOf('<a>\n<b q:y="1">z</b></a>'), "XML_MALFORMED");
+  throwsCode(() => treeOf('<a xmlns:p="urn:p"><b p:x="1" q:y="2"/></a>'), "XML_MALFORMED");
+  // 선언 범위가 끝난 뒤의 사용
+  throwsCode(() => treeOf('<a><b xmlns:p="urn:p"/><c p:x="1"/></a>'), "XML_MALFORMED");
+  // 자식의 선언은 부모 속성에 영향을 주지 않는다
+  throwsCode(() => treeOf('<a p:x="1"><b xmlns:p="urn:p"/></a>'), "XML_MALFORMED");
+  // 빈 태그가 아닌 요소, 시작 태그의 속성도 같다
+  throwsCode(() => treeOf('<a p:x="1"></a>'), "XML_MALFORMED");
+  // 속성을 가진 루트가 아닌 요소
+  throwsCode(() => treeOf('<a xmlns:p="urn:p"><b><c><d z:k="1"/></c></b></a>'), "XML_MALFORMED");
+  // 문서 전체 경로에서도 거부된다
+  throwsCode(() => parseMutated((t) => t.replace('<hp:p paraPrIDRef="1"', '<hp:p zz:paraPrIDRef="1"')), "XML_MALFORMED");
+});
+
+test("4.1 선언된 접두사, xml: 접두사, xmlns 선언은 속성에서 계속 허용한다", () => {
+  // 같은 요소·조상에 선언한 접두사 (선언이 속성보다 뒤에 와도 된다)
+  const a = treeOf('<a xmlns:p="urn:p" p:x="1"/>');
+  assert.equal(a.attrs.length, 2);
+  assert.equal(treeOf('<a p:x="1" xmlns:p="urn:p"/>').attrs[0]?.value, "1");
+  const b = treeOf('<a xmlns:p="urn:p"><b p:x="1"><c p:y="2"/></b></a>');
+  assert.equal(walkElementsOf(b).length, 3);
+  // xml: 접두사 (xml:space, xml:lang)는 선언 없이 쓴다
+  const sp = treeOf('<a xml:space="preserve" xml:lang="ko"><b xml:space="default"/></a>');
+  assert.equal(sp.attrs.length, 2);
+  // xmlns, xmlns:* 선언은 선언 자체가 접두사를 검사받지 않는다
+  assert.equal(treeOf('<a xmlns="urn:d" xmlns:q="urn:q" xmlns:한글="urn:h"/>').attrs.length, 3);
+  // 접두사 없는 속성
+  assert.equal(treeOf('<a x="1" y="2"/>').attrs.length, 2);
+  // 요소 접두사와 속성 접두사는 따로 해석한다 (기본 네임스페이스는 속성에 적용되지 않는다)
+  treeOf('<a xmlns="urn:d" x="1"/>');
+});
+
+function walkElementsOf(root: XElement): XElement[] {
+  return [...walkElements(root)];
+}
+
+for (const name of ALL_FIXTURES) {
+  test(`4.1 정상 fixtures의 모든 XML 항목이 트리까지 만들어진다 (속성 접두사 검사 포함): ${name}`, () => {
+    const bytes = readFixture(name);
+    const archive = readArchive(bytes);
+    let count = 0;
+    for (const e of archive.entries) {
+      if (e.isDirectory || !isXmlEntryName(e.name)) continue;
+      const text = decodeUtf8(readEntry(archive, bytes, e.name), e.name);
+      treeOf(text);
+      count++;
+    }
+    assert.ok(count >= 4, `${name}: XML 항목 ${count}개`);
+  });
+}
 
 test("4.2 텍스트 노드는 원문과 해독값을 함께 갖는다 (CDATA 포함)", () => {
   const text = "<a>x&amp;y<![CDATA[<&>]]>z</a>";
