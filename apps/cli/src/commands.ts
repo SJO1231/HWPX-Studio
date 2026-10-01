@@ -16,6 +16,7 @@ import {
   generate,
   generateText,
   listFields,
+  listTables,
   makeLineAnchor,
   openPackage,
   parseDocument,
@@ -237,6 +238,7 @@ function printPlan(out: Out, plan: FillReport): void {
   for (const s of plan.skipped) out.log(`건너뜀 [${s.code}] ${s.ruleId} ${s.anchor}: ${s.message}`);
   const expected = Object.entries(plan.expected);
   if (expected.length > 0) out.log(`예상 수량 증감: ${expected.map(([k, v]) => `${k} ${v > 0 ? "+" : ""}${v}`).join(", ")}`);
+  for (const c of plan.tableChanges) out.log(`표 변경 [${c.ruleId}] ${c.table}: ${c.change}`);
 }
 
 /** 생성 결과를 사람이 읽을 글로 출력한다(값 원문은 없다). */
@@ -440,6 +442,160 @@ function guard<T>(read: () => T, path: string): T {
     if (e instanceof HwpxError) throw new InputError(`${path}: ${e.code}: ${e.message}`);
     throw e;
   }
+}
+
+// ── table ───────────────────────────────────────────────────────
+
+/** 표 하나를 한 줄로 요약한다(글 내용은 없다). */
+function tableLine(t: ReturnType<typeof listTables>[number]): string {
+  const yn = (v: boolean | undefined): string => (v === undefined ? "?" : v ? "예" : "아니오");
+  const id = t.topOrdinal === undefined ? "-" : `${t.sectionIndex}:${t.topOrdinal}`;
+  const nested = t.depth > 0 ? ` (중첩 깊이 ${t.depth}, 설정 대상 아님)` : "";
+  return `  ${id.padEnd(5)} 위치 [${t.paragraphPath.join(", ")}]${nested} ${t.rowCnt ?? "?"}행×${t.colCnt ?? "?"}열, 너비 ${t.width ?? "?"}, 글자처럼 취급 ${yn(t.treatAsChar)}, 쪽 나눔 ${t.pageBreak ?? "?"}, 제목 행 반복 ${yn(t.repeatHeader)}, 병합 셀 ${t.mergedCells}개${t.regular ? "" : t.structureRegular ? ", 너비 불규칙(행마다 열 경계가 어긋남: 열 너비가 필요한 조정은 안 됨)" : ", 불규칙 격자"}`;
+}
+
+function tableList(args: string[], out: Out): number {
+  const usage = "hwpx table list <파일> [--json]";
+  const p = parse(args, { json: { type: "boolean" } }, { min: 1, max: 1 }, usage);
+  const file = p.positionals[0] ?? "";
+  rejectText(file, "table list");
+  const { doc } = openDocument(file);
+  const tables = listTables(doc);
+  if (flag(p, "json")) {
+    out.log(
+      json(
+        tables.map((t) => ({
+          section: t.sectionIndex,
+          ordinal: t.topOrdinal ?? null,
+          documentOrdinal: t.ordinal,
+          depth: t.depth,
+          paragraphPath: t.paragraphPath,
+          rowCnt: t.rowCnt ?? null,
+          colCnt: t.colCnt ?? null,
+          width: t.width ?? null,
+          height: t.height ?? null,
+          treatAsChar: t.treatAsChar ?? null,
+          pageBreak: t.pageBreak ?? null,
+          repeatHeader: t.repeatHeader ?? null,
+          mergedCells: t.mergedCells,
+          regular: t.regular,
+          structureRegular: t.structureRegular,
+          widthRegular: t.widthRegular,
+        })),
+      ),
+    );
+    return 0;
+  }
+  out.log(`표 ${tables.length}개 (설정 대상 번호는 구역:순번이고 중첩 표는 -)`);
+  for (const t of tables) out.log(tableLine(t));
+  return 0;
+}
+
+const onOff = (p: Parsed, name: string, usage: string): boolean | undefined => {
+  const v = str(p, name);
+  if (v === undefined) return undefined;
+  if (v !== "on" && v !== "off") throw new UsageError(`--${name}은(는) on이나 off여야 합니다: ${v}\n사용법: ${usage}`);
+  return v === "on";
+};
+
+async function tableSet(args: string[], out: Out): Promise<number> {
+  const usage =
+    "hwpx table set <파일> --table 구역:순번 -o 출력.hwpx [--treat-as-char on|off] [--page-break cell|none|table] [--repeat-header on|off] [--width N | --scale X | --columns a,b,c] [--mode baseline|strict|repair] [--report r.json] [--overwrite]";
+  const p = parse(
+    args,
+    {
+      table: { type: "string" },
+      "treat-as-char": { type: "string" },
+      "page-break": { type: "string" },
+      "repeat-header": { type: "string" },
+      width: { type: "string" },
+      scale: { type: "string" },
+      columns: { type: "string" },
+      output: { type: "string", short: "o" },
+      mode: { type: "string" },
+      report: { type: "string" },
+      overwrite: { type: "boolean" },
+    },
+    { min: 1, max: 1 },
+    usage,
+  );
+  const file = p.positionals[0] ?? "";
+  rejectText(file, "table set");
+  const output = need(p, "output", usage);
+  const spec = /^(\d+):(\d+)$/.exec(need(p, "table", usage));
+  if (spec === null) throw new UsageError(`--table은 구역:순번 꼴이어야 합니다(예: 0:2): ${str(p, "table")}\n사용법: ${usage}`);
+  const sectionIndex = Number(spec[1]);
+  const ordinal = Number(spec[2]);
+
+  const table: Record<string, unknown> = {};
+  const treat = onOff(p, "treat-as-char", usage);
+  if (treat !== undefined) table["treatAsChar"] = treat;
+  const pageBreak = str(p, "page-break");
+  if (pageBreak !== undefined) {
+    if (!["cell", "none", "table"].includes(pageBreak)) throw new UsageError(`--page-break는 cell·none·table 가운데 하나여야 합니다: ${pageBreak}\n사용법: ${usage}`);
+    table["pageBreak"] = pageBreak.toUpperCase();
+  }
+  const header = onOff(p, "repeat-header", usage);
+  if (header !== undefined) table["repeatHeader"] = header;
+
+  const resize: Record<string, unknown> = {};
+  const sizeOptions = ["width", "scale", "columns"].filter((n) => str(p, n) !== undefined);
+  if (sizeOptions.length > 1) throw new UsageError(`--width·--scale·--columns는 하나만 줄 수 있습니다(받은 것: ${sizeOptions.map((n) => `--${n}`).join(", ")}).\n사용법: ${usage}`);
+  if (str(p, "width") !== undefined) {
+    const width = intValue(str(p, "width") ?? "", "width");
+    if (width < 1) throw new UsageError(`--width는 1 이상의 정수여야 합니다: ${width}\n사용법: ${usage}`);
+    resize["width"] = width;
+  }
+  if (str(p, "scale") !== undefined) {
+    // 10진수만 받는다(`0x2`·`1e3`은 Number가 읽어도 거절한다)
+    const text = str(p, "scale") ?? "";
+    const scale = /^(?:\d+(?:\.\d+)?|\.\d+)$/.test(text) ? Number(text) : Number.NaN;
+    if (!Number.isFinite(scale) || scale <= 0) throw new UsageError(`--scale은 0보다 큰 10진수여야 합니다: ${text}\n사용법: ${usage}`);
+    resize["scale"] = scale;
+  }
+  if (str(p, "columns") !== undefined) {
+    const parts = (str(p, "columns") ?? "").split(",");
+    const columns = parts.map((x) => intValue(x.trim(), "columns"));
+    if (columns.some((w) => w < 1)) throw new UsageError(`--columns의 열 너비는 모두 1 이상의 정수여야 합니다: ${str(p, "columns")}\n사용법: ${usage}`);
+    resize["columns"] = columns;
+  }
+  if (Object.keys(table).length === 0 && Object.keys(resize).length === 0) throw new UsageError(`바꿀 설정이 없습니다(--treat-as-char, --page-break, --repeat-header, --width, --scale, --columns 가운데 하나 이상).\n사용법: ${usage}`);
+
+  const mode = modeOf(p, usage);
+  const overwrite = flag(p, "overwrite");
+  const reportPath = str(p, "report");
+  checkOutputPath(output, [file], overwrite);
+  if (reportPath !== undefined) checkOutputPath(reportPath, [file, output], overwrite);
+
+  const { bytes, doc } = openDocument(file);
+  // 템플릿 앵커는 최상위 표(구역 안 서수)만 가리킬 수 있다
+  const found = listTables(doc).find((t) => t.sectionIndex === sectionIndex && t.topOrdinal === ordinal);
+  if (found === undefined) throw new UsageError(`구역 ${sectionIndex}에 ${ordinal}번째 최상위 표가 없습니다(hwpx table list로 번호를 확인하세요. 중첩 표는 지정할 수 없습니다).`);
+  const rules: unknown[] = [];
+  if (Object.keys(table).length > 0) rules.push({ id: "table-props", do: { type: "tableProps", anchor: "t", table } });
+  if (Object.keys(resize).length > 0) rules.push({ id: "table-resize", do: { type: "resize", anchor: "t", ...resize } });
+  let template;
+  try {
+    template = readTemplate({
+      schema: "hwpx-studio/template@1",
+      anchors: [{ id: "t", kind: "object", objectType: "tbl", sectionIndex, ordinal }],
+      rules,
+    });
+  } catch (e) {
+    // 위에서 걸러지지 않은 값(범위 초과 등)은 템플릿 읽기가 거절한다. 사용법 오류로 알린다(스택 없음).
+    if (e instanceof HwpxError) throw new UsageError(`${e.message}\n사용법: ${usage}`);
+    throw e;
+  }
+  // 문서 안 `{{}}`는 건드리지 않는다(데이터가 없으므로 누락 정책은 keep)
+  const result = await runGenerate(file, bytes, template, readDataset({}), { mode, missing: "keep", dryRun: false, fragments: {}, reissueInternal: false });
+  return finishGenerate(out, result, output, [file], overwrite, reportPath);
+}
+
+export function tableCommand(args: string[], out: Out): Promise<number> | number {
+  const [sub, ...rest] = args;
+  if (sub === "list") return tableList(rest, out);
+  if (sub === "set") return tableSet(rest, out);
+  throw new UsageError("사용법: hwpx table list|set ... (hwpx --help 참고)");
 }
 
 // ── validate ────────────────────────────────────────────────────

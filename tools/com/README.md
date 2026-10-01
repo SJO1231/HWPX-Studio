@@ -27,10 +27,31 @@ python tools/com/make_fixtures.py
 | `picture.hwpx` | `그림 앞 문단` / 64x64 PNG 한 장 / `그림 뒤 문단` | 3 |
 | `blocks.hwpx` | `1. 개요`… `2. 선택 조항`… 3행 3열 표 … `3. 끝` (조건 삭제·삽입 시험용) | 6 (표 문단 포함) |
 | `header-footer.hwpx` | 머리말 `{{doc.title}}`, 본문 2문단, 꼬리말 `{{doc.owner}}` | 2 |
+| `tables-merged.hwpx` | `병합 표` + 4행 3열 표(가로 병합 A1·B1, 세로 병합 C2·C3) + `끝` | 3 (표 문단 포함) |
+| `tables-inline.hwpx` | `앞 문단` + 글자처럼 취급(`treatAsChar="1"`) 2행 3열 표 + `뒤 문단` | 3 |
+| `tables-nested.hwpx` | `중첩 표` + 2행 2열 표(둘째 칸 안에 2행 2열 표) + `끝` | 3 |
+| `tables-rich.hwpx` | `풍부한 표` + 3행 3열 표(셀 안에 누름틀 `이름`과 그림) + `끝` | 3 |
 | `manifest.json` | 아래 항목 | |
 
 `manifest.json` 의 문서별 항목: 파일명, 바이트 크기, sha256, `reopen`(열림 여부·쪽 수), ZIP 항목 목록, `BinData` 항목, 구역 XML 수치(`paragraphs`=`<hp:p` 전체 개수, 최상위 문단, run, `hp:t`, `fieldBegin`/`fieldEnd`, 표, 그림, 탭, 머리말, 꼬리말), 의도한 글이 구역 XML 에 있는지(`text_checks`: 원문 그대로 / 문단 안 `hp:t` 를 이어 붙였을 때), 최상위 문단별 run 목록, 문서별 `observations`.
 의도한 글과 공백까지 같은지 비교해서 다르면 그 문서를 실패로 기록한다(`exact_text_mismatches`).
+
+일부만 다시 만들려면 `python tools/com/make_fixtures.py --only tables-merged,tables-inline` 처럼 이름을 준다. 다른 산출물과 `manifest.json`의 다른 항목은 그대로 두고 그 문서의 항목만 바꾼다.
+표 문서 네 개는 한컴이 "표 만들기"의 마지막 설정(글자처럼 취급)을 기억하므로 `TableProperties.TreatAsChar`를 항상 명시해서 만든다.
+표 문서 네 개를 시험에 쓰려면 `node tools/fixtures/scrub-metadata.ts`로 메타데이터를 정리한 뒤 `packages/hwpx-engine/test/fixtures/tables/`에 복사하고 그 폴더의 `SHA256SUMS`를 갱신한다.
+
+## 표 속성 읽기 (`read_table.py`)
+
+```
+python tools/com/read_table.py --spec 명세.json --out 결과.json [--timeout 60]
+```
+
+명세는 `{ "documents": [ { "name": "라벨", "file": "문서.hwpx", "pdf": "저장할.pdf"(선택), "markers": ["PDF 안에 있어야 하는 글"](선택) } ] }`다. 문서마다 작업자를 따로 띄우고 60초가 지나면 그 작업자와 그것이 띄운 `Hwp.exe`만 종료한다(`read_shape.py`와 같은 구조). 한 번에 하나만 실행한다.
+결과는 문서마다 표 목록(표 컨트롤별)과 `props`(`Width`, `Height`, `TreatAsChar`, `PageBreak`, `RepeatHeader`, `CellSpacing`, `HorzAlign`, 바깥 여백 4개, `CellMarginLeft`), 셀 리스트 순서의 `cells`(상태 표시줄 주소 `(B3)`에서 읽은 `label`, `col`, `row`)이다. `pdf`를 주면 PDF로 저장하고 PyMuPDF가 있으면 쪽 수·글자 수·`markers` 존재 여부를 낸다.
+
+한컴 13에서 엔진이 만든 변형을 열어 관측한 코드: `PageBreak`는 CELL 2·TABLE 1·NONE 0, `HorzAlign`은 LEFT 0·CENTER 1·RIGHT 2, `TreatAsChar`·`RepeatHeader`는 0/1. `hwp.CellShape`는 셀 단위 값이 아니라 표 속성을 돌려주므로 셀의 세로 정렬·여백은 읽지 못한다. 행·열 수는 읽는 항목이 없어, 셀 리스트의 주소 목록(병합 셀은 왼쪽 위 주소 하나)으로 구조를 대조한다.
+한컴이 셀이 하나도 시작하지 않는 행(`<hp:tr>`에 `tc`가 없음)이 든 표를 열지 못한다는 것도 이 도구로 확인했다(`OPEN_FALSE`). 한컴 화면은 행 전체를 합치면 그 행을 지운다.
+PDF의 글을 읽을 때 주의: 한컴은 잘려 보이지 않는 글도 PDF에 쓰는 경우가 있어(줄 간격이 0인 서식을 쓴 합성 문서) 글자 수만으로 "보임"을 판정하지 않는다. 끝 글 표지(marker)가 있는지와 쪽 수를 함께 본다.
 
 ## 관측 (한컴 13.0.0.711 에서 저장한 모양)
 

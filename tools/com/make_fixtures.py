@@ -25,7 +25,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "out"
 DOC_TIMEOUT_SEC = 60
-DOCS = ["ph-single", "ph-mixed", "ph-table", "field-states", "picture", "blocks", "header-footer"]
+DOCS = ["ph-single", "ph-mixed", "ph-table", "field-states", "picture", "blocks", "header-footer", "tables-merged", "tables-inline", "tables-nested", "tables-rich"]
 
 NS = {
     "hp": "http://www.hancom.co.kr/hwpml/2011/paragraph",
@@ -228,6 +228,90 @@ def build_header_footer(hwp):
     hwp.SetPos(0, 0, 0)
 
 
+def table_create(hwp, rows, cols, tac=False):
+    """커서가 있는 빈 문단에 표를 만든다(캐럿은 첫 셀). tac 가 참이면 글자처럼 취급."""
+    ps = hwp.HParameterSet.HTableCreation
+    hwp.HAction.GetDefault("TableCreate", ps.HSet)
+    ps.Rows = rows
+    ps.Cols = cols
+    ps.WidthType = 0
+    ps.HeightType = 0
+    # 한컴은 표 만들기의 마지막 설정을 기억하므로 글자처럼 취급 여부를 항상 명시한다.
+    ps.TableProperties.TreatAsChar = 1 if tac else 0
+    if not hwp.HAction.Execute("TableCreate", ps.HSet):
+        raise RuntimeError("TableCreate failed")
+
+
+def type_cells(hwp, texts):
+    """캐럿이 있는 셀부터 행 우선으로 글을 넣는다(None 은 건너뜀). 마지막 셀에서 멈춘다."""
+    for i, text in enumerate(texts):
+        if text:
+            ins(hwp, text)
+        if i < len(texts) - 1:
+            hwp.HAction.Run("TableRightCell")
+
+
+def merge_from(hwp, list_id, extend):
+    """리스트 번호의 셀에서 시작해 `extend`(TableRightCell·TableLowerCell) 방향으로 한 칸 넓힌 블록을 합친다."""
+    hwp.SetPos(list_id, 0, 0)
+    for act in ["TableCellBlock", "TableCellBlockExtend", extend, "TableMergeCell"]:
+        if not hwp.HAction.Run(act):
+            raise RuntimeError("%s failed" % act)
+
+
+def build_tables_merged(hwp):
+    # 4행 3열. 가로 병합(A1·B1)과 세로 병합(C2·C3)이 든 표. 한컴이 표를 만들 때 제목 행 반복은 기본으로 켜져 있다.
+    ins(hwp, "병합 표")
+    newline(hwp)
+    table_create(hwp, 4, 3)
+    type_cells(hwp, ["신청 내역", None, "비고", "가", "A", "세로", "나", "B", None, "다", "C", "c"])
+    merge_from(hwp, 2, "TableRightCell")  # A1 + B1
+    merge_from(hwp, 6, "TableLowerCell")  # 병합 뒤 번호가 당겨져 C2 는 리스트 6
+    hwp.HAction.Run("MoveDocEnd")
+    ins(hwp, "끝")
+
+
+def build_tables_inline(hwp):
+    ins(hwp, "앞 문단")
+    newline(hwp)
+    table_create(hwp, 2, 3, tac=True)  # 글자처럼 취급
+    type_cells(hwp, ["항목", "내용", "비고", "a", "b", "c"])
+    hwp.HAction.Run("MoveDocEnd")
+    ins(hwp, "뒤 문단")
+
+
+def build_tables_nested(hwp):
+    ins(hwp, "중첩 표")
+    newline(hwp)
+    table_create(hwp, 2, 2)
+    type_cells(hwp, ["바깥1", None, "바깥3", "바깥4"])
+    hwp.SetPos(3, 0, 0)  # 바깥 표의 (1행, 2열) 셀에 안쪽 표를 만든다
+    table_create(hwp, 2, 2)
+    type_cells(hwp, ["안1", "안2", "안3", "안4"])
+    hwp.HAction.Run("MoveDocEnd")
+    ins(hwp, "끝")
+
+
+def build_tables_rich(hwp):
+    # 셀 안에 누름틀과 그림이 든 표
+    ins(hwp, "풍부한 표")
+    newline(hwp)
+    table_create(hwp, 3, 3)
+    type_cells(hwp, ["번호", "이름", "내용", "1"])
+    hwp.HAction.Run("TableRightCell")
+    hwp.CreateField("이름 입력", "", "이름")
+    hwp.HAction.Run("MoveLineEnd")
+    hwp.HAction.Run("TableRightCell")
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        png = Path(tmp) / "synthetic-64x64.png"
+        write_png(png)
+        hwp.InsertPicture(str(png), True, 0)
+    hwp.HAction.Run("TableRightCell")
+    type_cells(hwp, ["2", "둘째"])
+    hwp.HAction.Run("MoveDocEnd")
+    ins(hwp, "끝")
+
+
 BUILDERS = {
     "ph-single": build_ph_single,
     "ph-mixed": build_ph_mixed,
@@ -236,6 +320,10 @@ BUILDERS = {
     "picture": build_picture,
     "blocks": build_blocks,
     "header-footer": build_header_footer,
+    "tables-merged": build_tables_merged,
+    "tables-inline": build_tables_inline,
+    "tables-nested": build_tables_nested,
+    "tables-rich": build_tables_rich,
 }
 
 
@@ -458,6 +546,10 @@ EXPECTED = {
     "picture": ["그림 앞 문단", "그림 뒤 문단"],
     "blocks": ["1. 개요", "개요 본문입니다.", "2. 선택 조항", "선택 조항 본문입니다. (해당 시)", "구분", "내용", "비고", "A", "가", "B", "나", "3. 끝"],
     "header-footer": ["{{doc.title}}", "{{doc.owner}}", "본문 첫째 문단", "본문 둘째 문단"],
+    "tables-merged": ["병합 표", "신청 내역", "비고", "가", "A", "세로", "나", "B", "다", "C", "c", "끝"],
+    "tables-inline": ["앞 문단", "항목", "내용", "비고", "a", "b", "c", "뒤 문단"],
+    "tables-nested": ["중첩 표", "바깥1", "바깥3", "바깥4", "안1", "안2", "안3", "안4", "끝"],
+    "tables-rich": ["풍부한 표", "번호", "이름", "내용", "1", "2", "둘째", "끝"],
 }
 # 의도한 글과 정확히 같은지(공백 포함) 비교하는 기준. 한컴이 입력 중에 글을 고치는 경우를 잡으려는 것이다.
 EXPECTED_TOP = {  # 구역 바로 아래 문단들의 글(표·그림·머리말·꼬리말이 든 문단은 자기 글이 없으므로 "")
@@ -468,10 +560,17 @@ EXPECTED_TOP = {  # 구역 바로 아래 문단들의 글(표·그림·머리말
     "picture": ["그림 앞 문단", "", "그림 뒤 문단"],
     "blocks": ["1. 개요", "개요 본문입니다.", "2. 선택 조항", "선택 조항 본문입니다. (해당 시)", "", "3. 끝"],
     "header-footer": ["본문 첫째 문단", "본문 둘째 문단"],
+    "tables-merged": ["병합 표", "", "끝"],
+    "tables-inline": ["앞 문단", "", "뒤 문단"],
+    "tables-nested": ["중첩 표", "", "끝"],
+    "tables-rich": ["풍부한 표", "", "끝"],
 }
 EXPECTED_CELLS = {  # (행, 열) -> 글
     "ph-table": {(0, 0): "성명", (0, 1): "{{applicant.name}}", (1, 0): "연락처", (1, 1): "", (2, 0): "비고", (2, 1): "{{note}}"},
     "blocks": {(0, 0): "구분", (0, 1): "내용", (0, 2): "비고", (1, 0): "A", (1, 1): "가", (1, 2): "-", (2, 0): "B", (2, 1): "나", (2, 2): "-"},
+    # 병합 셀은 왼쪽 위 주소 하나만 있다: (0,0)은 A1·B1, (1,2)는 C2·C3을 덮는다
+    "tables-merged": {(0, 0): "신청 내역", (0, 2): "비고", (1, 0): "가", (1, 1): "A", (1, 2): "세로", (2, 0): "나", (2, 1): "B", (3, 0): "다", (3, 1): "C", (3, 2): "c"},
+    "tables-inline": {(0, 0): "항목", (0, 1): "내용", (0, 2): "비고", (1, 0): "a", (1, 1): "b", (1, 2): "c"},
 }
 EXPECTED_HF = {"header-footer": {"header": ["{{doc.title}}"], "footer": ["{{doc.owner}}"]}}
 TOKENS = {
@@ -533,7 +632,7 @@ def analyze(name, path):
             }
         if name == "field-states":
             obs["fields"] = field_report(root, zf)
-        if name in ("ph-table", "blocks"):
+        if name in ("ph-table", "blocks") or name in EXPECTED_CELLS:
             obs["tables"] = table_report(root, bolds)
         if name == "header-footer":
             obs["header_footer"] = header_footer_report(root, bolds)
@@ -583,6 +682,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--worker")
     ap.add_argument("--protect", default="")
+    ap.add_argument("--only", default="", help="쉼표로 나눈 문서 이름만 다시 만든다(다른 산출물과 manifest 항목은 그대로 둔다)")
     args = ap.parse_args()
     protect = {int(x) for x in args.protect.split(",") if x}
     if args.worker:
@@ -591,8 +691,12 @@ def main():
     OUT.mkdir(parents=True, exist_ok=True)
     before = hwp_pids()
     print("start: Hwp.exe 이미 떠 있던 프로세스 %d개(건드리지 않음)" % len(before))
+    only = [x for x in args.only.split(",") if x]
+    for name in only:
+        if name not in BUILDERS:
+            ap.error("알 수 없는 문서: %s" % name)
     manifest = {"generator": "tools/com/make_fixtures.py", "hancom_version": None, "documents": [], "failures": []}
-    for name in DOCS:
+    for name in only or DOCS:
         f = OUT / (name + ".hwpx")
         if f.exists():
             f.unlink()
@@ -622,6 +726,12 @@ def main():
     left = hwp_pids() - before
     kill_pids(left)
     manifest["hwp_processes_left_by_this_run"] = len(left)
+    if only and (OUT / "manifest.json").exists():
+        # 일부만 다시 만들었으면 이번 항목을 기존 manifest 에 합친다(다른 문서의 항목은 그대로)
+        old = json.loads((OUT / "manifest.json").read_text(encoding="utf-8"))
+        kept = [d for d in old.get("documents", []) if d["file"][: -len(".hwpx")] not in only]
+        manifest["documents"] = kept + manifest["documents"]
+        manifest["hancom_version"] = manifest["hancom_version"] or old.get("hancom_version")
     manifest["privacy_clean"] = all(d["privacy_clean"] for d in manifest["documents"])
     manifest["note"] = "content.hpf 의 creator·lastsaveby(작성 PC 사용자 이름)만 'synthetic' 으로 바꿔 다시 묶었다. 그 밖은 한컴이 저장한 그대로다."
     (OUT / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

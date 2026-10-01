@@ -455,8 +455,8 @@ function inheritedDuplicates(fragment: Fragment, finals: string[]): InheritedDup
 const ROLE_LABEL: Record<InheritedDuplicate["role"], string> = { paragraph: "문단 id", object: "객체 id", inst: "instId", fieldBegin: "누름틀 id" };
 
 /**
- * 삽입 지점이 표 셀 안이고 그 표가 글자처럼 취급(`treatAsChar="1"`)이거나 쪽 나눔이 없으면(`pageBreak="NONE"`) 그 사유를 돌려준다.
- * 이런 표는 셀 높이가 늘지 않아 넣은 내용이 잘릴 수 있다(동작은 바꾸지 않고 경고만 한다).
+ * 삽입 지점이 표 셀 안이고 그 표가 글자처럼 취급(`treatAsChar="1"`)이거나 쪽 나눔이 없거나(`pageBreak="NONE"`) 표 단위로만 나뉘면(`pageBreak="TABLE"`) 그 사유를 돌려준다.
+ * 이런 표는 셀 높이가 늘지 않거나 한 셀이 쪽 경계에서 나뉘지 않아(`TABLE`은 행 경계에서만 나뉜다) 셀 안 내용이 쪽보다 길면 잘릴 수 있다(동작은 바꾸지 않고 경고만 한다).
  */
 function cellClipReasons(anchor: XElement): string[] {
   // 문단 → subList → tc → tr → tbl
@@ -469,7 +469,9 @@ function cellClipReasons(anchor: XElement): string[] {
   const reasons: string[] = [];
   const pos = childEl(table, "paragraph", "pos");
   if ((attrValue(table, "treatAsChar") ?? (pos === undefined ? undefined : attrValue(pos, "treatAsChar"))) === "1") reasons.push('treatAsChar="1"(글자처럼 취급)');
-  if (attrValue(table, "pageBreak") === "NONE") reasons.push('pageBreak="NONE"(쪽 나눔 없음)');
+  const pageBreak = attrValue(table, "pageBreak");
+  if (pageBreak === "NONE") reasons.push('pageBreak="NONE"(쪽 나눔 없음)');
+  else if (pageBreak === "TABLE") reasons.push('pageBreak="TABLE"(셀 안에서는 나뉘지 않음)');
   return reasons;
 }
 

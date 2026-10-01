@@ -6,6 +6,9 @@ import { walkParagraphs } from "../model/paragraph.ts";
 import type { HwpxDocument, ObjectNode, ParagraphNode, SectionModel, TableNode } from "../model/types.ts";
 import { canonicalJson, sha256Hex } from "../template/hash.ts";
 import { selectRules } from "../template/rules.ts";
+import { declsOf } from "../table/wrap.ts";
+import { readTableGrid } from "../table/grid.ts";
+import { planRepeatRows } from "../table/rows.ts";
 import {
   emptyFillReport,
   type Dataset,
@@ -16,14 +19,15 @@ import {
   type Template,
   type ValueDigest,
 } from "../template/types.ts";
-import { digestValue, resolveValue } from "../template/value.ts";
+import { digestValue, lookupPath, resolveValue } from "../template/value.ts";
 import { resolveAnchors, type ResolvedAnchor } from "./anchors.ts";
-import { addDelta, deltaOfElements, deltaRecord, zeroDelta, type Delta } from "./census.ts";
+import { addDelta, deltaOfElements, deltaRecord, scaleDelta, zeroDelta, type Delta } from "./census.ts";
 import { applyRepls, contentObjects, groupBy, hasSecPr, siblingsAtPath, type Repl } from "./doc.ts";
 import { planFieldFill } from "./fields.ts";
 import { fillFragment } from "./fragment-fill.ts";
 import { fillPlaceholders } from "./placeholders.ts";
 import { buildParagraphs, planRowDeletes, splitLines } from "./structure.ts";
+import { planFitTables, planTableAction, fillRowCopy, inheritedOfRow, rowDataset, tableElementOf, tableLabel, type RepeatStep } from "./table-actions.ts";
 import { planClear, planLineFill, planRangeReplace, span, type Ctx, type TextPlan } from "./text.ts";
 
 export type FillOptions = {
@@ -66,6 +70,8 @@ export type InjectStep = {
  */
 export type FillPlan = EditPlan & {
   injects: InjectStep[];
+  /** 주 계획 적용 뒤 하나씩 이어서 적용하는 행 반복(조각 주입 앞에 한다) */
+  repeats: RepeatStep[];
   /** 주 계획 적용 뒤 확인할 기대값 */
   expectations: Expectation[];
   /** 주 계획이 더하는 수량(삭제는 음수, 문단 삽입은 양수) */
@@ -154,6 +160,19 @@ export function buildFillPlan(
   for (const i of resolution.issues) if (i.code === "ANCHOR_RELOCATED") report.relocated.push({ anchor: i.where ?? "", message: i.message });
   const anchorOf = (id: string): ResolvedAnchor | undefined => resolution.anchors.get(id);
 
+  // 조건이 거짓인 repeat: 원형 행은 그대로 두고 그 안의 원소·순번 자리(`{{item.이름}}`·`{{순번}}`)는 채우지 않는다(`REPEAT_INACTIVE`).
+  // 이 용도로만 앵커를 풀기 때문에 풀지 못해도 오류를 내지 않는다.
+  type IdleRow = { ruleId: string; anchor: string; range: Range; as: string; index: string | undefined; count: number };
+  const idleRows: IdleRow[] = [];
+  const idleResolution = resolveAnchors(doc, template, new Set(inactive.filter((r) => r.do.type === "repeat").map((r) => r.do.anchor)));
+  for (const rule of inactive) {
+    const action = rule.do;
+    if (action.type !== "repeat") continue;
+    const found = idleResolution.anchors.get(action.anchor);
+    const tr = found?.kind === "cell" ? readTableGrid(found.table.element).rows[found.cell.row] : undefined;
+    if (found?.kind === "cell" && tr !== undefined) idleRows.push({ ruleId: rule.id, anchor: action.anchor, range: rangeOf(found.section, tr), as: action.as ?? "item", index: action.index, count: 0 });
+  }
+
   const valueError = (ruleId: string, code: string, message: string, path: string | undefined): void => {
     if (code === "DATA_MISSING" && path !== undefined) missingPaths.add(path);
     const key = `${code}\u0000${path ?? ruleId}`;
@@ -205,6 +224,134 @@ export function buildFillPlan(
 
   type RowReq = { rule: { ruleId: string; anchor: string }; section: SectionModel; owner: ParagraphNode; table: TableNode; row: number };
   const rowReqs: RowReq[] = [];
+
+  // 삭제·교체되는 범위(계획 초입에서 알 수 있는 것): 이 안의 표를 가리키는 행 반복은 데이터를 읽기 전에 버린다
+  const doomed: Range[] = [];
+  for (const rule of active) {
+    const action = rule.do;
+    const anchor = anchorOf(action.anchor);
+    if (anchor === undefined) continue;
+    if (action.type === "delete" && anchor.kind === "line") doomed.push(rangeOf(anchor.section, anchor.paragraph.element));
+    else if (action.type === "delete" && anchor.kind === "object") doomed.push(rangeOf(anchor.section, isOnlyObject(anchor.paragraph, anchor.object) ? anchor.paragraph.element : anchor.object.element));
+    else if ((action.type === "inject" || action.type === "insertText") && action.position === "replace" && anchor.kind === "line") doomed.push(rangeOf(anchor.section, anchor.paragraph.element));
+  }
+  const repeatClaims = new Map<string, string>();
+
+  // 행 반복(repeat): 데이터 배열을 읽는다. 0개면 원형 행 삭제와 같고(삭제 규칙을 따른다), 1개 이상이면 주 계획 뒤의 단계로 처리한다.
+  // 단계에서 놀라지 않도록 원형 행을 지금 복제해 보고(표 연산의 거절 사유), 복사본마다 `{{}}`를 채워 본다(값 누락·건너뜀·기대 글).
+  type RepeatPlan = { ruleId: string; section: SectionModel; step: RepeatStep };
+  const repeatPlans: RepeatPlan[] = [];
+  const repeatRuleIds = new Set<string>();
+  // 원형 행의 범위: 규칙이 실패해도 그 행 안의 `{{item.이름}}`을 문서 안 `{{경로}}`로 채우려 하지 않게(군더더기 오류를 막는다) 교체되는 범위로 센다
+  const repeatRows: { ruleId: string; range: Range; active: boolean }[] = [];
+  for (const rule of active) {
+    const action = rule.do;
+    if (action.type !== "repeat") continue;
+    const anchor = anchorOf(action.anchor);
+    if (anchor === undefined) continue;
+    if (anchor.kind !== "cell") {
+      issues.push(issueFor("TPL_RULE", "repeat의 앵커는 원형 행의 셀을 가리키는 cell 앵커여야 합니다.", rule.id));
+      continue;
+    }
+    const grid = readTableGrid(anchor.table.element);
+    const tr = grid.rows[anchor.cell.row];
+    if (tr === undefined) {
+      issues.push(issueFor("TABLE_IRREGULAR", "원형 행을 찾을 수 없습니다.", rule.id));
+      continue;
+    }
+    const tableRange = rangeOf(anchor.section, anchor.table.element);
+    if (doomed.some((d) => within(d, tableRange))) {
+      report.dropped.push({ ruleId: rule.id, anchor: action.anchor, reason: "표가 삭제·교체되는 범위 안이라 버렸습니다." });
+      continue;
+    }
+    const claimKey = `${anchor.section.entryName}:${tr.start}`;
+    const claimed = repeatClaims.get(claimKey);
+    if (claimed !== undefined) {
+      issues.push(issueFor("TPL_CONFLICT", `규칙 ${claimed}와 같은 원형 행을 반복합니다.`, rule.id));
+      continue;
+    }
+    repeatClaims.set(claimKey, rule.id);
+    const repeatRow = { ruleId: rule.id, range: rangeOf(anchor.section, tr), active: false };
+    repeatRows.push(repeatRow);
+    const path = action.each.path;
+    required.add(path);
+    const found = lookupPath(dataset, path);
+    let items: unknown[];
+    if (!found.found || found.value === null) {
+      if (policy === "error") {
+        valueError(rule.id, "DATA_MISSING", `데이터에 ${path} 값이 없습니다.`, path);
+        continue;
+      }
+      missingPaths.add(path);
+      if (policy === "keep") {
+        keptPaths.set(path, (keptPaths.get(path) ?? 0) + 1);
+        continue;
+      }
+      items = [];
+    } else if (!Array.isArray(found.value)) {
+      issues.push(issueFor("DATA_NOT_ARRAY", `데이터의 ${path}는 배열이 아닙니다.`, rule.id));
+      continue;
+    } else {
+      items = found.value;
+    }
+    const who = { ruleId: rule.id, anchor: action.anchor };
+    repeatRuleIds.add(rule.id);
+    if (items.length === 0) {
+      rowReqs.push({ rule: who, section: anchor.section, owner: anchor.owner, table: anchor.table, row: anchor.cell.row });
+      continue;
+    }
+    try {
+      planRepeatRows(doc, { sectionIndex: anchor.section.index, element: anchor.table.element }, { row: anchor.cell.row, count: items.length });
+    } catch (e) {
+      if (!(e instanceof HwpxError)) throw e;
+      issues.push(issueFor(e.code, e.message, rule.id));
+      continue;
+    }
+    repeatRow.active = true; // 원형 행은 단계에서 통째로 바뀐다(다른 규칙의 행 삭제와 겹치면 그쪽을 버린다)
+    const as = action.as ?? "item";
+    const isAlias = (p: string): boolean => p === as || p.startsWith(`${as}.`) || p === action.index;
+    const decls = declsOf(anchor.section.root);
+    const rowXml = anchor.section.text.slice(tr.start, tr.end);
+    const texts: string[][] = [];
+    const seen = new Set<string>();
+    for (let i = 0; i < items.length; i++) {
+      const filled = fillRowCopy(rowXml, decls, rowDataset(dataset, items, i, as, action.index), policy, mixed);
+      texts.push(filled.texts);
+      const o = filled.outcome;
+      for (const e of o.errors) valueError(rule.id, e.code, `행 반복 {{${e.path}}}: ${e.message}`, e.path);
+      for (const p of o.missing.keys()) {
+        if (!isAlias(p)) required.add(p);
+        missingPaths.add(p);
+      }
+      for (const f of o.filled) if (!isAlias(f.path)) required.add(f.path);
+      for (const [p, n] of o.kept) keptPaths.set(p, (keptPaths.get(p) ?? 0) + n);
+      for (const sk of o.skipped) {
+        const key = `${sk.code}\u0000${sk.path}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        report.skipped.push({ ruleId: rule.id, anchor: action.anchor, code: sk.code, message: `행 반복 {{${sk.path}}}: ${sk.message}` });
+      }
+    }
+    const entry = anchor.section.entryName;
+    const rowDelta = deltaOfElements([tr], entry, 1);
+    const step: RepeatStep = {
+      ruleId: rule.id,
+      anchor: action.anchor,
+      entry,
+      rowStart: tr.start,
+      items,
+      as,
+      index: action.index,
+      dataset,
+      policy,
+      mixed,
+      texts,
+      delta: scaleDelta(rowDelta, items.length - 1),
+      inherited: inheritedOfRow(doc, tr, items.length - 1),
+    };
+    repeatPlans.push({ ruleId: rule.id, section: anchor.section, step });
+  }
+
   for (const rule of active) {
     const action = rule.do;
     if (action.type !== "delete") continue;
@@ -215,7 +362,17 @@ export function buildFillPlan(
     else if (anchor.kind === "object") objectDelete(anchor.section, anchor.paragraph, anchor.object, who);
     else if (anchor.kind === "cell") rowReqs.push({ rule: who, section: anchor.section, owner: anchor.owner, table: anchor.table, row: anchor.cell.row });
   }
-  const tables = groupBy(rowReqs, (r) => r.table);
+  // 반복해서 바뀌는 원형 행을 지우라는 다른 규칙은 버린다(원형 행은 단계에서 다시 찾아야 한다)
+  const activeRows = repeatRows.filter((r) => r.active);
+  const effectiveRowReqs = rowReqs.filter((req) => {
+    const tr = readTableGrid(req.table.element).rows[req.row];
+    if (tr === undefined || repeatRuleIds.has(req.rule.ruleId)) return true;
+    const range = rangeOf(req.section, tr);
+    if (!activeRows.some((x) => same(x.range, range))) return true;
+    report.dropped.push({ ruleId: req.rule.ruleId, anchor: req.rule.anchor, reason: "반복하는 원형 행을 지우는 규칙이라 버렸습니다." });
+    return false;
+  });
+  const tables = groupBy(effectiveRowReqs, (r) => r.table);
   for (const [table, reqs] of tables) {
     const first = reqs[0];
     if (first === undefined) continue;
@@ -241,7 +398,9 @@ export function buildFillPlan(
   }
 
   // ── 2a'. `replace` 앵커(삭제 + 삽입) ─────────────────────────
-  const replaceRanges: { range: Range; ruleId: string; type: "inject" | "insertText" }[] = [];
+  const replaceRanges: { range: Range; ruleId: string; type: "inject" | "insertText" | "repeat" }[] = [];
+  // 반복할 원형 행은 단계에서 통째로 바뀌므로 그 안의 채움·삽입·줄 배치 캐시 제거는 버린다(교체되는 범위로 센다)
+  for (const r of repeatRows) replaceRanges.push({ range: r.range, ruleId: r.ruleId, type: "repeat" });
   for (const rule of active) {
     const action = rule.do;
     if ((action.type !== "inject" && action.type !== "insertText") || action.position !== "replace") continue;
@@ -313,7 +472,8 @@ export function buildFillPlan(
   const fragmentDigests: { key: string; sha256: string }[] = [];
   const touchedEntries = new Set<string>();
 
-  const explicit: { ruleId: string; type: "fill" | "insertText" | "inject"; anchor: string; targets: number; position?: Position; value?: ValueDigest }[] = [];
+  const explicit: { ruleId: string; type: "fill" | "insertText" | "inject" | "tableProps" | "resize" | "repeat"; anchor: string; targets: number; position?: Position; value?: ValueDigest }[] = [];
+  const repeatSteps: RepeatStep[] = [];
 
   for (const rule of active) {
     const action = rule.do;
@@ -321,6 +481,45 @@ export function buildFillPlan(
     const anchor = anchorOf(action.anchor);
     if (anchor === undefined) continue;
     const who = { ruleId: rule.id, anchor: action.anchor };
+
+    if (action.type === "tableProps" || action.type === "resize") {
+      const target = tableElementOf(anchor);
+      if (target === undefined) {
+        issues.push(issueFor("TPL_RULE", `${action.type}의 앵커가 표를 가리키지 않습니다.`, rule.id));
+        continue;
+      }
+      const tableRange = rangeOf(target.section, target.element);
+      if (isDeleted(tableRange) || isReplaced(tableRange)) {
+        report.dropped.push({ ruleId: rule.id, anchor: action.anchor, reason: "표가 삭제·교체되는 범위 안이라 버렸습니다." });
+        continue;
+      }
+      try {
+        // 같은 계획에서 지워지는 행(행 삭제 규칙·원소 0개 행 반복)은 그 안의 편집을 빼고 그 행만 가리키는 항목은 버린다
+        const goneAddrs = new Set<number>();
+        for (const c of readTableGrid(target.element).cells) if (isDeleted(rangeOf(target.section, c.tr))) goneAddrs.add(c.row);
+        const gone = goneAddrs.size === 0 ? undefined : { rows: goneAddrs, covers: (start: number, end: number) => isDeleted({ entry: target.section.entryName, start, end }) };
+        const done = planTableAction(doc, target.section, target.element, action, gone);
+        for (const reason of done.dropped) report.dropped.push({ ruleId: rule.id, anchor: action.anchor, reason });
+        for (const edit of done.edits) tagged.push({ edit, label: rule.id });
+        // 편집이 없으면(비율 1, 이미 그 값인 설정) 구역을 바뀐 것으로 치지 않는다: 줄 배치 캐시를 그대로 둔다
+        if (done.edits.length > 0) touchedEntries.add(target.section.entryName);
+        if (done.targets > 0) explicit.push({ ruleId: rule.id, type: action.type, anchor: action.anchor, targets: done.targets });
+      } catch (e) {
+        if (!(e instanceof HwpxError)) throw e;
+        issues.push(issueFor(e.code, e.message, rule.id));
+      }
+      continue;
+    }
+
+    if (action.type === "repeat") {
+      const found = repeatPlans.find((r) => r.ruleId === rule.id);
+      if (found !== undefined) {
+        repeatSteps.push(found.step);
+        touchedEntries.add(found.section.entryName);
+        explicit.push({ ruleId: rule.id, type: "repeat", anchor: action.anchor, targets: found.step.items.length });
+      }
+      continue;
+    }
 
     if (action.type === "fill") {
       const value = resolveValue(dataset, action.value, policy);
@@ -509,6 +708,20 @@ export function buildFillPlan(
     for (const s of filled.outcome.skipped) {
       report.skipped.push({ ruleId: rule.id, anchor: action.anchor, code: s.code, message: `조각 안 {{${s.path}}}: ${s.message}` });
     }
+    if (action.fitTable === "allowBreak") {
+      // 삽입 지점을 감싸는 표 가운데 잘릴 수 있는 표를 쪽을 넘길 수 있게 바꾼다(주 계획에서 먼저 적용하므로 가져오기 단계에는 경고가 없다)
+      try {
+        for (const fit of planFitTables(doc, anchor.section, anchor.paragraph.element)) {
+          for (const edit of fit.edits) tagged.push({ edit, label: rule.id });
+          for (const change of fit.changes) report.tableChanges.push({ ruleId: rule.id, anchor: action.anchor, table: tableLabel(anchor.section, fit.table), change });
+          touchedEntries.add(anchor.section.entryName);
+        }
+      } catch (e) {
+        if (!(e instanceof HwpxError)) throw e;
+        issues.push(issueFor(e.code, e.message, rule.id));
+        continue;
+      }
+    }
     warnBeforeSecPr();
     let delta = filled.delta;
     let replacedDelta: Delta | undefined;
@@ -553,15 +766,24 @@ export function buildFillPlan(
   const implicit = new Map<string, { count: number; value: ValueDigest }>();
   const implicitDropped = new Map<string, number>();
   for (const section of doc.sections) {
+    // 반복할 원형 행 안의 `{{}}`는 행 반복이 채운다(여기서는 건드리지 않고 `dropped`로도 세지 않는다)
+    const inRepeatRow = (par: ParagraphNode): boolean => repeatRows.some((x) => within(x.range, rangeOf(section, par.element)));
     const outcome = fillPlaceholders(
       ctxOf(section),
-      walkParagraphs(section.paragraphs),
+      [...walkParagraphs(section.paragraphs)].filter((par) => !inRepeatRow(par)),
       dataset,
       policy,
       mixed,
       (par) => {
         const r = rangeOf(section, par.element);
         return isDeleted(r) || isReplaced(r);
+      },
+      (par, path) => {
+        const r = rangeOf(section, par.element);
+        const row = idleRows.find((x) => within(x.range, r) && (path === x.as || path.startsWith(`${x.as}.`) || path === x.index));
+        if (row === undefined) return false;
+        row.count++;
+        return true;
       },
     );
     for (const e of outcome.errors) valueError(`{{${e.path}}}`, e.code, e.message, e.path);
@@ -577,6 +799,10 @@ export function buildFillPlan(
     }
     for (const edit of outcome.edits) tagged.push({ edit, label: "{{}}" });
     for (const [par, repls] of outcome.repls) noteRepls(section, par, repls);
+  }
+  for (const row of idleRows) {
+    if (row.count === 0) continue;
+    report.skipped.push({ ruleId: row.ruleId, anchor: row.anchor, code: "REPEAT_INACTIVE", message: `조건이 거짓이라 행을 반복하지 않아 원형 행 안의 원소·순번 자리 ${row.count}곳을 채우지 않았습니다.` });
   }
   for (const [path, x] of [...implicit].sort(([a], [b]) => (a < b ? -1 : 1))) {
     report.actions.push({ ruleId: "implicit", type: "fill", anchor: `{{${path}}}`, targets: x.count, value: x.value });
@@ -643,15 +869,18 @@ export function buildFillPlan(
   }
   for (const d of deletes) {
     for (const r of d.rules) {
-      const found = report.actions.find((a) => a.ruleId === r.ruleId && a.type === "delete");
-      if (found === undefined) report.actions.push({ ruleId: r.ruleId, type: "delete", anchor: r.anchor, targets: d.parts.length });
-      else found.targets += d.parts.length;
+      // 원소가 0개인 행 반복은 원형 행 삭제로 처리하지만 보고서에는 `repeat`(0행)로 남긴다
+      const type = repeatRuleIds.has(r.ruleId) ? "repeat" : "delete";
+      const found = report.actions.find((a) => a.ruleId === r.ruleId && a.type === type);
+      if (found === undefined) report.actions.push({ ruleId: r.ruleId, type, anchor: r.anchor, targets: type === "repeat" ? 0 : d.parts.length });
+      else if (type === "delete") found.targets += d.parts.length;
     }
   }
   let delta = zeroDelta();
   for (const d of deletes) delta = addDelta(delta, d.delta);
   delta = addDelta(delta, insertDelta);
   let expected = delta;
+  for (const step of repeatSteps) expected = addDelta(expected, step.delta);
   for (const step of injects) expected = addDelta(expected, step.delta);
   report.expected = deltaRecord(expected);
   report.requiredPaths = [...required].sort();
@@ -661,9 +890,10 @@ export function buildFillPlan(
   const plan: FillPlan = {
     edits,
     additions: [],
-    summary: { edits: edits.length, deletes: deletes.length, injects: injects.length },
+    summary: { edits: edits.length, deletes: deletes.length, repeats: repeatSteps.length, injects: injects.length },
     issues: [],
     injects,
+    repeats: repeatSteps,
     expectations,
     delta,
     fragmentDigests,

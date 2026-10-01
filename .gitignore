@@ -17,3 +17,6 @@ ledger-*.json
 # 로컬 설정
 .claude/settings.local.json
 .env
+
+# 한컴 대조 테스트가 매번 다시 만드는 PDF
+tools/com/out/*.pdf

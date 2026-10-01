@@ -4,6 +4,7 @@ export { buildFillPlan, loadFragment, type FillOptions, type FillPlan, type Inje
 export { executeFillPlan, type ExecuteHooks, type ExecuteResult, type StageRecord } from "./execute.ts";
 export { verifyPreservation, verifyChain, verifyExpectations } from "./verify.ts";
 export { censusOfDoc, verifyCensus, type Delta } from "./census.ts";
+export { enclosingTables, type RepeatStep, type FitChange } from "./table-actions.ts";
 export {
   generate,
   type GateMode,

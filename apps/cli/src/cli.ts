@@ -1,4 +1,4 @@
-import { candidates, compile, diff, fill, fragmentCommand, inspect, validate } from "./commands.ts";
+import { candidates, compile, diff, fill, fragmentCommand, inspect, tableCommand, validate } from "./commands.ts";
 import { InputError, UsageError, type Out } from "./io.ts";
 
 export const USAGE = `사용법: hwpx <명령> [옵션]
@@ -13,6 +13,10 @@ export const USAGE = `사용법: hwpx <명령> [옵션]
        [--dry-run] [--report r.json] [--overwrite]               확장자로 형식을 고른다(.hwpx, .md, .txt)
        .hwpx 전용: [--mode baseline|strict|repair] [--reissue-internal]
        .md·.txt 전용: [--fill-in-code]
+  table list <파일> [--json]                            표마다 위치·행×열·너비·글자처럼 취급·쪽 나눔·제목 행 반복·병합 수(글 내용은 없음)
+  table set <파일> --table 구역:순번 -o 출력.hwpx [--treat-as-char on|off] [--page-break cell|none|table]
+       [--repeat-header on|off] [--width N | --scale X | --columns a,b,c] [--mode baseline|strict|repair]
+       [--report r.json] [--overwrite]                       표 설정·크기 변경(저장 게이트 포함, 최상위 표만)
   validate <파일> [--baseline 원본] [--strict] [--json]  검사
   diff <원본> <결과> [--json]                            항목별 동일 여부와 수량 비교
   compile <파일> -o 승격본 --experimental                {{}}를 누름틀로(실험)
@@ -34,6 +38,8 @@ export async function run(argv: string[], out: Out): Promise<number> {
         return await fragmentCommand(rest, out);
       case "fill":
         return await fill(rest, out);
+      case "table":
+        return await tableCommand(rest, out);
       case "validate":
         return validate(rest, out);
       case "diff":

@@ -4,6 +4,7 @@ export {
   openPackage,
   parseDocument,
   listFields,
+  listTables,
   exportModel,
   extractFragment,
   serializeFragment,
@@ -12,6 +13,7 @@ export {
   walkParagraphs,
   type Issue,
   type FragmentSelection,
+  type TableInfo,
 } from "../../../packages/hwpx-engine/src/index.ts";
 export {
   generate,

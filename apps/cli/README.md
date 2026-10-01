@@ -12,7 +12,9 @@ HWPX 문서와 Markdown·텍스트 문서를 검사하고 채우는 명령줄 �
 | `candidates` | 채울 자리 후보 목록(누름틀, `{{}}`, 빈 값 셀, `라벨:` 뒤 빈 곳 등) | `.hwpx` |
 | `fragment extract` | 문단 구간을 조각 JSON으로 뜬다 | `.hwpx` |
 | `fragment import` | 조각 JSON을 다른 문서의 문단 앞·뒤나 표 셀 안에 가져온다(저장 게이트 포함) | `.hwpx` |
-| `fill` | 데이터로 `{{}}`·누름틀을 채우고 템플릿 규칙(채움·삭제·삽입·조각 주입)을 적용한다 | `.hwpx` `.md` `.txt` |
+| `fill` | 데이터로 `{{}}`·누름틀을 채우고 템플릿 규칙(채움·삭제·삽입·조각 주입·표 설정·표 크기·행 반복)을 적용한다 | `.hwpx` `.md` `.txt` |
+| `table list` | 표마다 위치·행×열·너비·글자처럼 취급·쪽 나눔·제목 행 반복·병합 수를 낸다(글 내용은 없다) | `.hwpx` |
+| `table set` | 최상위 표 하나의 설정(글자처럼 취급·쪽 나눔·제목 행 반복)과 크기(너비·비율·열 너비)를 바꾼다(저장 게이트 포함) | `.hwpx` |
 | `validate` | 참조 무결성·인스턴스 중복·패키지 구조를 검사한다(`--baseline`으로 원본과 대조) | `.hwpx` |
 | `diff` | 두 문서를 항목별로 견주고 수량 증감을 낸다 | `.hwpx` |
 | `compile` | `{{}}`를 누름틀로 승격한다(실험: `--experimental` 필수) | `.hwpx` |
@@ -58,9 +60,24 @@ hwpx fill notice.md --data data.json -o notice-filled.md --fill-in-code   # 코�
 
 `--mode`와 `--reissue-internal`은 md·txt에 쓸 수 없고(종료 코드 2), `--fill-in-code`는 md·txt에만 쓴다. 템플릿의 `inject`가 가리키는 조각 파일 경로는 템플릿 파일이 있는 폴더 기준이다(md·txt 조각은 `{ "schema": "hwpx-studio/text-fragment@1", "blocks": [...] }`).
 
+md의 표에는 `repeat`가 된다(`cell` 앵커가 가리키는 행을 배열 원소마다 한 줄로 복제하고 `{{item.이름}}`·순번을 채운다. 0개면 그 행을 지우고, 머리행은 거절한다). `tableProps`·`resize`는 텍스트 문서에 표 설정·크기가 없어 적용하지 않고 `건너뜀 [TEXT_NOT_APPLICABLE]`로만 남는다(오류가 아니라서 같은 템플릿을 `.hwpx`와 `.md`에 함께 쓸 수 있다). `inject`의 `fitTable`은 무시한다.
+
 ```
 hwpx fill form.hwpx --data data.json --template template.json -o filled.hwpx
 ```
+
+표를 살피고 바꾼다. `table list`는 표마다 한 줄을 낸다(`구역:순번 위치 [문단 주소] 행×열, 너비, 글자처럼 취급, 쪽 나눔, 제목 행 반복, 병합 셀 수`). 표 안의 글은 출력하지 않는다. `--json`이면 같은 수치를 배열로 낸다. 구역 최상위 문단에 든 표는 `구역:순번`(템플릿 `object` 앵커의 `ordinal`과 같은 번호)이 있고, 다른 표 안에 든 중첩 표는 순번이 `-`(JSON은 `null`)이며 `table set`으로 지정할 수 없다.
+
+```
+hwpx table list form.hwpx
+hwpx table list form.hwpx --json
+hwpx table set form.hwpx --table 0:1 --treat-as-char off --page-break cell --repeat-header on -o out.hwpx
+hwpx table set form.hwpx --table 0:1 --scale 0.8 -o out.hwpx          # 표 너비와 열을 0.8배로(합은 정확히 맞는다)
+hwpx table set form.hwpx --table 0:1 --width 40000 -o out.hwpx        # 표 너비를 40000 HWPUNIT으로, 열은 비례
+hwpx table set form.hwpx --table 0:1 --columns 10000,20000,10000 -o out.hwpx --report r.json
+```
+
+`table set`은 내부에서 규칙이 하나나 둘뿐인 템플릿(`tableProps`, `resize`)을 만들어 `fill`과 같은 저장 게이트를 거친다. 그래서 `--mode`(`baseline` 기본, `strict`, `repair`), `--report`, `--overwrite`, 종료 코드(0 성공, 1 게이트 실패, 2 사용법·읽을 수 없는 입력), 출력 덮어쓰기 금지 규칙이 `fill`과 같다. `--width`·`--scale`·`--columns`는 하나만 줄 수 있고(열 수는 표의 `colCnt`와 같아야 한다), 설정 하나도 주지 않으면 사용법 오류다. 문서 안 `{{}}` 표기는 건드리지 않는다. 표의 격자가 불규칙하거나(구조), 행마다 열 경계의 위치가 어긋나(너비 불규칙; `table list`가 "너비 불규칙"으로 알리고 JSON은 `structureRegular`·`widthRegular`를 준다) `--scale`·`--width`가 열 너비를 필요로 하거나, 너비 기준이 절대값이 아니면 게이트가 `TABLE_IRREGULAR`·`TABLE_RELATIVE_SIZE`로 막고 출력 파일을 만들지 않는다(`--columns`는 새 너비를 주므로 너비 불규칙인 표에도 된다). 행 반복·셀 설정 같은 나머지 표 조정은 템플릿 규칙(`tableProps`, `resize`, `repeat`)으로 `fill`에 준다.
 
 조각을 뜨고 다른 문서에 가져온다. 주소는 구역 번호(`--section`)와 그 목록 안 문단 서수(`--index`)다. 표 셀 안은 `--parent 문단.하위목록`으로 가리킨다.
 

@@ -72,6 +72,8 @@ export type InjectAction = {
   position: Position;
   /** 조각 JSON의 경로(문자열) 또는 내장 조각 객체 */
   fragment: string | Record<string, unknown>;
+  /** `allowBreak`: 삽입 지점을 감싸는 표 가운데 잘릴 수 있는 표(글자처럼 취급이거나 쪽 나눔 없음)를 쪽을 넘길 수 있게 바꾼다. 생략하면 바꾸지 않고 경고만 낸다. */
+  fitTable?: "allowBreak";
 };
 export type InsertTextAction = {
   type: "insertText";
@@ -80,7 +82,58 @@ export type InsertTextAction = {
   value: ValueSource;
   style: InsertStyle;
 };
-export type Action = FillAction | DeleteAction | InjectAction | InsertTextAction;
+export type MarginSpec = { left?: number; right?: number; top?: number; bottom?: number };
+
+/** 표 설정(`tableProps`의 `table`). 단위는 HWPUNIT이다. */
+export type TableSettingsSpec = {
+  treatAsChar?: boolean;
+  pageBreak?: "CELL" | "NONE" | "TABLE";
+  repeatHeader?: boolean;
+  cellSpacing?: number;
+  outMargin?: MarginSpec;
+  inMargin?: MarginSpec;
+  hAlign?: "LEFT" | "CENTER" | "RIGHT";
+};
+
+/** 셀 설정(`tableProps`의 `cells[].props`) */
+export type CellSettingsSpec = {
+  vertAlign?: "TOP" | "CENTER" | "BOTTOM";
+  lineWrap?: "BREAK" | "SQUEEZE";
+  header?: boolean;
+  margin?: MarginSpec;
+  protect?: boolean;
+};
+
+/** 표나 셀의 설정을 바꾼다. 앵커는 `object`(표)나 `cell` 앵커다. `cells`의 범위는 셀 주소(행·열 번호, 0부터, 양 끝 포함)다. */
+export type TablePropsAction = {
+  type: "tableProps";
+  anchor: string;
+  table?: TableSettingsSpec;
+  cells?: { rows: [number, number]; cols: [number, number]; props: CellSettingsSpec }[];
+};
+
+/** 표 크기를 바꾼다. 앵커는 `object`(표) 앵커다. `columns`·`width`·`scale`은 하나만 줄 수 있다. */
+export type ResizeAction = {
+  type: "resize";
+  anchor: string;
+  columns?: number[];
+  width?: number;
+  scale?: number;
+  rowHeights?: { row: number; height: number }[];
+};
+
+/** 데이터 배열의 원소마다 원형 행(앵커 셀이 든 행)을 복제한다. 행 안의 `{{<as>.이름}}`은 원소에서, `{{<index>}}`는 1부터의 순번에서 채운다. */
+export type RepeatAction = {
+  type: "repeat";
+  anchor: string;
+  each: { path: string };
+  /** 원소를 부르는 이름. 기본 `item` */
+  as?: string;
+  /** 순번(1부터)을 부르는 이름. 줄 때만 쓴다 */
+  index?: string;
+};
+
+export type Action = FillAction | DeleteAction | InjectAction | InsertTextAction | TablePropsAction | ResizeAction | RepeatAction;
 export type ActionType = Action["type"];
 
 export type Rule = { id: string; when?: Condition; do: Action };
@@ -137,8 +190,12 @@ export type FillReport = {
   inactiveRules: string[];
   /** 예상 수량 증감(문단·표 등의 이름 → 증감) */
   expected: Record<string, number>;
+  /** `fitTable`로 표를 바꾼 기록(표는 구역 번호와 표 id로만 가리킨다) */
+  tableChanges: ReportTableChange[];
   issues: Issue[];
 };
+
+export type ReportTableChange = { ruleId: string; anchor: string; table: string; change: string };
 
 export function emptyFillReport(): FillReport {
   return {
@@ -151,6 +208,7 @@ export function emptyFillReport(): FillReport {
     missingPaths: [],
     inactiveRules: [],
     expected: {},
+    tableChanges: [],
     issues: [],
   };
 }

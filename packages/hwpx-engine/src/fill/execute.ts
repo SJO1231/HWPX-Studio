@@ -6,10 +6,11 @@ import { parseDocument } from "../model/document.ts";
 import { walkParagraphs } from "../model/paragraph.ts";
 import type { HwpxDocument, ParagraphNode } from "../model/types.ts";
 import { openPackage } from "../package/open.ts";
-import { censusOfDoc, verifyCensus, type Delta } from "./census.ts";
+import { censusOfDoc, tableCountsOfDoc, verifyCensus, verifyTableCounts, type Delta } from "./census.ts";
 import { mapPos, paragraphAtPath, paragraphIndex, startKey } from "./doc.ts";
 import { mergeInherited, noInherited } from "./inherited.ts";
 import type { FillPlan, InjectStep } from "./plan.ts";
+import { movedStart, planRepeatStep, verifyRepeat } from "./table-actions.ts";
 import { verifyExpectations, verifyPreservation } from "./verify.ts";
 
 export type StageRecord = {
@@ -80,6 +81,7 @@ export function executeFillPlan(doc: HwpxDocument, plan: FillPlan, hooks: Execut
   const history: SpanEdit[][] = [];
   let cur = doc;
   let census = censusOfDoc(doc);
+  let tableCounts = tableCountsOfDoc(doc);
 
   const run = (label: string, editPlan: EditPlan, delta: Delta, check: (next: HwpxDocument) => Issue[], inherited?: InheritedProblems): boolean => {
     let bytes: Uint8Array;
@@ -93,9 +95,11 @@ export function executeFillPlan(doc: HwpxDocument, plan: FillPlan, hooks: Execut
       issues.push(fail(e.code, e.message, label));
       return false;
     }
+    const nextCounts = tableCountsOfDoc(next);
     const found = [
       ...verifyPreservation(cur.pkg.bytes, bytes, editPlan, label),
       ...verifyCensus(census, censusOfDoc(next), delta, label),
+      ...verifyTableCounts(tableCounts, nextCounts, delta, label),
       ...check(next),
     ];
     issues.push(...found);
@@ -104,6 +108,7 @@ export function executeFillPlan(doc: HwpxDocument, plan: FillPlan, hooks: Execut
     stages.push(inherited === undefined ? { label, plan: editPlan, delta, bytes } : { label, plan: editPlan, delta, bytes, inherited });
     cur = next;
     census = censusOfDoc(next);
+    tableCounts = nextCounts;
     return true;
   };
 
@@ -116,6 +121,25 @@ export function executeFillPlan(doc: HwpxDocument, plan: FillPlan, hooks: Execut
   });
   const inheritedOf = (): InheritedProblems => mergeInherited(stages.flatMap((s) => (s.inherited === undefined ? [] : [s.inherited])));
   if (!mainOk) return { ok: false, stages, issues, checked, inherited: noInherited() };
+
+  // 행 반복: 주 계획을 적용한 문서에서 원형 행을 다시 찾아 하나씩 바꾼다(조각 주입보다 먼저)
+  for (const step of plan.repeats) {
+    const where = `repeat:${step.ruleId}`;
+    let start = step.rowStart;
+    for (const edits of history) start = mapPos(edits.filter((e) => e.entry === step.entry), start);
+    let repeatPlan: EditPlan;
+    try {
+      repeatPlan = planRepeatStep(cur, step, start);
+    } catch (e) {
+      if (!(e instanceof HwpxError)) throw e;
+      issues.push(fail(e.code, e.message, where));
+      return { ok: false, stages, issues, checked, inherited: inheritedOf() };
+    }
+    const newStart = movedStart(repeatPlan, step.entry, start);
+    const ok = run(where, repeatPlan, step.delta, (next) => verifyRepeat(next, step, newStart), step.inherited);
+    if (!ok) return { ok: false, stages, issues, checked, inherited: inheritedOf() };
+    checked.paragraphs += step.texts.reduce((n, t) => n + t.length, 0);
+  }
 
   for (const step of plan.injects) {
     const where = `inject:${step.ruleId}`;

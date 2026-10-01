@@ -28,3 +28,14 @@
 
 - `features-picture.hwpx`: 그림·누름틀·책갈피·머리말·표가 든 문서. 머리말 문단 id가 중복된 상태라 검사기 시험에도 쓴다.
 - `features-rhwp.hwpx`: 그림·책갈피·머리말·표가 든 문서.
+
+## `tables/` — 한컴 오피스가 저장한 표 시험 문서 (`tools/com/make_fixtures.py --only tables-merged,tables-inline,tables-nested,tables-rich`로 생성)
+
+기존 시험(`package.test.ts`·`xml.test.ts`)이 `""`, `hancom/`, `extra/`의 문서 수를 고정하므로 표 시험 문서는 따로 이 폴더에 둔다. 해시는 이 폴더의 `SHA256SUMS`에 있다.
+
+- `tables-merged.hwpx`: 4행 3열 표. 가로 병합(첫 행 1·2열)과 세로 병합(3열 2·3행)이 든다. 글자처럼 취급 아님.
+- `tables-inline.hwpx`: 글자처럼 취급(`treatAsChar="1"`)인 2행 3열 표. 표 앞뒤에 문단이 있다(셀에 긴 조각을 넣는 시험용).
+- `tables-nested.hwpx`: 2행 2열 바깥 표의 한 셀 안에 2행 2열 안쪽 표가 든다(둘 다 글자처럼 취급 아님).
+- `tables-rich.hwpx`: 3행 3열 표. 셀 안에 누름틀과 그림이 든다.
+
+한컴은 표 만들기의 마지막 설정을 기억하므로 `글자처럼 취급`을 항상 명시해 만든다. 패키지 메타데이터는 `tools/fixtures/scrub-metadata.ts`로 정리했다.

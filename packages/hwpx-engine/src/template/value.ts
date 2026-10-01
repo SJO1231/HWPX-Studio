@@ -48,6 +48,22 @@ export function checkValueText(text: string, allowNewlines = false): string | un
   return undefined;
 }
 
+/**
+ * 행 반복의 원소 하나에 대한 데이터: 원소를 `as` 이름으로, 순번(1부터)을 `index` 이름으로 전체 데이터 위에 얹는다. hwpx 표와 md 표가 같은 규칙을 쓴다.
+ * 원소·순번 이름이 가리키는 경로(`as.이름`, `as`, `index`)는 원소·순번에서만 찾는다: 원소에 없다고 `derived`의 같은 이름 항목으로 넘어가지 않고
+ * 누락 정책을 따른다. 같은 이름의 최상위 키(`data`·`derived` 둘 다)는 원소·순번이 가린다.
+ */
+export function rowDataset(base: Dataset, items: readonly unknown[], i: number, as: string, index: string | undefined): Dataset {
+  const data: Record<string, unknown> = { ...base.data, [as]: items[i] };
+  const derived: Record<string, unknown> = { ...base.derived };
+  delete derived[as];
+  if (index !== undefined) {
+    data[index] = i + 1;
+    delete derived[index];
+  }
+  return { data, derived };
+}
+
 export function digestValue(text: string): ValueDigest {
   return { length: text.length, sha256: sha256Hex(text).slice(0, 8) };
 }

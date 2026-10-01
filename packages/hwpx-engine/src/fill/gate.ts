@@ -108,7 +108,7 @@ export function generate(bytes: Uint8Array, template: Template, dataset: Dataset
   const report: GenerateReport = {
     mode,
     dryRun,
-    plan: { actions: [], skipped: [], dropped: [], relocated: [], kept: [], requiredPaths: [], missingPaths: [], inactiveRules: [], expected: {}, issues: [] },
+    plan: { actions: [], skipped: [], dropped: [], relocated: [], kept: [], requiredPaths: [], missingPaths: [], inactiveRules: [], expected: {}, tableChanges: [], issues: [] },
     inherited: { ...noInherited(), errors: [] },
     validation: null,
     repaired: null,

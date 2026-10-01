@@ -3,8 +3,10 @@ import {
   digestValue,
   emptyFillReport,
   findPlaceholders,
+  lookupPath,
   resolvePathValue,
   resolveValue,
+  rowDataset,
   selectRules,
   type Dataset,
   type FillReport,
@@ -14,8 +16,8 @@ import {
 } from "../template/index.ts";
 import { fieldHitsOf, resolveTextAnchors } from "./anchors.ts";
 import { censusOf, escapeCell, eolNear, scanPlaceholders, separatorNear } from "./doc.ts";
-import { parseText } from "./parse.ts";
-import { TEXT_FRAGMENT_SCHEMA, type TextBlockKind, type TextTableCell, type TextBlock, type TextCensus, type TextDoc, type TextEdit, type TextOptions, type TextPlan } from "./types.ts";
+import { parseText, splitRow } from "./parse.ts";
+import { TEXT_FRAGMENT_SCHEMA, type TextBlockKind, type TextTableCell, type TextBlock, type TextCensus, type TextDoc, type TextEdit, type TextOptions, type TextPlan, type TextRepeat } from "./types.ts";
 
 type Who = { ruleId: string; anchor: string };
 /** `rank`: 같은 자리의 편집 순서(앞 삽입 0 < 채움·교체·삭제 1 < 뒤 삽입 2). 빈 줄 하나를 사이에 둔 앞·뒤 삽입이 교체와 뒤섞이지 않게 한다. */
@@ -75,8 +77,10 @@ function runsOf(sorted: number[]): [number, number][] {
 /**
  * 규칙을 평가하고 앵커를 풀어 편집 계획과 보고서를 만든다. 문서를 바꾸지 않는다.
  *
- * 1. 규칙을 순서대로 평가해 참인 것만 남긴다(`src/template`).
+ * 1. 규칙을 순서대로 평가해 참인 것만 남긴다(`src/template`). `tableProps`·`resize`는 텍스트 문서에 표 설정·크기가 없어 앵커를 풀지 않고
+ *    `report.skipped`에 `TEXT_NOT_APPLICABLE`로 남긴다(오류가 아니다). `inject`의 `fitTable`은 읽되 쓰지 않는다(조각 주입은 그대로 한다).
  * 2. 삭제·교체되는 블록 안의 채움·삽입은 버리고 `report.dropped`에 적는다. 같은 자리를 다르게 바꾸는 편집이 둘이면 `TPL_CONFLICT`.
+ *    `repeat`는 md 표의 원형 행(앵커 칸이 든 줄)을 배열 원소 수만큼 복제한다. 0개면 원형 행 삭제와 같고, 머리행은 `FILL_TABLE_HEADER`로 거절한다.
  * 3. 문서 안 `{{경로}}`는 템플릿 없이도 채운다. 코드 블록 안의 것은 `fillInCode`일 때만, `field` 앵커가 가리키는 것은 그 규칙이 맡는다.
  * 4. 보고서: 적용할 액션, 건너뛴 자리와 사유, 필요한 데이터 경로, 다시 찾은 앵커, 예상 수량 증감.
  *
@@ -141,10 +145,34 @@ export function buildTextPlan(doc: TextDoc, template: Template, dataset: Dataset
   const { active, inactive } = selectRules(template, dataset);
   report.inactiveRules = inactive.map((r) => r.id);
   const hits = scanPlaceholders(doc, fillInCode);
-  const resolution = resolveTextAnchors(doc, template, new Set(active.map((r) => r.do.anchor)), hits);
+  // 텍스트 문서에는 표의 설정·크기가 없다. 같은 템플릿을 hwpx와 md에 함께 쓸 수 있게 오류가 아니라 건너뜀으로 남기고, 그 규칙만 가리키는 앵커는 풀지 않는다.
+  const notApplicable = new Set<string>();
+  for (const rule of active) {
+    const action = rule.do;
+    if (action.type !== "tableProps" && action.type !== "resize") continue;
+    notApplicable.add(rule.id);
+    report.skipped.push({ ruleId: rule.id, anchor: action.anchor, code: "TEXT_NOT_APPLICABLE", message: `텍스트 문서에는 표의 설정·크기가 없어 ${action.type} 규칙을 적용하지 않았습니다.` });
+  }
+  const resolution = resolveTextAnchors(doc, template, new Set(active.filter((r) => !notApplicable.has(r.id)).map((r) => r.do.anchor)), hits);
   issues.push(...resolution.issues);
   for (const i of resolution.issues) if (i.code === "ANCHOR_RELOCATED") report.relocated.push({ anchor: i.where ?? "", message: i.message });
   const anchorOf = (id: string) => resolution.anchors.get(id);
+
+  // 조건이 거짓인 repeat: 원형 행은 그대로 두고 그 안의 원소·순번 자리(`{{item.이름}}`·`{{순번}}`)는 채우지 않는다(`REPEAT_INACTIVE`).
+  // 이 용도로만 앵커를 풀기 때문에 풀지 못해도 오류를 내지 않는다.
+  type IdleRow = { ruleId: string; anchor: string; lineIndex: number; as: string; index: string | undefined; count: number };
+  const idleRows: IdleRow[] = [];
+  const idleAnchors = new Set(inactive.filter((r) => r.do.type === "repeat").map((r) => r.do.anchor));
+  if (idleAnchors.size > 0) {
+    const idle = resolveTextAnchors(doc, template, idleAnchors, hits);
+    for (const rule of inactive) {
+      const action = rule.do;
+      if (action.type !== "repeat") continue;
+      const found = idle.anchors.get(action.anchor);
+      const lineIndex = found?.kind === "cell" ? found.block.table?.rows[found.row]?.line : undefined;
+      if (lineIndex !== undefined) idleRows.push({ ruleId: rule.id, anchor: action.anchor, lineIndex, as: action.as ?? "item", index: action.index, count: 0 });
+    }
+  }
 
   // ── 2a. 삭제 후보(블록·표 행)와 교체 ─────────────────────────
   const blockDeletes = new Map<number, Who[]>();
@@ -184,6 +212,84 @@ export function buildTextPlan(doc: TextDoc, template: Template, dataset: Dataset
     }
   }
 
+  // ── 2a'. 행 반복(repeat) 선처리 ──────────────────────────────
+  // 데이터 배열을 읽는다. 0개면 원형 행 삭제 요청으로 넘기고(삭제 규칙을 따른다), 1개 이상이면 아래 2d에서 복제한다.
+  type RepeatPlan = { ruleId: string; anchor: string; lineIndex: number; items: unknown[]; as: string; index: string | undefined };
+  const repeatPlans: RepeatPlan[] = [];
+  const repeatRuleIds = new Set<string>();
+  /** 반복 규칙이 맡는 원형 행의 줄 번호(규칙이 실패해도): 그 줄 안의 `{{}}`는 문서 안 `{{경로}}` 채움에서 뺀다 */
+  const repeatLines = new Set<number>();
+  /** 블록 서수 → 1개 이상으로 반복하는 행 번호 */
+  const repeating = new Map<number, Set<number>>();
+  const repeatClaimed = new Map<number, string>();
+  for (const rule of active) {
+    const action = rule.do;
+    if (action.type !== "repeat") continue;
+    const anchor = anchorOf(action.anchor);
+    if (anchor === undefined || anchor.kind !== "cell") continue;
+    const lineIndex = anchor.block.table?.rows[anchor.row]?.line;
+    const line = lineIndex === undefined ? undefined : doc.lines[lineIndex];
+    if (lineIndex === undefined || line === undefined) continue;
+    repeatLines.add(lineIndex);
+    if (anchor.row === 0) {
+      issues.push(issueFor("FILL_TABLE_HEADER", "표의 머리행은 반복할 수 없습니다.", rule.id));
+      continue;
+    }
+    if (blockDeletes.has(anchor.block.index) || replaced.has(anchor.block.index)) {
+      report.dropped.push({ ruleId: rule.id, anchor: action.anchor, reason: "삭제·교체되는 블록 안이라 버렸습니다." });
+      continue;
+    }
+    const clash = repeatClaimed.get(lineIndex);
+    if (clash !== undefined) {
+      issues.push(issueFor("TPL_CONFLICT", `규칙 ${clash}와 같은 원형 행을 반복합니다.`, rule.id));
+      continue;
+    }
+    repeatClaimed.set(lineIndex, rule.id);
+    const path = action.each.path;
+    required.add(path);
+    const found = lookupPath(dataset, path);
+    let items: unknown[];
+    if (!found.found || found.value === null) {
+      if (policy === "error") {
+        valueError(rule.id, "DATA_MISSING", `데이터에 ${path} 값이 없습니다.`, path);
+        continue;
+      }
+      missingPaths.add(path);
+      if (policy === "keep") {
+        bump(keptPaths, path);
+        // 행을 그대로 두므로 그 안의 `{{}}`도 남긴다(출력 검사가 남은 `{{}}`로 세지 않게)
+        for (const p of findPlaceholders(doc.source.slice(line.start, line.end))) leaves.push(line.start + p.start);
+        continue;
+      }
+      items = [];
+    } else if (!Array.isArray(found.value)) {
+      issues.push(issueFor("DATA_NOT_ARRAY", `데이터의 ${path}는 배열이 아닙니다.`, rule.id));
+      continue;
+    } else {
+      items = found.value;
+    }
+    repeatRuleIds.add(rule.id);
+    const who = { ruleId: rule.id, anchor: action.anchor };
+    if (items.length === 0) {
+      const rows = rowDeletes.get(anchor.block.index) ?? new Map<number, Who[]>();
+      group(rows, anchor.row, who);
+      rowDeletes.set(anchor.block.index, rows);
+      continue;
+    }
+    repeatPlans.push({ ruleId: rule.id, anchor: action.anchor, lineIndex, items, as: action.as ?? "item", index: action.index });
+    const rows = repeating.get(anchor.block.index) ?? new Set<number>();
+    rows.add(anchor.row);
+    repeating.set(anchor.block.index, rows);
+  }
+  // 반복해서 바뀌는 원형 행을 지우라는 다른 규칙은 버린다(원형 행은 통째로 바뀐다)
+  for (const [blockIndex, rows] of rowDeletes) {
+    for (const [row, whos] of rows) {
+      if (repeating.get(blockIndex)?.has(row) !== true) continue;
+      for (const w of whos) report.dropped.push({ ruleId: w.ruleId, anchor: w.anchor, reason: "반복하는 원형 행을 지우는 규칙이라 버렸습니다." });
+      rows.delete(row);
+    }
+  }
+
   // 삭제·교체되는 블록 안의 표 행 삭제는 버린다
   const deletedRows = new Map<number, number[]>();
   for (const [blockIndex, rows] of rowDeletes) {
@@ -201,8 +307,16 @@ export function buildTextPlan(doc: TextDoc, template: Template, dataset: Dataset
     }
     return false;
   };
+  /** 이 자리가 반복할 원형 행 안인가(그 안의 `{{}}`는 반복 규칙이 채운다) */
+  const inRepeatRow = (pos: number): boolean => {
+    for (const i of repeatLines) {
+      const line = doc.lines[i];
+      if (line !== undefined && line.start <= pos && pos <= line.end) return true;
+    }
+    return false;
+  };
   /** 이 자리가 삭제·교체되는 범위 안인가 */
-  const isGone = (b: TextBlock, pos: number): boolean => blockDeletes.has(b.index) || replaced.has(b.index) || inDeletedRow(b, pos);
+  const isGone = (b: TextBlock, pos: number): boolean => blockDeletes.has(b.index) || replaced.has(b.index) || inDeletedRow(b, pos) || inRepeatRow(pos);
   const valueFor = (b: TextBlock, text: string): string => (b.kind === "table" ? escapeCell(text) : text);
 
   const explicit: FillReport["actions"] = [];
@@ -397,6 +511,46 @@ export function buildTextPlan(doc: TextDoc, template: Template, dataset: Dataset
     explicit.push(entry);
   }
 
+  // ── 2d. 행 반복 ─────────────────────────────────────────────
+  // 원형 행 줄을 원소마다 한 줄씩 채운 복사본으로 바꾼다. 값은 표 칸 규칙(`|` 이스케이프, 줄바꿈 거부)을 따르고, 행 안의 `{{}}`는 hwpx 표와 같은 규칙으로 채운다:
+  // 원소는 `as` 이름(기본 `item`), 순번은 `index` 이름(1부터), 그 밖의 경로는 전체 데이터에서 읽는다.
+  const repeats: TextRepeat[] = [];
+  for (const rp of repeatPlans) {
+    const line = doc.lines[rp.lineIndex];
+    if (line === undefined) continue;
+    const rowText = doc.source.slice(line.start, line.end);
+    const eol = line.eol !== "" ? line.eol : eolNear(doc, rp.lineIndex);
+    const isAlias = (p: string): boolean => p === rp.as || p.startsWith(`${rp.as}.`) || p === rp.index;
+    const slots = findPlaceholders(rowText);
+    const copies: string[] = [];
+    for (let i = 0; i < rp.items.length; i++) {
+      const scope = rowDataset(dataset, rp.items, i, rp.as, rp.index);
+      let out = "";
+      let pos = 0;
+      for (const h of slots) {
+        const value = resolvePathValue(scope, h.path, policy);
+        if (value.kind === "error") {
+          valueError(rp.ruleId, value.code, `행 반복 {{${h.path}}}: ${value.message}`, h.path);
+          continue;
+        }
+        if (value.kind === "keep") {
+          bump(keptPaths, h.path);
+          missingPaths.add(h.path);
+          continue;
+        }
+        if (value.kind === "empty") missingPaths.add(h.path);
+        if (!isAlias(h.path)) required.add(h.path);
+        out += rowText.slice(pos, h.start) + escapeCell(value.kind === "text" ? value.text : "");
+        pos = h.end;
+      }
+      copies.push(out + rowText.slice(pos));
+    }
+    push(line.start, line.end, copies.join(eol), `규칙 ${rp.ruleId}: 행 반복`);
+    delta.tableRows += rp.items.length - 1;
+    repeats.push({ start: line.start, rows: copies.map((c) => splitRow(c, 0, c.length).cells.map((x) => c.slice(x.contentStart, x.contentEnd))) });
+    explicit.push({ ruleId: rp.ruleId, type: "repeat", anchor: rp.anchor, targets: rp.items.length });
+  }
+
   // ── 3. 문서 안 `{{경로}}` ───────────────────────────────────
   // `field` 앵커가 가리키는 자리는 그 규칙이 맡는다(규칙이 거짓이면 그대로 둔다). 나머지는 경로를 데이터에서 찾아 채운다.
   const referenced = new Set(template.rules.map((r) => r.do.anchor));
@@ -413,8 +567,18 @@ export function buildTextPlan(doc: TextDoc, template: Template, dataset: Dataset
   const implicitDropped = new Map<string, number>();
   for (const h of hits) {
     if (claimed.has(h.start)) continue;
+    if (inRepeatRow(h.start)) continue; // 반복 규칙이 채운다(원소 이름 `{{item.이름}}`은 전체 데이터에 없다)
     if (isGone(h.block, h.start)) {
       bump(implicitDropped, h.path);
+      continue;
+    }
+    const idle = idleRows.find((x) => {
+      const line = doc.lines[x.lineIndex];
+      return line !== undefined && line.start <= h.start && h.start <= line.end && (h.path === x.as || h.path.startsWith(`${x.as}.`) || h.path === x.index);
+    });
+    if (idle !== undefined) {
+      idle.count++;
+      leaves.push(h.start); // 채우지 않고 그대로 두므로 남은 `{{}}` 검사에서 뺀다
       continue;
     }
     const value = resolvePathValue(dataset, h.path, policy);
@@ -433,6 +597,10 @@ export function buildTextPlan(doc: TextDoc, template: Template, dataset: Dataset
     required.add(h.path);
     push(h.start, h.end, valueFor(h.block, text), `{{${h.path}}} 채움`, 1, proseBlock(h.block));
     implicit.set(h.path, { count: (implicit.get(h.path)?.count ?? 0) + 1, value: digestValue(text) });
+  }
+  for (const row of idleRows) {
+    if (row.count === 0) continue;
+    report.skipped.push({ ruleId: row.ruleId, anchor: row.anchor, code: "REPEAT_INACTIVE", message: `조건이 거짓이라 행을 반복하지 않아 원형 행 안의 원소·순번 자리 ${row.count}곳을 채우지 않았습니다.` });
   }
   const byPath = <T>([a]: [string, T], [b]: [string, T]): number => (a < b ? -1 : a > b ? 1 : 0);
   for (const [path, x] of [...implicit].sort(byPath)) report.actions.push({ ruleId: "implicit", type: "fill", anchor: `{{${path}}}`, targets: x.count, value: x.value });
@@ -499,7 +667,11 @@ export function buildTextPlan(doc: TextDoc, template: Template, dataset: Dataset
       for (let r = a; r <= b; r++) noteDelete(rowDeletes.get(blockIndex)?.get(r) ?? []);
     }
   }
-  for (const [ruleId, x] of deleteTargets) report.actions.push({ ruleId, type: "delete", anchor: x.anchor, targets: x.targets });
+  // 원소가 0개인 행 반복은 원형 행 삭제로 처리하지만 보고서에는 `repeat`(0행)로 남긴다
+  for (const [ruleId, x] of deleteTargets) {
+    const repeated = repeatRuleIds.has(ruleId);
+    report.actions.push({ ruleId, type: repeated ? "repeat" : "delete", anchor: x.anchor, targets: repeated ? 0 : x.targets });
+  }
 
   // ── 5. 같은 자리 충돌과 중복 정리 ───────────────────────────
   const edits: TextEdit[] = [];
@@ -544,5 +716,7 @@ export function buildTextPlan(doc: TextDoc, template: Template, dataset: Dataset
   report.requiredPaths = [...required].sort();
   report.missingPaths = [...missingPaths].sort();
   report.kept = [...keptPaths].sort(byPath).map(([path, n]) => ({ path, count: n }));
-  return { plan: { edits, delta, leaves }, report };
+  const plan: TextPlan = { edits, delta, leaves };
+  if (repeats.length > 0) plan.repeats = repeats;
+  return { plan, report };
 }

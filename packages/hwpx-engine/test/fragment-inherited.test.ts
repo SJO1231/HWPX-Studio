@@ -313,13 +313,16 @@ const clip = (doc: HwpxDocument, at: InsertPoint): boolean => {
   return planImport(doc, extractFragment(src, sel(0, 0)), at).issues.some((i) => i.code === "FRAG_CELL_MAY_CLIP");
 };
 
-test("5. 셀 안 삽입: 표가 글자처럼 취급(treatAsChar=1)이거나 쪽 나눔이 없으면(pageBreak=NONE) FRAG_CELL_MAY_CLIP 경고를 낸다", () => {
+test("5. 셀 안 삽입: 표가 글자처럼 취급(treatAsChar=1)이거나 쪽 나눔이 없거나(pageBreak=NONE) 표 단위로만 나뉘면(pageBreak=TABLE) FRAG_CELL_MAY_CLIP 경고를 낸다", () => {
   assert.equal(clip(tableDoc({ treatAsChar: "1", pageBreak: "CELL" }), cellPoint), true, "글자처럼 취급");
   assert.equal(clip(tableDoc({ treatAsChar: "0", pageBreak: "NONE" }), cellPoint), true, "쪽 나눔 없음");
   assert.equal(clip(tableDoc({ treatAsChar: "1", pageBreak: "NONE" }), cellPoint), true, "둘 다");
-  // 대조군: 글자처럼 취급도 아니고 쪽 나눔이 있으면 경고가 없다. 구역 최상위 삽입도 없다
+  // 표 단위 나눔: 표는 행 경계에서 나뉘어도 셀 안에서는 나뉘지 않아 한 셀이 쪽보다 길면 잘린다(한컴 PDF로 관측, table-com.test.ts)
+  assert.equal(clip(tableDoc({ treatAsChar: "0", pageBreak: "TABLE" }), cellPoint), true, "표 단위 나눔");
+  const tablePlan = planImport(tableDoc({ treatAsChar: "0", pageBreak: "TABLE" }), extractFragment(parseSynthetic([para("9", "", "새 글")]), sel(0, 0)), cellPoint);
+  assert.match(tablePlan.issues.find((i) => i.code === "FRAG_CELL_MAY_CLIP")?.message ?? "", /pageBreak="TABLE"/);
+  // 대조군: 글자처럼 취급도 아니고 셀 단위 쪽 나눔이면 경고가 없다. 구역 최상위 삽입도 없다
   assert.equal(clip(tableDoc({ treatAsChar: "0", pageBreak: "CELL" }), cellPoint), false);
-  assert.equal(clip(tableDoc({ treatAsChar: "0", pageBreak: "TABLE" }), cellPoint), false);
   const top = tableDoc({ treatAsChar: "1", pageBreak: "NONE" });
   assert.equal(clip(top, { sectionIndex: 0, parentPath: [], index: 0, position: "after" }), false, "최상위 삽입은 경고하지 않는다");
   // 경고는 동작을 바꾸지 않는다: 같은 계획이 그대로 적용된다

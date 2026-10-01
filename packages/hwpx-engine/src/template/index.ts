@@ -7,6 +7,7 @@ export {
   resolvePathValue,
   checkValueText,
   scalarToText,
+  rowDataset,
   digestValue,
   type Lookup,
   type ValueOutcome,

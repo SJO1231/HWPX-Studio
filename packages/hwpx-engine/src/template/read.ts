@@ -10,12 +10,19 @@ import {
   type AnchorAt,
   type Condition,
   type Dataset,
+  type CellSettingsSpec,
+  type InjectAction,
   type InsertStyle,
+  type MarginSpec,
   type MissingPolicy,
   type MixedFormatPolicy,
   type Op,
   type Position,
+  type RepeatAction,
+  type ResizeAction,
   type Rule,
+  type TablePropsAction,
+  type TableSettingsSpec,
   type Template,
   type ValueSource,
 } from "./types.ts";
@@ -237,10 +244,141 @@ function readStyle(v: unknown, where: string): InsertStyle {
   return { paraPrIDRef: ref("paraPrIDRef"), charPrIDRef: ref("charPrIDRef"), styleIDRef: ref("styleIDRef") };
 }
 
+// ── 표 액션 ─────────────────────────────────────────────────────
+
+const MAX_UNIT = 2147483647;
+const PAGE_BREAKS: readonly string[] = ["CELL", "NONE", "TABLE"];
+const HALIGNS: readonly string[] = ["LEFT", "CENTER", "RIGHT"];
+const VERT_ALIGNS: readonly string[] = ["TOP", "CENTER", "BOTTOM"];
+const LINE_WRAPS: readonly string[] = ["BREAK", "SQUEEZE"];
+const IDENT = /^[\p{L}\p{N}_-]+$/u;
+
+function unitOf(v: unknown, what: string, where: string, min = 0): number {
+  if (typeof v !== "number" || !Number.isInteger(v) || v < min || v > MAX_UNIT) fail("TPL_RULE", `${what}이(가) ${min} 이상 ${MAX_UNIT} 이하의 정수가 아닙니다.`, where);
+  return v;
+}
+
+function boolOf(v: unknown, what: string, where: string): boolean {
+  if (typeof v !== "boolean") fail("TPL_RULE", `${what}이(가) true나 false가 아닙니다.`, where);
+  return v;
+}
+
+function enumOf<T extends string>(v: unknown, what: string, allowed: readonly string[], where: string): T {
+  if (typeof v !== "string" || !allowed.includes(v)) fail("TPL_RULE", `${what}은(는) ${allowed.join("·")} 가운데 하나여야 합니다.`, where);
+  return v as T;
+}
+
+function readMargin(v: unknown, what: string, where: string): MarginSpec {
+  const m = obj(v, `${where}.${what}`, "TPL_RULE");
+  onlyKeys(m, ["left", "right", "top", "bottom"], `${where}.${what}`, "TPL_RULE");
+  const out: MarginSpec = {};
+  for (const key of ["left", "right", "top", "bottom"] as const) if (m[key] !== undefined) out[key] = unitOf(m[key], `${what}.${key}`, where);
+  if (Object.keys(out).length === 0) fail("TPL_RULE", `${what}에 값이 없습니다.`, where);
+  return out;
+}
+
+function readTableSettings(v: unknown, where: string): TableSettingsSpec {
+  const t = obj(v, `${where}.table`, "TPL_RULE");
+  onlyKeys(t, ["treatAsChar", "pageBreak", "repeatHeader", "cellSpacing", "outMargin", "inMargin", "hAlign"], `${where}.table`, "TPL_RULE");
+  const out: TableSettingsSpec = {};
+  if (t["treatAsChar"] !== undefined) out.treatAsChar = boolOf(t["treatAsChar"], "table.treatAsChar", where);
+  if (t["pageBreak"] !== undefined) out.pageBreak = enumOf(t["pageBreak"], "table.pageBreak", PAGE_BREAKS, where);
+  if (t["repeatHeader"] !== undefined) out.repeatHeader = boolOf(t["repeatHeader"], "table.repeatHeader", where);
+  if (t["cellSpacing"] !== undefined) out.cellSpacing = unitOf(t["cellSpacing"], "table.cellSpacing", where);
+  if (t["outMargin"] !== undefined) out.outMargin = readMargin(t["outMargin"], "outMargin", where);
+  if (t["inMargin"] !== undefined) out.inMargin = readMargin(t["inMargin"], "inMargin", where);
+  if (t["hAlign"] !== undefined) out.hAlign = enumOf(t["hAlign"], "table.hAlign", HALIGNS, where);
+  if (Object.keys(out).length === 0) fail("TPL_RULE", "table에 설정이 없습니다.", where);
+  return out;
+}
+
+function readPair(v: unknown, what: string, where: string): [number, number] {
+  if (!Array.isArray(v) || v.length !== 2) fail("TPL_RULE", `${what}은(는) [시작, 끝] 두 정수여야 합니다.`, where);
+  const from = unitOf(v[0], `${what}의 시작`, where);
+  const to = unitOf(v[1], `${what}의 끝`, where);
+  if (to < from) fail("TPL_RULE", `${what}의 시작이 끝보다 큽니다.`, where);
+  return [from, to];
+}
+
+function readCellEntries(v: unknown, where: string): NonNullable<TablePropsAction["cells"]> {
+  if (!Array.isArray(v) || v.length === 0) fail("TPL_RULE", "cells가 비어 있지 않은 배열이 아닙니다.", where);
+  return v.map((x, i) => {
+    const w = `${where}.cells[${i}]`;
+    const c = obj(x, w, "TPL_RULE");
+    onlyKeys(c, ["rows", "cols", "props"], w, "TPL_RULE");
+    const p = obj(c["props"], `${w}.props`, "TPL_RULE");
+    onlyKeys(p, ["vertAlign", "lineWrap", "header", "margin", "protect"], `${w}.props`, "TPL_RULE");
+    const props: CellSettingsSpec = {};
+    if (p["vertAlign"] !== undefined) props.vertAlign = enumOf(p["vertAlign"], "props.vertAlign", VERT_ALIGNS, w);
+    if (p["lineWrap"] !== undefined) props.lineWrap = enumOf(p["lineWrap"], "props.lineWrap", LINE_WRAPS, w);
+    if (p["header"] !== undefined) props.header = boolOf(p["header"], "props.header", w);
+    if (p["protect"] !== undefined) props.protect = boolOf(p["protect"], "props.protect", w);
+    if (p["margin"] !== undefined) props.margin = readMargin(p["margin"], "margin", w);
+    if (Object.keys(props).length === 0) fail("TPL_RULE", "props에 설정이 없습니다.", w);
+    return { rows: readPair(c["rows"], "rows", w), cols: readPair(c["cols"], "cols", w), props };
+  });
+}
+
+function readTableProps(a: Obj, where: string, anchor: string): TablePropsAction {
+  onlyKeys(a, ["type", "anchor", "table", "cells"], where, "TPL_RULE");
+  if (a["table"] === undefined && a["cells"] === undefined) fail("TPL_RULE", "tableProps에는 table이나 cells가 있어야 합니다.", where);
+  const out: TablePropsAction = { type: "tableProps", anchor };
+  if (a["table"] !== undefined) out.table = readTableSettings(a["table"], where);
+  if (a["cells"] !== undefined) out.cells = readCellEntries(a["cells"], where);
+  return out;
+}
+
+function readResize(a: Obj, where: string, anchor: string): ResizeAction {
+  onlyKeys(a, ["type", "anchor", "columns", "width", "scale", "rowHeights"], where, "TPL_RULE");
+  const given = ["columns", "width", "scale"].filter((k) => a[k] !== undefined);
+  if (given.length > 1) fail("TPL_RULE", `columns·width·scale은 하나만 줄 수 있습니다(받은 것: ${given.join(", ")}).`, where);
+  if (given.length === 0 && a["rowHeights"] === undefined) fail("TPL_RULE", "resize에는 columns·width·scale·rowHeights 가운데 하나가 있어야 합니다.", where);
+  const out: ResizeAction = { type: "resize", anchor };
+  if (a["columns"] !== undefined) {
+    const cols = a["columns"];
+    if (!Array.isArray(cols) || cols.length === 0) fail("TPL_RULE", "columns가 비어 있지 않은 배열이 아닙니다.", where);
+    out.columns = cols.map((c, i) => unitOf(c, `columns[${i}]`, where, 1));
+  }
+  if (a["width"] !== undefined) out.width = unitOf(a["width"], "width", where, 1);
+  if (a["scale"] !== undefined) {
+    const scale = a["scale"];
+    if (typeof scale !== "number" || !Number.isFinite(scale) || scale <= 0) fail("TPL_RULE", "scale이 0보다 큰 수가 아닙니다.", where);
+    out.scale = scale;
+  }
+  if (a["rowHeights"] !== undefined) {
+    const rows = a["rowHeights"];
+    if (!Array.isArray(rows) || rows.length === 0) fail("TPL_RULE", "rowHeights가 비어 있지 않은 배열이 아닙니다.", where);
+    out.rowHeights = rows.map((x, i) => {
+      const w = `${where}.rowHeights[${i}]`;
+      const r = obj(x, w, "TPL_RULE");
+      onlyKeys(r, ["row", "height"], w, "TPL_RULE");
+      return { row: unitOf(r["row"], "row", w), height: unitOf(r["height"], "height", w) };
+    });
+  }
+  return out;
+}
+
+function readRepeat(a: Obj, where: string, anchor: string): RepeatAction {
+  onlyKeys(a, ["type", "anchor", "each", "as", "index"], where, "TPL_RULE");
+  const each = obj(a["each"], `${where}.each`, "TPL_RULE");
+  onlyKeys(each, ["path"], `${where}.each`, "TPL_RULE");
+  const path = str(each, "path", `${where}.each`, "TPL_RULE");
+  if (!isValidPath(path)) fail("TPL_RULE", `경로 '${path}'가 올바르지 않습니다(이름(.이름)*).`, where);
+  const out: RepeatAction = { type: "repeat", anchor, each: { path } };
+  for (const key of ["as", "index"] as const) {
+    if (a[key] === undefined) continue;
+    const name = str(a, key, where, "TPL_RULE");
+    if (!IDENT.test(name)) fail("TPL_RULE", `${key} '${name}'은(는) 글자·숫자·_·-로 된 이름이어야 합니다.`, where);
+    out[key] = name;
+  }
+  if ((out.as ?? "item") === out.index) fail("TPL_RULE", "as와 index는 서로 다른 이름이어야 합니다.", where);
+  return out;
+}
+
 const FILL_KINDS = ["field", "word", "line", "cell"];
 const DELETE_KINDS = ["line", "object", "cell"];
 
-function readAction(v: unknown, where: string, kinds: Map<string, string>): Action {
+function readAction(v: unknown, where: string, kinds: Map<string, string>, objectTypes: Map<string, string>): Action {
   const a = obj(v, where, "TPL_RULE");
   const type = a["type"];
   const anchor = str(a, "anchor", where, "TPL_RULE");
@@ -264,13 +402,28 @@ function readAction(v: unknown, where: string, kinds: Map<string, string>): Acti
       return scope === undefined ? { type, anchor } : { type, anchor, scope };
     }
     case "inject": {
-      onlyKeys(a, ["type", "anchor", "position", "fragment"], where, "TPL_RULE");
+      onlyKeys(a, ["type", "anchor", "position", "fragment", "fitTable"], where, "TPL_RULE");
       need(["line"]);
       const fragment = a["fragment"];
       if (!(typeof fragment === "string" && fragment !== "") && !isObj(fragment)) {
         fail("TPL_RULE", "fragment는 조각 JSON 경로(문자열)나 조각 객체여야 합니다.", where);
       }
-      return { type, anchor, position: readPosition(a, where), fragment };
+      const inject: InjectAction = { type, anchor, position: readPosition(a, where), fragment };
+      if (a["fitTable"] !== undefined) {
+        if (a["fitTable"] !== "allowBreak") fail("TPL_RULE", "fitTable은 allowBreak만 쓸 수 있습니다.", where);
+        inject.fitTable = "allowBreak";
+      }
+      return inject;
+    }
+    case "tableProps":
+    case "resize":
+    case "repeat": {
+      need(type === "repeat" ? ["cell"] : type === "resize" ? ["object"] : ["object", "cell"]);
+      // hwpx 표는 `tbl`, md 표는 `table`이다. 어느 쪽 문서에 쓸지는 이 읽기 단계가 모르므로 둘 다 받는다(텍스트 문서는 tableProps·resize를 건너뛴다)
+      if (kind === "object" && objectTypes.get(anchor) !== "tbl" && objectTypes.get(anchor) !== "table") {
+        fail("TPL_RULE", `${type}의 object 앵커는 표(objectType: "tbl", 텍스트 문서는 "table")여야 합니다(앵커 '${anchor}'는 ${objectTypes.get(anchor) ?? "?"}).`, where);
+      }
+      return type === "tableProps" ? readTableProps(a, where, anchor) : type === "resize" ? readResize(a, where, anchor) : readRepeat(a, where, anchor);
     }
     case "insertText":
       onlyKeys(a, ["type", "anchor", "position", "value", "style"], where, "TPL_RULE");
@@ -283,15 +436,15 @@ function readAction(v: unknown, where: string, kinds: Map<string, string>): Acti
         style: readStyle(a["style"], where),
       };
     default:
-      return fail("TPL_RULE", `알 수 없는 액션 종류 ${JSON.stringify(type)}입니다(fill·delete·inject·insertText).`, where);
+      return fail("TPL_RULE", `알 수 없는 액션 종류 ${JSON.stringify(type)}입니다(fill·delete·inject·insertText·tableProps·resize·repeat).`, where);
   }
 }
 
-function readRule(v: unknown, index: number, kinds: Map<string, string>): Rule {
+function readRule(v: unknown, index: number, kinds: Map<string, string>, objectTypes: Map<string, string>): Rule {
   const where = `rules[${index}]`;
   const r = obj(v, where, "TPL_RULE");
   onlyKeys(r, ["id", "when", "do"], where, "TPL_RULE");
-  const rule: Rule = { id: str(r, "id", where, "TPL_RULE"), do: readAction(r["do"], `${where}.do`, kinds) };
+  const rule: Rule = { id: str(r, "id", where, "TPL_RULE"), do: readAction(r["do"], `${where}.do`, kinds, objectTypes) };
   if (r["when"] !== undefined) rule.when = readCondition(r["when"], `${where}.when`, 0);
   return rule;
 }
@@ -311,16 +464,18 @@ export function readTemplate(input: unknown): Template {
   }
 
   const kinds = new Map<string, string>();
+  const objectTypes = new Map<string, string>();
   list(root, "anchors", "템플릿", "TPL_ANCHOR").forEach((v, i) => {
     const anchor = readAnchor(v, i);
     if (kinds.has(anchor.id)) fail("TPL_ANCHOR", `앵커 id '${anchor.id}'가 겹칩니다.`, `anchors[${i}]`);
     kinds.set(anchor.id, anchor.kind);
+    if (anchor.kind === "object") objectTypes.set(anchor.id, anchor.objectType);
     template.anchors.push(anchor);
   });
 
   const ruleIds = new Set<string>();
   list(root, "rules", "템플릿", "TPL_RULE").forEach((v, i) => {
-    const rule = readRule(v, i, kinds);
+    const rule = readRule(v, i, kinds, objectTypes);
     if (ruleIds.has(rule.id)) fail("TPL_RULE", `규칙 id '${rule.id}'가 겹칩니다.`, `rules[${i}]`);
     ruleIds.add(rule.id);
     template.rules.push(rule);

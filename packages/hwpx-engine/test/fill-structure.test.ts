@@ -104,7 +104,7 @@ test("E7: 표 행을 지운다 — rowCnt가 줄고 뒤 행 셀의 행 주소가
   const cells = reparse(r.output).sections[0]?.paragraphs[4]?.objects[0];
   assert.ok(cells !== undefined && isTableNode(cells));
   assert.deepEqual(cells.cells.map((c) => c.subList?.paragraphs[0]?.logicalText), ["구분", "내용", "비고", "B", "나", "-"]);
-  assert.deepEqual(r.report.plan.expected, { paragraphs: -3 });
+  assert.deepEqual(r.report.plan.expected, { paragraphs: -3, tableRows: -1, tableCells: -3 });
   assert.equal(census(r.output).tables, 1);
   assert.equal(validateDocument(r.output).errors.length, 0);
 
@@ -122,7 +122,7 @@ test("E7: 마지막 남은 행까지 지우면 표를 담은 문단을 지운다
   const t = tpl({ anchors: rows, rules: rows.map((a, n) => del(`d${n}`, a.id, { scope: "row" })) });
   const r = done(generate(bytes, t, ds({})));
   assert.deepEqual(topTexts(reparse(r.output)), [`${OBJ}${OBJ}1. 개요`, "개요 본문입니다.", "2. 선택 조항", "선택 조항 본문입니다. (해당 시)", "3. 끝"]);
-  assert.deepEqual(r.report.plan.expected, { paragraphs: -10, tables: -1 });
+  assert.deepEqual(r.report.plan.expected, { paragraphs: -10, tables: -1, tableRows: -3, tableCells: -9 });
   assert.equal(census(r.output).tables, 0);
 });
 
@@ -143,7 +143,7 @@ test("E7: object 앵커 — 그 객체만 든 문단이면 문단째, 다른 글
   // 표 객체 앵커
   const blocks = readFixture("hancom/blocks");
   const r3 = done(generate(blocks, tpl({ anchors: [BLOCKS.table], rules: [del("d", "tbl")] }), ds({})));
-  assert.deepEqual(r3.report.plan.expected, { paragraphs: -10, tables: -1 });
+  assert.deepEqual(r3.report.plan.expected, { paragraphs: -10, tables: -1, tableRows: -3, tableCells: -9 });
 });
 
 test("E7: 지울 수 없는 경우는 거절한다 — 구역 설정 문단, 마지막 남은 문단, 세로 병합 행", () => {
@@ -168,7 +168,7 @@ test("E7: 지울 수 없는 경우는 거절한다 — 구역 설정 문단, 마
   }
   // 걸치지 않은 행은 지울 수 있다
   const ok = tpl({ anchors: [BLOCKS.cell("c", 2, 1)], rules: [del("d", "c", { scope: "row" })] });
-  assert.deepEqual(done(generate(merged, ok, ds({}))).report.plan.expected, { paragraphs: -3 });
+  assert.deepEqual(done(generate(merged, ok, ds({}))).report.plan.expected, { paragraphs: -3, tableRows: -1, tableCells: -3 });
 });
 
 test("E7: 삭제 범위 안의 채움·삽입은 버리고 보고한다(안의 {{}}는 데이터가 없어도 오류가 아니다)", () => {
@@ -186,7 +186,7 @@ test("E7: 삭제 범위 안의 채움·삽입은 버리고 보고한다(안의 {
   const r = done(generate(blocks, t, ds({})));
   assert.deepEqual(r.report.plan.dropped.map((d) => d.ruleId).sort(), ["f", "f2", "i"]);
   assert.ok(!topTexts(reparse(r.output)).includes("새 문단"));
-  assert.deepEqual(r.report.plan.expected, { paragraphs: -4 });
+  assert.deepEqual(r.report.plan.expected, { paragraphs: -4, tableRows: -1, tableCells: -3 });
 
   // 지운 문단 안의 {{}}는 데이터가 없어도 DATA_MISSING이 아니다
   const single = readFixture("hancom/ph-single");

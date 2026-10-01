@@ -71,6 +71,9 @@ export type TextEditSummary = { start: number; end: number; newLength: number; l
 /** 수량: 블록·표·코드 블록·표 행(머리행 포함). 편집이 만드는 증감과 검사에 쓴다. */
 export type TextCensus = { blocks: number; tables: number; code: number; tableRows: number };
 
+/** 행 반복이 만든 행의 기대: 첫 행이 놓일 원문 줄의 시작 오프셋과, 행마다 칸 글(앞뒤 공백을 뺀 것) */
+export type TextRepeat = { start: number; rows: string[][] };
+
 export type TextPlan = {
   /** 원문 좌표 편집. 시작 → 끝 → 규칙 순서로 정렬되어 있고 서로 겹치지 않는다. */
   edits: TextEdit[];
@@ -78,6 +81,8 @@ export type TextPlan = {
   delta: TextCensus;
   /** 채우지 않기로 한 `{{}}`(`missing: keep`, 조건이 거짓인 규칙의 `field` 앵커)의 원문 시작 오프셋 */
   leaves: number[];
+  /** 행 반복이 만든 행들. 검사가 출력에서 다시 읽어 칸 글을 견준다. 행 반복이 없으면 없다. */
+  repeats?: TextRepeat[];
 };
 
 export type TextReport = {

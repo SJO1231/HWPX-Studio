@@ -34,6 +34,8 @@ export function fillPlaceholders(
   policy: MissingPolicy,
   mixed: MixedFormatPolicy,
   isDropped: (par: ParagraphNode) => boolean = () => false,
+  /** 이 문단의 이 경로 자리는 채우지 않는다(오류도 건너뜀도 아니다. 호출자가 센다). 조건이 거짓인 행 반복의 원소·순번 자리에 쓴다. */
+  isExcluded: (par: ParagraphNode, path: string) => boolean = () => false,
 ): PlaceholderOutcome {
   const out: PlaceholderOutcome = {
     edits: [],
@@ -55,6 +57,7 @@ export function fillPlaceholders(
         bump(out.dropped, hit.path);
         continue;
       }
+      if (isExcluded(par, hit.path)) continue;
       const value = resolvePathValue(dataset, hit.path, policy);
       if (value.kind === "error") {
         if (value.code === "DATA_MISSING") bump(out.missing, hit.path);

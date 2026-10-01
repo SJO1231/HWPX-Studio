@@ -3,7 +3,7 @@ import { emptyFillReport, type Dataset, type Template } from "../template/index.
 import { censusOf, scanPlaceholders } from "./doc.ts";
 import { parseText } from "./parse.ts";
 import { buildTextPlan } from "./plan.ts";
-import type { TextBlock, TextCensus, TextDoc, TextEdit, TextKind, TextOptions, TextPlan, TextReport, TextResult } from "./types.ts";
+import type { TextBlock, TextCensus, TextDoc, TextEdit, TextKind, TextOptions, TextPlan, TextReport, TextRepeat, TextResult } from "./types.ts";
 
 const errorsOf = (issues: Issue[]): Issue[] => issues.filter((i) => i.severity === "error");
 
@@ -65,6 +65,35 @@ function verifyCensus(before: TextCensus, after: TextCensus, delta: TextCensus):
   return issues;
 }
 
+/**
+ * 행 반복이 만든 행을 출력에서 다시 읽어 계획과 견준다(값 재읽기): 첫 행이 놓일 줄에서 시작하는 표 행들의 칸 글이 계획과 같아야 한다.
+ * 글 원문은 보고하지 않고 어긋난 행 번호와 길이만 적는다.
+ */
+function verifyRepeats(after: TextDoc, repeats: TextRepeat[], place: (pos: number) => number): Issue[] {
+  const issues: Issue[] = [];
+  for (const rep of repeats) {
+    const at = place(rep.start);
+    const block = after.blocks.find((b) => b.kind === "table" && b.table?.rows.some((r) => after.lines[r.line]?.start === at) === true);
+    const rows = block?.table?.rows ?? [];
+    const first = rows.findIndex((r) => after.lines[r.line]?.start === at);
+    if (block === undefined || first < 0) {
+      issues.push(makeIssue("error", "REREAD_TEXT", `반복한 첫 행을 출력에서 다시 찾지 못했습니다(출력 오프셋 ${at}).`, `offset ${at}`));
+      continue;
+    }
+    rep.rows.forEach((want, i) => {
+      const row = rows[first + i];
+      const got = row?.cells.map((c) => after.source.slice(c.contentStart, c.contentEnd));
+      const same = got !== undefined && got.length === want.length && got.every((g, k) => g === want[k]);
+      if (!same) {
+        issues.push(
+          makeIssue("error", "REREAD_TEXT", `반복한 ${i + 1}번째 행의 칸 글이 기대와 다릅니다(기대 ${want.length}칸, 읽은 ${got?.length ?? 0}칸).`, `block ${block.index} row ${first + i}`),
+        );
+      }
+    });
+  }
+  return issues;
+}
+
 /** 머리행과 칸 수가 다른 행이 있는 표인가 */
 const isRagged = (block: TextBlock): boolean => {
   const rows = block.table?.rows ?? [];
@@ -76,6 +105,7 @@ const isRagged = (block: TextBlock): boolean => {
  * 출력 검사: 편집 구간 밖 보존 → 수량 → 남은 `{{}}` → md 표의 열 수.
  * - 남은 `{{}}`: 채우기로 한 `{{}}`가 출력에 남아 있으면 `REREAD_TEXT`. 값이나 조각이 가져온 글, 계획이 일부러 남긴 것(`missing: keep` 등)과 코드 블록 안의 것은 세지 않는다.
  * - 열 수: 표의 모든 행이 머리행과 같은 칸 수여야 한다(`VAL_TABLE_COLS`). 원래부터 어긋나 있던 표는 경고다.
+ * - 행 반복: 반복이 만든 행의 칸 글을 출력에서 다시 읽어 계획과 견준다(`REREAD_TEXT`). 행 수의 증감은 수량 검사가 본다.
  */
 export function checkTextOutput(doc: TextDoc, plan: TextPlan, output: string, fillInCode = false): { issues: Issue[]; reread: TextReport["reread"] } {
   const reread = { placeholders: 0, tables: 0 };
@@ -88,6 +118,7 @@ export function checkTextOutput(doc: TextDoc, plan: TextPlan, output: string, fi
   const issues = verifyCensus(censusOf(doc), censusOf(after), plan.delta);
   const shift = shifter(plan.edits);
   const place = (pos: number): number => pos + shift(pos);
+  issues.push(...verifyRepeats(after, plan.repeats ?? [], place));
 
   // 편집이 출력에 넣은 글 구간(값·조각)
   let moved = 0;

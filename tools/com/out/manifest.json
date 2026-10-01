@@ -1427,6 +1427,827 @@
         "ok": true,
         "page_count": 1
       }
+    },
+    {
+      "file": "tables-merged.hwpx",
+      "bytes": 14839,
+      "sha256": "c051f04bbc760266ec77fe1f9b4f9e187525ec8b8daaf289f1d3040f0d61c776",
+      "zip_entries": [
+        "mimetype",
+        "version.xml",
+        "Contents/header.xml",
+        "Contents/section0.xml",
+        "Preview/PrvText.txt",
+        "settings.xml",
+        "Preview/PrvImage.png",
+        "META-INF/container.rdf",
+        "Contents/content.hpf",
+        "META-INF/container.xml",
+        "META-INF/manifest.xml"
+      ],
+      "bindata_entries": [],
+      "section0": {
+        "paragraphs": 13,
+        "top_level_paragraphs": 3,
+        "runs": 14,
+        "text_nodes": 13,
+        "field_begin": 0,
+        "field_end": 0,
+        "tables": 1,
+        "pictures": 0,
+        "tabs": 0,
+        "headers": 0,
+        "footers": 0
+      },
+      "text_checks": {
+        "병합 표": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "신청 내역": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "비고": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "가": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "A": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "세로": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "나": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "B": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "다": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "C": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "c": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "끝": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        }
+      },
+      "top_level_paragraphs_detail": [
+        {
+          "text": "병합 표",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": []
+            },
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "병합 표"
+              ]
+            }
+          ]
+        },
+        {
+          "text": "",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                {
+                  "el": "tbl"
+                },
+                ""
+              ]
+            }
+          ]
+        },
+        {
+          "text": "끝",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "끝"
+              ]
+            }
+          ]
+        }
+      ],
+      "privacy_clean": true,
+      "observations": {
+        "tables": [
+          {
+            "rowCnt": "4",
+            "colCnt": "3",
+            "cells": [
+              {
+                "row": 0,
+                "col": 0,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "신청 내역",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "신청 내역"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "row": 0,
+                "col": 2,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "비고",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "비고"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "row": 1,
+                "col": 0,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "가",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "가"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "row": 1,
+                "col": 1,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "A",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "A"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "row": 1,
+                "col": 2,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "세로",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "세로"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "row": 2,
+                "col": 0,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "나",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "나"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "row": 2,
+                "col": 1,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "B",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "B"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "row": 3,
+                "col": 0,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "다",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "다"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "row": 3,
+                "col": 1,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "C",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "C"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "row": 3,
+                "col": 2,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "c",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "c"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "exact_text_mismatches": [],
+      "reopen": {
+        "ok": true,
+        "page_count": 1
+      }
+    },
+    {
+      "file": "tables-inline.hwpx",
+      "bytes": 14029,
+      "sha256": "750e581ae968ed2673ca4e03e0963d72f64436d6e4a88c478c963db1936d668d",
+      "zip_entries": [
+        "mimetype",
+        "version.xml",
+        "Contents/header.xml",
+        "Contents/section0.xml",
+        "Preview/PrvText.txt",
+        "settings.xml",
+        "Preview/PrvImage.png",
+        "META-INF/container.rdf",
+        "Contents/content.hpf",
+        "META-INF/container.xml",
+        "META-INF/manifest.xml"
+      ],
+      "bindata_entries": [],
+      "section0": {
+        "paragraphs": 9,
+        "top_level_paragraphs": 3,
+        "runs": 10,
+        "text_nodes": 9,
+        "field_begin": 0,
+        "field_end": 0,
+        "tables": 1,
+        "pictures": 0,
+        "tabs": 0,
+        "headers": 0,
+        "footers": 0
+      },
+      "text_checks": {
+        "앞 문단": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "항목": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "내용": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "비고": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "a": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "b": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "c": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "뒤 문단": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        }
+      },
+      "top_level_paragraphs_detail": [
+        {
+          "text": "앞 문단",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": []
+            },
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "앞 문단"
+              ]
+            }
+          ]
+        },
+        {
+          "text": "",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                {
+                  "el": "tbl"
+                },
+                ""
+              ]
+            }
+          ]
+        },
+        {
+          "text": "뒤 문단",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "뒤 문단"
+              ]
+            }
+          ]
+        }
+      ],
+      "privacy_clean": true,
+      "observations": {
+        "tables": [
+          {
+            "rowCnt": "2",
+            "colCnt": "3",
+            "cells": [
+              {
+                "row": 0,
+                "col": 0,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "항목",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "항목"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "row": 0,
+                "col": 1,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "내용",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "내용"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "row": 0,
+                "col": 2,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "비고",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "비고"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "row": 1,
+                "col": 0,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "a",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "a"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "row": 1,
+                "col": 1,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "b",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "b"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "row": 1,
+                "col": 2,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "c",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "c"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "exact_text_mismatches": [],
+      "reopen": {
+        "ok": true,
+        "page_count": 1
+      }
+    },
+    {
+      "file": "tables-nested.hwpx",
+      "bytes": 14784,
+      "sha256": "520c8a707cc345cb6a95485dad861b602d2b88a0b8cb54d4e356965cdcc961b0",
+      "zip_entries": [
+        "mimetype",
+        "version.xml",
+        "Contents/header.xml",
+        "Contents/section0.xml",
+        "Preview/PrvText.txt",
+        "settings.xml",
+        "Preview/PrvImage.png",
+        "META-INF/container.rdf",
+        "Contents/content.hpf",
+        "META-INF/container.xml",
+        "META-INF/manifest.xml"
+      ],
+      "bindata_entries": [],
+      "section0": {
+        "paragraphs": 12,
+        "top_level_paragraphs": 3,
+        "runs": 13,
+        "text_nodes": 11,
+        "field_begin": 0,
+        "field_end": 0,
+        "tables": 2,
+        "pictures": 0,
+        "tabs": 0,
+        "headers": 0,
+        "footers": 0
+      },
+      "text_checks": {
+        "중첩 표": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "바깥1": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "바깥3": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "바깥4": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "안1": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "안2": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "안3": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "안4": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "끝": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        }
+      },
+      "top_level_paragraphs_detail": [
+        {
+          "text": "중첩 표",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": []
+            },
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "중첩 표"
+              ]
+            }
+          ]
+        },
+        {
+          "text": "",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                {
+                  "el": "tbl"
+                },
+                ""
+              ]
+            }
+          ]
+        },
+        {
+          "text": "끝",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "끝"
+              ]
+            }
+          ]
+        }
+      ],
+      "privacy_clean": true,
+      "observations": {},
+      "exact_text_mismatches": [],
+      "reopen": {
+        "ok": true,
+        "page_count": 1
+      }
+    },
+    {
+      "file": "tables-rich.hwpx",
+      "bytes": 16562,
+      "sha256": "3059e345b53ec7d7a48476394ff0a19a3857cf95c80d0c5f1b5a7e4d0b767745",
+      "zip_entries": [
+        "mimetype",
+        "version.xml",
+        "Contents/header.xml",
+        "BinData/image1.png",
+        "Contents/section0.xml",
+        "Preview/PrvText.txt",
+        "settings.xml",
+        "Preview/PrvImage.png",
+        "META-INF/container.rdf",
+        "Contents/content.hpf",
+        "META-INF/container.xml",
+        "META-INF/manifest.xml"
+      ],
+      "bindata_entries": [
+        "BinData/image1.png"
+      ],
+      "section0": {
+        "paragraphs": 12,
+        "top_level_paragraphs": 3,
+        "runs": 15,
+        "text_nodes": 12,
+        "field_begin": 1,
+        "field_end": 1,
+        "tables": 1,
+        "pictures": 1,
+        "tabs": 0,
+        "headers": 0,
+        "footers": 0
+      },
+      "text_checks": {
+        "풍부한 표": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "번호": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "이름": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "내용": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "1": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "2": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "둘째": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "끝": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        }
+      },
+      "top_level_paragraphs_detail": [
+        {
+          "text": "풍부한 표",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": []
+            },
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "풍부한 표"
+              ]
+            }
+          ]
+        },
+        {
+          "text": "",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                {
+                  "el": "tbl"
+                },
+                ""
+              ]
+            }
+          ]
+        },
+        {
+          "text": "끝",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "끝"
+              ]
+            }
+          ]
+        }
+      ],
+      "privacy_clean": true,
+      "observations": {},
+      "exact_text_mismatches": [],
+      "reopen": {
+        "ok": true,
+        "page_count": 1
+      }
     }
   ],
   "failures": [],

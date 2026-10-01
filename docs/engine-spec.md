@@ -48,7 +48,7 @@ class HwpxError extends Error { code: string; where?: string }
 type Issue = { severity: "error" | "warning"; code: string; message: string; where?: string }
 ```
 
-코드는 `영역_내용` 형식의 대문자다. 영역: `PKG`(패키지·ZIP), `XML`, `MODEL`, `EDIT`, `FRAG`, `FMT`(서식), `TPL`(템플릿), `DATA`, `FILL`, `VAL`(검사), `REPAIR`, `GATE`, `PRESERVE`, `REREAD`, `TEXT`, `DIFF`.
+코드는 `영역_내용` 형식의 대문자다. 영역: `PKG`(패키지·ZIP), `XML`, `MODEL`, `EDIT`, `FRAG`, `FMT`(서식), `TPL`(템플릿), `DATA`, `FILL`, `VAL`(검사), `REPAIR`, `GATE`, `PRESERVE`, `REREAD`, `TEXT`, `DIFF`, `TABLE`(표 조정).
 
 ## 3. S1 — 패키지 (`src/package/`)
 
@@ -478,7 +478,7 @@ type InsertPoint = { sectionIndex: number; parentPath: number[]; index: number; 
 2. **상속한 문제는 새 오류가 아니다**: 조각이 소스에서부터 갖고 있던 문제(조각 안에서 겹치는 id, 없는 대상을 가리키는 참조)는 계획의 `inherited`에 기록한다. 저장 게이트는 이것에서 비롯한 오류를 대상의 새 오류로 세지 않고 경고로 보고한다. 기본은 소스 원문 그대로 옮기는 것이다(그리기 묶음 안 개체의 id는 다른 요소가 가리킬 수 있어 함부로 바꾸지 않는다).
 3. 선택 기능 `reissueInternalDuplicates`: 조각 안에서 겹치는 문단 id와 객체 id도 새 값으로 바꾼다(기본 끔).
 4. 빈 이진 참조(`binaryItemIDRef=""`)는 참조 없음으로 본다.
-5. 표 셀 안에 넣을 때 그 표가 "글자처럼 취급"이거나 쪽 나눔이 없으면 `FRAG_CELL_MAY_CLIP` 경고를 낸다.
+5. 표 셀 안에 넣을 때 그 표가 "글자처럼 취급"이거나 쪽 나눔이 없으면 `FRAG_CELL_MAY_CLIP` 경고를 낸다. 쪽 나눔이 `TABLE`(행 경계에서만 나뉨)인 표도 같은 경고를 낸다(S5에서 추가. 한컴 PDF에서 잘림을 확인).
 
 **수정 구현과 재실행 결과 (2026-10-01, 같은 시드, 쌍 150개 × 방식 10가지 = 1,500건)**
 
@@ -511,7 +511,7 @@ type InsertPoint = { sectionIndex: number; parentPath: number[]; index: number; 
 
 표는 새로 만들든 기존 것이든 크기와 설정을 함께 갖는다. 조각을 셀에 넣거나 구조가 달라지는 템플릿에서는 표 자체를 조정할 수 있어야 한다.
 
-**실제 문서의 표** (642건, 표 7,037개, 수량 집계): 글자처럼 취급 73%, 쪽 나눔은 셀 단위 70%·없음 29%, 제목 행 반복 92%, 병합 셀 20%, 중첩 표 909개, 셀 세로 정렬 가운데 97%, 최대 261행·65열. 글자처럼 취급 표는 쪽을 넘지 못해 셀에 긴 내용을 넣으면 잘린다(7.8, 검증 기준 10절).
+**실제 문서의 표** (642건, 표 7,037개, 수량 집계): 글자처럼 취급 73%, 쪽 나눔은 셀 단위 70%·없음 29%, 제목 행 반복 92%, 병합이 든 표 38%(셀 수로는 18%), 중첩 표 909개, 셀 세로 정렬 가운데 97%, 최대 261행·65열. 글자처럼 취급 표는 쪽을 넘지 못해 셀에 긴 내용을 넣으면 잘린다(7.8, 검증 기준 10절).
 
 **표의 구성** (한컴 저장본에서 관측)
 
@@ -532,7 +532,7 @@ type InsertPoint = { sectionIndex: number; parentPath: number[]; index: number; 
 | 1 설정 | `planSetCellProps` | 세로 정렬, 줄 나눔, 제목 셀, 셀 여백, 테두리(서식 변경의 파생 자원), 보호 |
 | 2 크기 | `planSetColumnWidths` | 열 너비 지정. 병합 셀은 걸친 열의 합. 표 너비는 열 합으로 맞춘다 |
 | 2 크기 | `planScaleTable` | 표 전체 너비를 비율이나 목표값으로 바꾸고 열을 비례 조정 |
-| 2 크기 | `planSetRowHeights` | 행 높이(최소 높이) 지정. 표 높이는 행 합으로 맞춘다 |
+| 2 크기 | `planSetRowHeights` | 행 높이(최소 높이) 지정. 표 높이는 바뀐 만큼만 더하고 뺀다(7.91) |
 | 3 구조 | `planInsertRows` | 기존 행을 원형으로 복제해 넣는다(글은 비우거나 유지). 뒤 행 주소·행 수·표 높이 갱신. 세로 병합에 걸리면 병합을 늘리거나 거절 |
 | 3 구조 | `planRepeatRows` | 데이터 배열의 원소마다 원형 행을 복제하고 행 안의 `{{}}`를 원소로 채운다(템플릿 액션 `repeat`) |
 | 3 구조 | `planInsertColumns`, `planDeleteColumns` | 열 복제·삭제. 열 주소·열 수·너비 갱신 |
@@ -540,7 +540,8 @@ type InsertPoint = { sectionIndex: number; parentPath: number[]; index: number; 
 | 4 새 표 | `planCloneTable` | 문서나 조각의 기존 표를 원형으로 복제해 행·열 수를 맞춘다 |
 
 - 템플릿 액션에 `tableProps`(표·셀 설정), `resize`(열 너비·표 너비), `repeat`(행 반복)을 더한다.
-- `inject`에 `fitTable: "allowBreak"`: 삽입 지점이 잘릴 수 있는 표의 셀이면 그 표를 쪽을 넘길 수 있게 바꾼다(글자처럼 취급 끔, 쪽 나눔 셀 단위). 한 일은 보고서에 남는다. 기본은 바꾸지 않고 경고만 낸다.
+- `inject`에 `fitTable: "allowBreak"`: 삽입 지점을 감싸는 표 가운데 잘릴 수 있는 표(글자처럼 취급이거나, 쪽 나눔이 `NONE` 또는 `TABLE`)를 쪽을 넘길 수 있게 바꾼다(글자처럼 취급 끔, 쪽 나눔 `CELL`). 한 일은 보고서의 `tableChanges`에 남는다. 기본은 바꾸지 않고 경고만 낸다.
+- 쪽 나눔 값의 뜻 [확인: 한컴 13 PDF]: `CELL`은 셀 안의 글도 쪽을 넘는다. `TABLE`은 행 경계에서만 나뉘어 한 셀이 쪽보다 길면 잘린다. `NONE`은 나뉘지 않는다.
 - 조정으로 표의 위치나 흐름이 달라질 수 있는 설정(글자처럼 취급 등)은 사용자가 고른 경우에만 바꾼다.
 
 **수용 조건**
@@ -554,6 +555,60 @@ type InsertPoint = { sectionIndex: number; parentPath: number[]; index: number; 
 | B5 | 잘림 해소: "글자처럼 취급" 표의 셀에 긴 조각을 넣고 `fitTable: "allowBreak"`를 쓰면 한컴 PDF에서 내용이 끝까지 보인다 |
 | B6 | 행 반복: 배열 길이 0·1·여러 개, 병합 셀이 든 원형 행, 제목 행 반복이 켜진 표 |
 | B7 | 실제 문서 표 표본(병합·중첩 포함)에 무작위로 설정·크기·행 조작을 적용해 검사기 새 오류 0, 한컴 표본 열림 |
+
+### 7.91 S5 구현에서 확정한 것 (2026-10-01)
+
+구현 상태: 연산 12종, 템플릿 액션 3종과 `fitTable`, CLI `table`, B1~B7 통과. 독립 검증에서 나온 결함을 고친 뒤 재검증에서 수용 판정. 근거는 [검증 기준](validation.md) 11절.
+
+**실제 문서에서 센 것** (표 7,037개): 크기 기준은 가로·세로 전부 절대값. 구조 불규칙 0개, 너비 불규칙 167개(문서 40건). 규칙적인 표 98%. 행별 셀 너비 합이 표 너비와 같은 표 95%. 표 높이가 행 높이 합과 같은 표 65%(표가 더 큰 경우 28%, 작은 경우 5%).
+
+**대상과 격자**
+
+- 대상은 `TableTarget = { sectionIndex, element }`다. 중첩 표도 가리킨다. `listTables(doc)`가 표마다 위치·깊이·행×열·크기·설정·병합 수·규칙성(`structureRegular`, `widthRegular`, 둘 다 참이면 `regular`)을 준다.
+- `readTableGrid(table)`가 셀 주소·병합·크기로 격자를 만든다. 불규칙은 두 가지다.
+  - **구조 불규칙**(겹침, 빈칸, 행·열 수 불일치, 주소 문제): 크기·구조 연산을 모두 `TABLE_IRREGULAR`로 거절한다.
+  - **너비 불규칙**(행마다 열 경계의 위치가 다름): 열 너비가 필요한 연산(비례 조정, 열 삽입·삭제, 병합·분할, 열 수를 바꾸는 복제)만 거절한다. 행 삽입·반복, 행 높이, 열 너비 지정(새 너비를 주므로), 행 수만 바꾸는 복제는 된다.
+  - 설정 연산은 격자와 무관하게 동작한다.
+- **열 너비는 경계 위치로 구한다**: 각 행에서 셀을 왼쪽부터 놓으면(위에서 내려온 세로 병합 포함) 셀의 양쪽 경계 위치가 누적 합으로 정해진다. 같은 경계를 여러 행이 다르게 말하면 너비 불규칙이다. 어느 행에서도 셀 가장자리가 아닌 경계(병합으로만 덮인 열 묶음의 안쪽)는 양옆의 아는 경계 사이를 균등하게 나눈다. 행 높이도 같은 방식으로 구하되, 어긋나면 거절하지 않고 그 행 셀 높이의 최댓값을 쓴다. (독립 검증에서 나온 결함의 수정: 이전 추정은 병합 셀끼리 모순되는 값을 받아들여 실제 문서의 표 190개에서 분할·열 삭제가 행 너비 합을 깼다.)
+- `checkTableGeometry(table)`: 행·열 수, 주소, 병합, 행별 너비 합을 본다(`TABLE_CELL_PARTS`, `TABLE_COUNT`, `TABLE_ADDR`, `TABLE_WIDTH_SUM`). 테스트와 스트레스 도구가 쓴다. 검사기에는 넣지 않았다(실제 문서의 5%가 원래 너비 합이 어긋난다).
+
+**수치 규칙**
+
+- 표의 `sz` 너비·높이는 증감분만 더하고 뺀다. 전체를 다시 계산하지 않으므로, 원래 표 크기와 행·열 합이 어긋난 문서는 그 어긋남이 그대로 남는다(높이는 35%가 어긋나 있어 다시 계산하면 원문이 달라진다).
+- 비례 조정은 경계 위치를 조정한다(새 경계 = 반올림(경계 × 비율), 마지막 경계 = 목표 너비). 셀 너비는 끝 경계에서 시작 경계를 뺀 값이라 행별 합이 항상 맞는다. 비율 1이나 현재와 같은 너비는 편집이 없다. 결과 셀 너비가 1 미만이 되는 연산과 높이 1 미만인 셀을 만드는 분할은 `TABLE_BAD_ARG`(행 높이 지정은 0을 받는다).
+- 크기 기준이 절대값이 아니면 `TABLE_RELATIVE_SIZE`(실제 문서에는 없었다).
+
+**복제 규칙**
+
+- 행·열 삽입과 원형 복제의 글 처리는 기본이 `clear`다. 행 반복의 복사본은 글을 두고 `{{}}`를 채운다.
+- 복제한 범위 안의 객체 id·instId·누름틀 id는 새 값으로, 누름틀 끝의 짝 참조는 새 id로, 책갈피 이름은 접미사를 붙여 바꾼다. 셀 이름(`tc@name`)은 비운다.
+- 복제하거나 지우는 범위가 누름틀의 시작과 끝 사이를 자르면 `TABLE_SPLITS_FIELD`(행·열 복제, 열 삭제, 병합).
+- 원형 행을 세로 병합이 가로지르면 `TABLE_SPAN_CONFLICT`. `extendSpans`를 주면 위에서 내려오는 병합을 늘린다.
+- 병합: 왼쪽 위 셀을 남긴다. 나머지 셀의 문단은 기본으로 그 뒤에 이어 붙인다(`content: "concat"`, 또는 `"first"`). 병합 결과 어느 행에 시작 셀이 하나도 남지 않으면 `TABLE_SPAN_CONFLICT`로 거절한다(빈 행이 있는 표는 한컴이 열지 못한다 [확인]. 한컴처럼 행을 접어 주지는 않는다).
+- 분할은 병합 셀을 1×1로 되돌리는 것만 한다. 새 셀은 원 셀의 속성을 복사한다(원 셀이 끊어진 서식 참조를 가졌으면 새 셀도 갖는다. 게이트에서는 상속 문제로 센다). 1×1 셀은 `TABLE_BAD_ARG`.
+- 편집한 문단의 줄 배치 캐시를 지운다.
+
+**템플릿 액션** (8.2의 표에 추가)
+
+- `tableProps`의 앵커는 `object`(표: `objectType`이 `tbl`, 또는 Markdown 표를 가리키는 `table`) 또는 `cell`, `resize`의 앵커는 `object`(표)이고, 구역 최상위 표만 가리킨다. 중첩 표는 API로만 다룬다. 템플릿의 `tableProps`에는 테두리가 없다(테두리는 API의 `border`).
+- `repeat`: 앵커는 원형 행을 가리키는 `cell`. 행 안의 `{{<as>.이름}}`은 **원소에서만** 찾고(없으면 `options.missing` 정책. `derived`로 넘어가지 않는다), `{{<index>}}`는 1부터의 순번, 그 밖은 전체 데이터에서 찾는다. `as`와 같은 이름의 최상위 키는 원소가 가린다. 길이 0이면 원형 행을 지우고, 그것이 표의 마지막 행이면 표를 담은 문단을 지운다. 배열이 아니면 `DATA_NOT_ARRAY`. 반복 행 안의 `{{}}`는 `repeat`가 맡고 일반 채움에서 빠진다.
+- 규칙이 겹칠 때: 같은 행을 지우는 `delete`는 버리고 보고한다. 같은 원형 행에 `repeat`가 둘이면 `TPL_CONFLICT`. 표가 지워지거나 교체되면 그 표의 `repeat`·`tableProps`·`resize`는 버리고 `dropped`에 남긴다. 행 삭제와 표 액션이 같은 표에 있으면, 지워지는 행 안의 편집은 빼고 남은 행에 적용한다(지운 행만 가리키는 항목은 `dropped`).
+- 조건이 거짓인 `repeat`: 원형 행을 그대로 둔다. 그 행의 `{{<as>.…}}`와 `{{<index>}}`는 채우지 않고 `skipped`에 `REPEAT_INACTIVE`로 남긴다(오류가 아니다).
+- 저장 게이트는 그대로 적용된다. 예상 수량 증감(표 행 `tableRows`, 셀 `tableCells` 포함)이 보고서에 들어가 수량 대조에 쓰인다.
+- 편집이 0건인 표 액션(비율 1, 이미 그 값인 설정)은 구역을 바뀐 것으로 치지 않는다. 줄 배치 캐시도 그대로다.
+- 오류 코드: `TABLE_NOT_FOUND`, `TABLE_BAD_ARG`, `TABLE_IRREGULAR`, `TABLE_SPAN_CONFLICT`, `TABLE_RELATIVE_SIZE`, `TABLE_UNSUPPORTED`, `TABLE_SPLITS_FIELD`, `TABLE_INTERNAL`, `DATA_NOT_ARRAY`, `REPEAT_ANCHOR_LOST`. 건너뜀 `REPEAT_INACTIVE`. 경고 `TABLE_FRAGMENT_EXTRA`(원형으로 쓴 조각에 표 말고 다른 것이 있음).
+
+**한계**
+
+- 병합이 행 전체를 덮는 경우는 거절한다. 1×1 셀을 더 쪼개지 못한다.
+- 채움 단계의 행 삭제(`delete`의 `scope:"row"`, 원소 0개 `repeat`)가 셀을 가로지르는 누름틀을 자르는 경우는 계획 단계에서 잡지 않는다. 저장 게이트가 막는다(출력 없음).
+- 머리말·꼬리말 컨트롤이 든 행이나 표를 복제하면 그 컨트롤 id가 복사본에도 같은 값으로 남는다(조각 가져오기도 같다. 실제 문서 3건에서 관측, 한컴은 열었다. 뜻에 미치는 영향은 확인하지 못했다).
+- 채움 단계에서 행을 지워도 표의 높이 값은 줄지 않는다(S3b부터의 동작. 한컴은 행 높이로 다시 계산한다).
+- 셀 영역 목록(`cellzoneList`)이 있는 표는 구조 연산(행·열 삽입·삭제, 병합·분할)을 `TABLE_UNSUPPORTED`로 거절한다(실제 문서의 표 92개). 설정과 크기 연산은 된다(셀 주소가 바뀌지 않는다).
+- 아주 좁은 열(너비 1 등)은 한컴이 넓혀서 그린다. 그런 표는 한컴이 읽은 표 너비가 문서 값과 다르다(실제 문서 1건에서 관측).
+- 열 삽입·복제로 표가 쪽 너비를 넘어도 경고하지 않는다.
+- 셀 세로 정렬과 셀 여백은 한컴 자동화로 읽을 수 없어 다시 파싱한 값으로만 확인했다.
+- 셀보다 넓은 내용의 가로 잘림은 다루지 않는다.
 
 ## 8. S3 — 검사·채움·템플릿·CLI
 
@@ -640,7 +695,10 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | --- | --- | --- |
 | `fill` | `anchor`, `value`(`{path}` 또는 `{text}`) | 앵커 자리의 글을 값으로 바꾼다 |
 | `delete` | `anchor`, `scope?`(`row`) | `line`: 문단 삭제. `object`: 그 객체만 든 문단이면 문단째, 아니면 객체 요소만 삭제. `cell`+`scope:"row"`: 표 행 삭제 |
-| `inject` | `anchor`(line), `position`(`before`·`after`·`replace`), `fragment`(조각 JSON 경로 또는 내장 객체) | 조각을 가져와 넣는다. 조각 안의 `{{}}`도 같은 데이터로 채운다 |
+| `inject` | `anchor`(line), `position`(`before`·`after`·`replace`), `fragment`(조각 JSON 경로 또는 내장 객체), `fitTable?`(`"allowBreak"`) | 조각을 가져와 넣는다. 조각 안의 `{{}}`도 같은 데이터로 채운다 |
+| `tableProps` | `anchor`(표 또는 `cell`), `table?`(`treatAsChar`, `pageBreak`, `repeatHeader`, `cellSpacing`, `outMargin`, `inMargin`, `hAlign`), `cells?`(`[{ rows, cols, props }]`: `vertAlign`, `lineWrap`, `header`, `margin`, `protect`) | 표·셀 설정을 바꾼다(7.9) |
+| `resize` | `anchor`(표), `columns` 또는 `width` 또는 `scale` 중 하나, `rowHeights?` | 열 너비·표 너비·행 높이(단위 HWPUNIT) |
+| `repeat` | `anchor`(cell: 원형 행), `each`(`{path}`), `as?`(기본 `item`), `index?` | 배열 원소마다 원형 행을 복제하고 채운다 |
 | `insertText` | `anchor`(line), `position`, `value`, `style`(`inherit` 또는 `{ paraPrIDRef, charPrIDRef, styleIDRef }`) | 일반 텍스트를 새 문단으로 넣는다. 값의 줄바꿈마다 문단을 나눈다. `inherit`는 앵커 문단의 문단모양·스타일과 첫 run의 글자모양을 쓴다 |
 
 **데이터 묶음**
@@ -763,6 +821,8 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | `hwpx validate <파일> [--baseline 원본] [--strict] [--json]` | 검사 |
 | `hwpx diff <원본> <결과> [--json]` | 항목별 동일 여부와 수량 비교 |
 | `hwpx compile <파일> -o 승격본 --experimental` | `{{}}`를 누름틀로 |
+| `hwpx table list <파일> [--json]` | 표 목록: 위치, 행×열, 너비, 글자처럼 취급, 쪽 나눔, 제목 행 반복, 병합 수. 글 내용은 내지 않는다 |
+| `hwpx table set <파일> --table 구역:순번 [--treat-as-char on\|off] [--page-break cell\|none\|table] [--repeat-header on\|off] [--width N \| --scale X \| --columns a,b,c] -o 출력 [--mode …] [--report r.json]` | 최상위 표 하나의 설정·크기 변경(게이트 포함) |
 
 - `fill`은 확장자로 형식을 고른다. `.hwpx`는 저장 게이트를 거치고, `.md`·`.txt`는 텍스트 어댑터(9절)를 거친다. 텍스트 전용 옵션 `--fill-in-code`. 텍스트에는 `--mode`·`--reissue-internal`을 줄 수 없다(종료 코드 2).
 - `inspect`도 `.md`·`.txt`를 받는다(블록·표·코드 블록 수와 `{{}}` 목록. 코드 블록 안의 표기는 따로 센다). 그 밖의 명령은 `.hwpx`만 받는다.
@@ -861,3 +921,10 @@ HWPX가 우선이다. md·txt는 같은 규칙·데이터 계층(8.2의 조건·
 - Markdown 지원 범위: 빈 줄 덩어리, 울타리 코드 블록, 파이프 표, 한 줄 `#` 제목. 목록·인용문·HTML 블록·들여쓴 코드·front matter는 구조를 해석하지 않고 문단으로 다룬다. 목록·인용문 안의 울타리와 인라인 코드는 보호하지 않는다. 값의 Markdown 특수문자는 이스케이프하지 않는다.
 - 템플릿과 데이터 묶음은 `readTemplate`·`readDataset`으로 읽은 것을 넘긴다(읽기 함수가 기본 옵션을 채운다).
 - 규모: 48,000블록 0.26초.
+
+### 9.2 표 액션 (S5, 2026-10-01)
+
+- `repeat`: Markdown 파이프 표에서 동작한다. 앵커는 `cell`(원형 행). 원소마다 원형 행 줄을 복제하고 `{{<as>.이름}}`, `{{<index>}}`, 전체 경로를 HWPX와 같은 규칙으로 채운다(같은 함수를 쓴다). 길이 0이면 원형 행을 지운다. 머리행은 `FILL_TABLE_HEADER`로 거절한다. 값의 `|`는 이스케이프하고 줄바꿈은 거부한다. 출력에서 반복 행을 다시 읽어 계획과 대조한다. txt에는 표가 없어 앵커 오류가 난다.
+- `tableProps`, `resize`: 텍스트 형식에는 표 설정과 크기가 없다. 적용하지 않고 보고서의 `skipped`에 `TEXT_NOT_APPLICABLE`로 남긴다(오류가 아니다. 같은 템플릿을 HWPX와 md에 함께 쓸 수 있다). 조건이 거짓인 규칙은 남기지 않는다.
+- `inject`의 `fitTable`은 무시한다.
+- 같은 템플릿·데이터를 HWPX와 md에 적용하면 반복 행의 셀 글이 같다(테스트).
