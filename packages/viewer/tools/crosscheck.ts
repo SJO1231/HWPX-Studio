@@ -10,7 +10,7 @@
 //   --oracles  rhwp 자신의 글·컨트롤 개수·표 크기와도 대조한다(느리다).
 //   --timing   쪽 수 상위 N개 문서의 열기·그리기·글자 배치·클릭 시간을 잰다(기본 3).
 //   --timing-only  글 대조는 하지 않고 쪽 수만 세어 --timing만 한다(다른 작업이 없는 때 시간만 다시 잴 때).
-//   --clicks   클릭 경로 대조도 한다: 문서마다 쪽에서 글자 사각형의 왼쪽·오른쪽 4분의 1, 빈 곳, 문서 좌표 없는 글, 머리말·꼬리말 글을 눌러
+//   --clicks   클릭 경로 대조도 한다: 문서마다 쪽에서 글자 사각형의 왼쪽·오른쪽 4분의 1, 빈 곳(런 옆·쪽 전체·표 칸 한가운데), 문서 좌표 없는 글, 머리말·꼬리말 글을 눌러
 //              실제 경로(`pick` → `locatePicked`)로 엔진 주소를 얻고, 글자는 엔진 논리 텍스트를 직접 읽어 눌린 글자와 비교한다(대응표를 쓰지 않는다).
 //   --after-fill  (--clicks와 함께) 문서의 채울 수 있는 첫 자리를 채운 결과(엔진이 줄 배치 정보를 지운 구역을 rhwp가 다시 배치한다)에서도 같은 대조를 한다.
 //   --clicks-only  글 대조(V2)는 건너뛰고 클릭 경로 대조만 한다.
@@ -217,6 +217,7 @@ function clickSummary(c: ClickReport): Record<string, unknown> {
     blankBy: c.blankBy,
     blankPlaces: c.blankPlaces,
     blankPlaceReasons: Object.fromEntries(Object.entries(c.blankPlaceReasons).sort((a, b) => b[1] - a[1])),
+    blankCellReasons: Object.fromEntries(Object.entries(c.blankCellReasons).sort((a, b) => b[1] - a[1])),
     reasons: Object.fromEntries(Object.entries(c.reasons).sort((a, b) => b[1] - a[1])),
     silent: c.silent,
     silentKinds: c.silentKinds,

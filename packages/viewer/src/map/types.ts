@@ -15,6 +15,23 @@ export type RhwpPosition = {
   cellPath?: CellStep[];
 };
 
+/**
+ * 쪽 렌더 트리가 가리키는 표 한 겹과 그 안에서 눌린 칸. `paragraph`는 표를 담은 문단 번호(바깥 표는 구역의 문단 번호, 안쪽 표는 그것을 담은 바깥 칸 안의 문단 번호),
+ * `control`은 그 문단 안의 컨트롤 번호(`CellStep.controlIndex`와 같은 번호 공간), `row`·`col`은 칸의 시작 행·열이다(rhwp의 칸 색인이 아니라 행·열이다: 칸 색인은 표에 따라 다르게 센다).
+ */
+export type TableStep = { paragraph: number; control: number; row: number; col: number };
+
+/** 쪽 글자 배치의 런 하나: 위치와 그 런의 글(첫 글자 순번 포함) */
+export type CellRun = { position: RhwpPosition; shown: Shown };
+
+/**
+ * 빈 곳을 누른 표 칸: 바깥 표부터 안쪽 표까지의 `TableStep`. 서버가 엔진 모델의 표·행·열로 칸을 찾는다(`locateInCell`).
+ * `runs`는 칸 안 줄 후보다: 칸 사각형 안에 그려진 같은 표의 문서 좌표 런(빈 런 포함)을 점에 가까운 줄부터(행 우선) 늘어놓은 것. 글 있는 줄이 없으면 비어 있거나 없다.
+ * rhwp는 폭이 좁은 빈 칸의 빈 런을 이웃 칸 자리에 그리기도 해서 런의 자리만으로는 그 칸의 런인지 알 수 없으므로, 서버가 후보를 차례로 엔진 문단으로 옮겨 이 칸의 것인 첫 후보를 쓴다
+ * (다른 칸의 글 있는 런이 먼저 걸리면 옮기지 않는다: `CELL_MISMATCH`).
+ */
+export type CellRef = { sectionIndex: number; steps: TableStep[]; runs?: CellRun[] };
+
 /** 엔진 주소. `path`는 `[문단, 하위목록, 문단, ...]`, `offset`은 문단 논리 텍스트의 UTF-16 오프셋 */
 export type EngineAddress = { sectionIndex: number; path: number[]; offset?: number };
 
@@ -73,6 +90,8 @@ export const REASONS = {
   nearestUnconfirmed: "NEAREST_UNCONFIRMED",
   /** 호출한 쪽이 문단까지만 허용하며 사유를 주지 않았다 */
   limited: "LIMITED",
+  /** 표 칸의 빈 곳을 눌렀는데 그 칸 사각형 안에 다른 칸의 글이 그려져 있다(칸과 글의 위치가 어긋난 표라 어느 문단인지 믿을 수 없다, `none`) */
+  cellMismatch: "CELL_MISMATCH",
 } as const;
 
 /**

@@ -2,8 +2,8 @@
 // 결과에는 문서 이름·글 내용을 넣지 않는다(수량과 사유 코드, 컨트롤 종류 이름만).
 import { draftAnchors, generate, openPackage, parseDocument, readDataset, readTemplate, type HwpxDocument, type ParagraphNode } from "../../hwpx-engine/src/index.ts";
 import { guideFields } from "../src/map/guides.ts";
-import { controlSlots, locatePicked, offsetTable, paragraphAtAddress, toEngineAddress, toRhwpPosition, type EngineAddress, type Located, type PickedPoint, type RhwpPosition, type Unlocated } from "../src/map/index.ts";
-import { hasDocCoords, isMarkerRun, MARKER_PARA_MIN, runLength, runPosition, sameParagraph, openDocument, type LayoutRun, type Pick, type ViewerDocument } from "../src/rhwp/index.ts";
+import { controlSlots, locateInCell, locatePicked, offsetTable, paragraphAtAddress, toEngineAddress, toRhwpPosition, type EngineAddress, type Located, type PickedPoint, type RhwpPosition, type Unlocated } from "../src/map/index.ts";
+import { hasDocCoords, isMarkerRun, MARKER_PARA_MIN, regionBoxes, runLength, runPosition, sameParagraph, openDocument, type LayoutRun, type Pick, type Rect, type ViewerDocument } from "../src/rhwp/index.ts";
 
 export type RunClass = "body" | "cell" | "nested" | "textbox" | "caption";
 export const RUN_CLASSES: RunClass[] = ["body", "cell", "nested", "textbox", "caption"];
@@ -597,7 +597,7 @@ export function measureDocument(bytes: Uint8Array, samples = 200): Timing | unde
 
 // ── 클릭 경로 대조(화면 좌표 → `pick` → 엔진 주소) ───────────────────────
 
-/** 눌린 점 하나를 실제 클릭 경로(뷰어 화면의 `pick`, 서버의 `locatePicked`)로 엔진 주소까지 옮긴 결과 */
+/** 눌린 점 하나를 실제 클릭 경로(뷰어 화면의 `pick`, 서버의 `locatePicked`·`locateInCell`)로 엔진 주소까지 옮긴 결과 */
 export type ClickResult = {
   pick: Pick;
   precision: "char" | "paragraph" | "none";
@@ -610,17 +610,23 @@ export type ClickResult = {
 export function clickAt(rdoc: ViewerDocument, doc: HwpxDocument, page: number, x: number, y: number): ClickResult {
   const pick = rdoc.pick(page, x, y);
   const position = pick.hit.position;
-  if (pick.limit === "none" || position === undefined) {
+  // 표 칸의 빈 곳은 위치 없이 칸(`pick.cell`)만 보낼 수 있다(글 있는 줄이 없는 칸)
+  if (pick.limit === "none" || (position === undefined && pick.cell === undefined)) {
     const out: ClickResult = { pick, precision: "none", trail: [] };
     if (pick.reason !== undefined) out.reason = pick.reason;
     return out;
   }
-  const point: PickedPoint = { position, limit: pick.limit };
-  if (pick.trailing === true) point.trailing = true;
-  if (pick.shown !== undefined) point.shown = pick.shown;
-  if (pick.guideText !== undefined) point.guide = pick.guideText;
-  if (pick.reason !== undefined) point.reason = pick.reason;
-  const located = locatePicked(doc, point);
+  let located: Located | Unlocated;
+  if (pick.cell !== undefined) located = locateInCell(doc, pick.cell);
+  else if (position === undefined) return { pick, precision: "none", trail: [] };
+  else {
+    const point: PickedPoint = { position, limit: pick.limit };
+    if (pick.trailing === true) point.trailing = true;
+    if (pick.shown !== undefined) point.shown = pick.shown;
+    if (pick.guideText !== undefined) point.guide = pick.guideText;
+    if (pick.reason !== undefined) point.reason = pick.reason;
+    located = locatePicked(doc, point);
+  }
   const out: ClickResult = { pick, precision: located.precision, trail: located.trail };
   if (located.reason !== undefined) out.reason = located.reason;
   if (located.address !== undefined) out.address = located.address;
@@ -695,7 +701,7 @@ export function innermostRect(rects: Boxed[], x: number, y: number): Boxed | und
  * - 점이 칸·글상자 사각형 안이면 칸·글상자 안 문단이어야 하고(`BLANK_BODY_IN_CONTAINER`), 그 사각형 안에 그려진 문서 좌표 런이 속한 문단이어야 한다(`BLANK_CELL`·`BLANK_TEXTBOX`).
  *   표 칸이면 엔진 주소를 rhwp 위치로 되돌려 표 경로로 묻는 칸 사각형이 점을 담는지도 본다(`BLANK_CELL_RECT`).
  */
-export function blankParagraphProblem(rdoc: ViewerDocument, doc: HwpxDocument, page: number, rects: Boxed[], x: number, y: number, result: ClickResult): string | undefined {
+export function blankParagraphProblem(rdoc: ViewerDocument, doc: HwpxDocument, page: number, rects: Boxed[], x: number, y: number, result: ClickResult, duplicateTables = false): string | undefined {
   const address = result.address;
   if (address === undefined) return undefined;
   const layout = rdoc.pageLayout(page);
@@ -711,6 +717,8 @@ export function blankParagraphProblem(rdoc: ViewerDocument, doc: HwpxDocument, p
   // 그려진 빈 런을 위치로 가를 수 없어 아래 칸 사각형 점검이 맡는다. 사각형 안에 글 있는 런이 하나도 없으면(`nonEmpty`가 0) 이 점검은 건너뛴다
   const keys = new Set<string>();
   let nonEmpty = 0;
+  // 눌린 문단을 담은 표(또는 글상자)를 담은 문단의 주소. 같은 표의 런만 증거로 센다: 쪽 끝에서 이어진 표의 칸 사각형은 쪽 밖까지 뻗어 다른 표의 글과 겹칠 수 있다(겹친 다른 표의 글은 이 칸의 증거가 아니다)
+  const owner = address.path.slice(0, -2);
   for (const run of layout.runs) {
     if (!hasDocCoords(run) || run.cellPath === undefined) continue;
     // 런의 왼쪽 끝 가운데(칸 폭보다 넓게 그려진 빈 런의 한가운데는 칸 밖일 수 있다)
@@ -719,7 +727,12 @@ export function blankParagraphProblem(rdoc: ViewerDocument, doc: HwpxDocument, p
     if (cx < inner.rect.x || cx > inner.rect.x + inner.rect.w || cy < inner.rect.y || cy > inner.rect.y + inner.rect.h) continue;
     const pos = runPosition(run);
     const found = pos === undefined ? undefined : toEngineAddress(doc, pos, { text: run.text, start: pos.charOffset });
-    if (found?.address !== undefined) keys.add(paragraphKey(found.address));
+    if (found?.address !== undefined && (found.address.sectionIndex !== address.sectionIndex || !owner.every((v, i) => found.address?.path[i] === v))) continue;
+    if (found?.address !== undefined) {
+      keys.add(paragraphKey(found.address));
+      // 칸 안에 그려진 안쪽 표의 글이면 그 표를 담은 바깥 칸 문단들도 이 사각형에 그려진 문단이다(바깥 칸의 빈 곳은 그 문단의 것이다)
+      for (let n = found.address.path.length - 2; n >= 1; n -= 2) keys.add(paragraphKey({ sectionIndex: found.address.sectionIndex, path: found.address.path.slice(0, n) }));
+    }
     if (run.text !== "") nonEmpty++;
   }
   const located = paragraphAtAddress(doc, address);
@@ -736,13 +749,38 @@ export function blankParagraphProblem(rdoc: ViewerDocument, doc: HwpxDocument, p
         const info = JSON.parse(rdoc.native.getCellInfoByPath(pos.sectionIndex, pos.parentParaIndex, JSON.stringify([...steps.slice(0, -1), { controlIndex: last.controlIndex, cellIndex: last.cellIndex, cellParaIndex: 0 }]))) as { row?: number; col?: number };
         // 쪽에 걸친 표는 칸마다 `pageIndex`가 있다(머리 행 반복 등으로 같은 칸이 여러 쪽에 나온다): 이 쪽의 칸만 본다
         const cell = cells.find((c) => c.row === info.row && c.col === info.col && c.pageIndex === page);
-        if (cell !== undefined && (x < cell.x - 0.6 || x > cell.x + cell.w + 0.6 || y < cell.y - 0.6 || y > cell.y + cell.h + 0.6)) return "BLANK_CELL_RECT";
+        // 같은 표가 한 쪽에 두 번 그려진 쪽(rhwp가 다시 배치한 문서에서 관측)은 이 응답이 앞의 것만 주므로 사각형으로 가를 수 없다
+        if (!duplicateTables && cell !== undefined && (x < cell.x - 0.6 || x > cell.x + cell.w + 0.6 || y < cell.y - 0.6 || y > cell.y + cell.h + 0.6)) return "BLANK_CELL_RECT";
       } catch {
         // 표 경로 응답을 못 받는 경우(캡션 등)는 사각형 점검만 건너뛴다
       }
     }
   }
   return undefined;
+}
+
+/** 쪽 컨트롤 배치에 같은 표(같은 `stableIndex`)가 둘 이상 나오는가(같은 표가 한 쪽에 두 번 그려졌다). */
+function hasDuplicateTables(rdoc: ViewerDocument, page: number): boolean {
+  const layout = JSON.parse(rdoc.native.getPageControlLayout(page)) as { controls?: { type?: string; stableIndex?: number[] }[] };
+  const seen = new Set<string>();
+  for (const c of layout.controls ?? []) {
+    if (c.type !== "table" || c.stableIndex === undefined) continue;
+    const key = c.stableIndex.join(".");
+    if (seen.has(key)) return true;
+    seen.add(key);
+  }
+  return false;
+}
+
+/**
+ * 쪽 렌더 트리에서 본문이 아닌 영역(바탕쪽·머리말·꼬리말·각주)의 글 상자와 사각형이 같고 본문의 글 상자와는 같지 않은 글 있는 런들.
+ * 이런 글은 문서 좌표가 본문 같아 보여도 본문 글이 아니므로, 눌렀을 때 본문·칸·글상자의 위치가 나오면 영역 오판이다(`ASIDE_TEXT_AS_*`).
+ */
+function asideRunsOf(rdoc: ViewerDocument, page: number): Set<LayoutRun> {
+  const boxes = regionBoxes(JSON.parse(rdoc.native.getPageRenderTree(page)));
+  const aside = [...boxes.master, ...boxes.header, ...boxes.footer, ...boxes.footnote];
+  const same = (a: Rect, r: LayoutRun): boolean => Math.abs(a.x - r.x) <= 0.6 && Math.abs(a.y - r.y) <= 0.6 && Math.abs(a.w - r.w) <= 0.6 && Math.abs(a.h - r.h) <= 0.6;
+  return new Set(rdoc.pageLayout(page).runs.filter((r) => r.text !== "" && aside.some((a) => same(a, r)) && !boxes.body.some((b) => same(b, r))));
 }
 
 export type PointKind = "glyph" | "blank" | "unpositioned" | "marker";
@@ -758,12 +796,14 @@ export type ClickReport = {
   /** 누른 점 수(종류별). glyph: 글자 사각형의 왼쪽·오른쪽 4분의 1, blank: 어느 런의 사각형 안도 아닌 점, unpositioned: 문서 좌표 없는 글, marker: 머리말·꼬리말·각주 본문 글 */
   presses: Record<PointKind, number>;
   byKind: Record<PointKind, KindCounts>;
-  /** 빈 곳 눌림을 점의 출처별로: `near`(글 있는 런 옆·쪽 모서리), `random`(쪽 전체에 고르게) */
-  blankBy: { near: KindCounts; random: KindCounts };
-  /** 빈 곳 눌림을 점이 든 자리별로(쪽 컨트롤 배치의 가장 작은 칸·글상자 사각형 기준): 본문, 표 칸, 글상자 */
+  /** 빈 곳 눌림을 점의 출처별로: `near`(글 있는 런 옆·쪽 모서리), `random`(쪽 전체에 고르게), `cell`(표 칸 한가운데) */
+  blankBy: { near: KindCounts; random: KindCounts; cell: KindCounts };
+  /** 빈 곳 눌림을 점이 든 자리별로(쪽 컨트롤 배치의 가장 작은 칸·글상자 사각형 기준): 본문, 표 칸, 글상자. 표 칸 한가운데(`cell` 출처)는 세지 않는다(이전 보고와 같은 표본으로 견주려고 `blankBy.cell`·`blankCellReasons`로 따로 센다) */
   blankPlaces: { body: KindCounts; cell: KindCounts; textbox: KindCounts };
-  /** 빈 곳 `paragraph`·`none`의 사유를 자리별로(키 `자리|사유`) */
+  /** 빈 곳 `paragraph`·`none`의 사유를 자리별로(키 `자리|사유`). `cell` 출처 눌림은 뺀다 */
   blankPlaceReasons: Record<string, number>;
+  /** `cell` 출처(표 칸 한가운데) 눌림의 `paragraph`·`none` 사유(키 사유) */
+  blankCellReasons: Record<string, number>;
   /** `paragraph`·`none`의 사유별 수량. 키는 `눌림 종류|사유`(영역만 알리는 `none`은 `REGION`) */
   reasons: Record<string, number>;
   /** 조용한 불일치(`char`인데 틀렸거나, 있어서는 안 되는 자리의 `char`) 사유별 수량 */
@@ -795,9 +835,10 @@ export function newClickReport(): ClickReport {
     sampledPages: 0,
     presses: { glyph: 0, blank: 0, unpositioned: 0, marker: 0 },
     byKind: { glyph: emptyKinds(), blank: emptyKinds(), unpositioned: emptyKinds(), marker: emptyKinds() },
-    blankBy: { near: emptyKinds(), random: emptyKinds() },
+    blankBy: { near: emptyKinds(), random: emptyKinds(), cell: emptyKinds() },
     blankPlaces: { body: emptyKinds(), cell: emptyKinds(), textbox: emptyKinds() },
     blankPlaceReasons: {},
+    blankCellReasons: {},
     reasons: {},
     silentKinds: {},
     silent: 0,
@@ -820,9 +861,10 @@ export function mergeClickReports(into: ClickReport, from: ClickReport): void {
     into.byKind[k].paragraph += from.byKind[k].paragraph;
     into.byKind[k].none += from.byKind[k].none;
   }
-  for (const o of ["near", "random"] as const) for (const k of ["char", "paragraph", "none"] as const) into.blankBy[o][k] += from.blankBy[o][k];
+  for (const o of ["near", "random", "cell"] as const) for (const k of ["char", "paragraph", "none"] as const) into.blankBy[o][k] += from.blankBy[o][k];
   for (const o of ["body", "cell", "textbox"] as const) for (const k of ["char", "paragraph", "none"] as const) into.blankPlaces[o][k] += from.blankPlaces[o][k];
   for (const [k, v] of Object.entries(from.blankPlaceReasons)) bump(into.blankPlaceReasons, k, v);
+  for (const [k, v] of Object.entries(from.blankCellReasons)) bump(into.blankCellReasons, k, v);
   for (const [k, v] of Object.entries(from.reasons)) bump(into.reasons, k, v);
   for (const [k, v] of Object.entries(from.silentKinds)) bump(into.silentKinds, k, v);
   for (const [k, v] of Object.entries(from.regionKinds)) bump(into.regionKinds, k, v);
@@ -835,8 +877,8 @@ export function mergeClickReports(into: ClickReport, from: ClickReport): void {
   into.ms += from.ms;
 }
 
-/** `origin`(빈 곳만): `near`는 글 있는 런의 오른쪽·위·왼쪽 옆과 쪽 모서리, `random`은 쪽 전체에 고르게 뿌린(시드 고정) 점 */
-type Press = { kind: PointKind; x: number; y: number; run?: LayoutRun; index?: number; quarter?: number; origin?: "near" | "random" };
+/** `origin`(빈 곳만): `near`는 글 있는 런의 오른쪽·위·왼쪽 옆과 쪽 모서리, `random`은 쪽 전체에 고르게 뿌린(시드 고정) 점, `cell`은 표 칸의 한가운데(글이 없는 표의 칸 포함) */
+type Press = { kind: PointKind; x: number; y: number; run?: LayoutRun; index?: number; quarter?: number; origin?: "near" | "random" | "cell" };
 
 const isPrivateGlyph = (ch: string): boolean => {
   const cp = ch.codePointAt(0) ?? 0;
@@ -855,7 +897,7 @@ function spread<T>(items: T[], cap: number): T[] {
 }
 
 /** 쪽의 누를 점들: 런마다 첫·가운데·마지막 글자의 왼쪽·오른쪽 4분의 1, 문서 좌표 없는 글, 머리말·꼬리말·각주 글, 빈 곳. */
-function pressesOf(layout: { runs: LayoutRun[] }, width: number, height: number, cap: number, seed: number): Press[] {
+function pressesOf(layout: { runs: LayoutRun[] }, width: number, height: number, cap: number, seed: number, cells: Rect[] = []): Press[] {
   const out: Press[] = [];
   const runs = layout.runs;
   const docRuns = spread(runs.filter((r) => hasDocCoords(r) && r.text !== ""), cap);
@@ -915,6 +957,12 @@ function pressesOf(layout: { runs: LayoutRun[] }, width: number, height: number,
     const y = rand() * height;
     if (!inside(x, y)) out.push({ kind: "blank", x, y, origin: "random" });
   }
+  // 표 칸의 한가운데: 글이 없는 표는 런 옆이나 쪽 전체에 뿌린 점으로는 칸을 거의 누르지 못한다
+  for (const r of spread(cells, 30)) {
+    const x = r.x + r.w / 2;
+    const y = r.y + r.h / 2;
+    if (!inside(x, y)) out.push({ kind: "blank", x, y, origin: "cell" });
+  }
   return out;
 }
 
@@ -959,7 +1007,10 @@ export function checkClicks(
       const layout = rdoc.pageLayout(page);
       const info = rdoc.pageInfo(page);
       const rects = controlRects(rdoc, page);
-      for (const press of pressesOf(layout, info.width, info.height, options.runCap ?? 80, 4242 + page)) {
+      const asideRuns = asideRunsOf(rdoc, page);
+      const duplicateTables = hasDuplicateTables(rdoc, page);
+      const cellRects = rects.filter((b) => b.kind === "cell").map((b) => b.rect);
+      for (const press of pressesOf(layout, info.width, info.height, options.runCap ?? 80, 4242 + page, cellRects)) {
         report.presses[press.kind]++;
         let r: ClickResult;
         try {
@@ -972,7 +1023,9 @@ export function checkClicks(
         const counts = report.byKind[press.kind];
         counts[r.precision]++;
         if (press.origin !== undefined) report.blankBy[press.origin][r.precision]++;
-        if (press.kind === "blank") {
+        if (press.kind === "blank" && press.origin === "cell") {
+          if (r.precision !== "char") bump(report.blankCellReasons, r.reason ?? "REGION");
+        } else if (press.kind === "blank") {
           const inner = innermostRect(rects, press.x, press.y);
           const place = inner === undefined ? "body" : inner.kind === "cell" ? "cell" : "textbox";
           report.blankPlaces[place][r.precision]++;
@@ -993,6 +1046,11 @@ export function checkClicks(
             }
           }
         }
+        // 본문 밖 영역(바탕쪽 등)의 글(렌더 트리의 글 상자로 가른다)을 눌렀는데 화면이 본문·칸·글상자의 글자 위치를 냈다(서버가 엔진 문단 글과 맞지 않아 거절해도 화면의 영역 판단은 틀렸다)
+        if (press.kind === "glyph" && press.run !== undefined && asideRuns.has(press.run) && r.pick.hit.position !== undefined && (region === "body" || region === "cell" || region === "textbox")) {
+          report.regionBad++;
+          bump(report.regionKinds, `ASIDE_TEXT_AS_${region}`);
+        }
         if (press.kind === "marker" && region !== "header" && region !== "footer" && region !== "footnote") {
           report.regionBad++;
           bump(report.regionKinds, `MARKER_AS_${region}`);
@@ -1005,10 +1063,11 @@ export function checkClicks(
           const pos = r.pick.hit.position;
           // 빈 곳: 점을 담은 칸·글상자 사각형 안의 문단(칸 밖이면 점의 높이를 담는 본문 줄의 문단)이어야 한다
           if (press.kind === "blank") {
-            const problem = blankParagraphProblem(rdoc, doc, page, rects, press.x, press.y, r);
+            const problem = blankParagraphProblem(rdoc, doc, page, rects, press.x, press.y, r, duplicateTables);
             if (problem !== undefined) silent(problem);
           }
-          if (para !== undefined && pos !== undefined && !r.trail.some((k) => k === "container" || k.endsWith(":caption"))) {
+          // 표 칸의 빈 곳(`pick.cell`)은 rhwp의 위치(첫 후보)가 아니라 렌더 트리의 칸(행·열)으로 정한 칸의 문단이라 글 대조 대상이 아니다(위의 칸 점검이 맡는다)
+          if (para !== undefined && pos !== undefined && r.pick.cell === undefined && !r.trail.some((k) => k === "container" || k.endsWith(":caption"))) {
             try {
               if (oracle.paragraphText(pos) !== projectedText(para)) silent(`PARAGRAPH_ORACLE|${press.kind}`);
             } catch {

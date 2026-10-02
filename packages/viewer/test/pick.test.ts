@@ -1,7 +1,7 @@
 // 눌린 점 아래의 글자 찾기(rhwp/pick.ts)의 순수 기하 판단. rhwp 없이 만든 글자 배치로 시험한다.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { MARKER_PARA_MIN, caretIndex, classifyPoint, glyphIndexAt, glyphsAt, nearestLineRun, nearestRunOf, type LayoutRun, type PageLayout } from "../src/rhwp/index.ts";
+import { MARKER_PARA_MIN, caretIndex, classifyPoint, glyphIndexAt, glyphsAt, nearestLineRun, nearestLineRuns, nearestRunOf, type LayoutRun, type PageLayout } from "../src/rhwp/index.ts";
 
 /** 글자 폭이 모두 10인 런. `paraIdx`가 없으면 문서 좌표 없는 런(쪽 번호·안내문 등)이다. */
 function run(text: string, x: number, y: number, para?: number, charStart = 0, extra: Partial<LayoutRun> = {}): LayoutRun {
@@ -138,4 +138,16 @@ test("nearestRunOf: 가장 가까운 줄의 런이 rhwp가 가리킨 문단의 �
   assert.equal(nearestRunOf(layout, para(2), 310, 60), undefined, "같은 높이 줄이 아닌 문단");
   assert.equal(nearestRunOf(layout, para(2), 310, 82), longer);
   assert.equal(nearestRunOf(layout, para(7), 310, 60), undefined, "그 문단의 런이 쪽에 없다");
+});
+
+test("nearestLineRuns: nearestLineRun을 되풀이한 순서(점의 높이를 담는 줄에서 가로로 가까운 런부터, 다음에 세로로 가까운 줄)이고 limit개까지다", () => {
+  const layout: PageLayout = {
+    runs: [run("가", 0, 100, 0), run("나다", 200, 100, 1), run("라", 0, 140, 2), run("마", 100, 300, 3)],
+  };
+  const order = (x: number, y: number, limit: number): string[] => nearestLineRuns(layout, x, y, limit).map((r) => r.text);
+  // 점(190, 110): 같은 줄의 `나다`(가로 거리 10)가 `가`(180)보다 먼저, 다음 줄 `라`, 마지막 `마`
+  assert.deepEqual(order(190, 110, 10), ["나다", "가", "라", "마"]);
+  assert.deepEqual(order(190, 110, 2), ["나다", "가"]);
+  assert.equal(order(190, 110, 1)[0], nearestLineRun(layout, 190, 110)?.text);
+  assert.deepEqual(nearestLineRuns({ runs: [] }, 0, 0, 5), []);
 });

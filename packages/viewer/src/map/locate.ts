@@ -1,17 +1,12 @@
 import type { HwpxDocument, ParagraphNode, SectionModel, SubListNode } from "../../../hwpx-engine/src/index.ts";
 import { logicalOffsetAt, noteLabelStarts, offsetTable, rhwpOffsetAt, type OffsetTable } from "./offsets.ts";
+import { codePointLength } from "../rhwp/layout.ts";
 import { hasNumbering } from "./numbering.ts";
 import { controlSlots, type ControlSlot } from "./slots.ts";
-import { REASONS, TABLE_CAPTION_CELL, type CellStep, type EngineAddress, type LocateEdge, type Located, type PickedPoint, type RhwpPosition, type Shown, type Unlocated } from "./types.ts";
+import { REASONS, TABLE_CAPTION_CELL, type CellRef, type CellStep, type EngineAddress, type LocateEdge, type Located, type PickedPoint, type RhwpPosition, type Shown, type Unlocated } from "./types.ts";
 
 type Step = { paragraph: ParagraphNode; path: number[]; trail: string[] };
 type StepFail = { reason: string; trail: string[] };
-
-const codePoints = (s: string): number => {
-  let n = 0;
-  for (const _ of s) n++;
-  return n;
-};
 
 /**
  * 컨트롤의 `cellIndex`번째 하위 목록과 그 종류 표지.
@@ -80,6 +75,21 @@ function resolveParagraph(section: SectionModel, pos: RhwpPosition): Step | Step
 const isPrivateUse = (cp: number): boolean => (cp >= 0xe000 && cp <= 0xf8ff) || (cp >= 0xf0000 && cp <= 0xffffd) || (cp >= 0x100000 && cp <= 0x10fffd);
 const privateOnly = (s: string): boolean => s !== "" && [...s].every((c) => isPrivateUse(c.codePointAt(0) ?? 0));
 
+/**
+ * 안내문(`guide`)을 누른 빈 런의 순번 `slot`이 가리키는 안내문 상태 누름틀의 경계(`at`). 없으면 undefined.
+ * 같은 글의 안내문이 정확히 그 순번에 있으면 그것이다. rhwp는 빈 런의 첫 글자 순번을 앞의 개체(글자처럼 취급 그림 등)를 덜 세어 내기도 하므로,
+ * 같은 글의 안내문이 문단에 하나뿐일 때만 순번이 `[at - 앞 개체 수, at]` 안에 들면 그 안내문으로 본다(둘 이상이면 어느 쪽인지 알 수 없어 정확히 같은 순번만 받는다).
+ */
+function guideSlot(table: OffsetTable, guide: string, slot: number): number | undefined {
+  const same = table.guides.filter((g) => g.text === guide);
+  const exact = same.find((g) => g.at === slot);
+  if (exact !== undefined) return exact.at;
+  const only = same.length === 1 ? same[0] : undefined;
+  if (only === undefined) return undefined;
+  const objects = table.slots.slice(0, only.at).filter((s) => s.shown === "").length;
+  return slot >= only.at - objects && slot <= only.at ? only.at : undefined;
+}
+
 type Confirmed = { ok: true; /** 런의 첫 글자의 칸 순번(개체를 모두 센 순번) */ start: number } | { ok: false; reason: string; paragraphWrong: boolean };
 
 /** 런에 객체 자리 글자(U+FFFC)가 들어 있는가. rhwp가 개체를 글자처럼 그린 런(개체가 셋 이상 이어질 때 나온다)이며 엔진의 글과 대조할 수 없다. */
@@ -94,7 +104,7 @@ const hasObjectChar = (s: string): boolean => s.includes("\ufffc");
  * 그런 자리가 하나뿐일 때만 정하고, 없으면 글이 다르다는 사유를, 둘 이상이면 `AMBIGUOUS_RUN`을 돌려준다(문단 단위로 내려간다).
  */
 function confirm(table: OffsetTable, pos: RhwpPosition, shown: Shown): Confirmed {
-  const n = codePoints(shown.text);
+  const n = codePointLength(shown.text);
   const delta = pos.charOffset - shown.start;
   const range = { ok: false, reason: REASONS.shownRange, paragraphWrong: false } as const;
   if (!Number.isInteger(shown.start) || shown.start < 0) return range;
@@ -156,6 +166,8 @@ export function toEngineAddress(doc: HwpxDocument, pos: RhwpPosition, shown?: Sh
 
   // 엔진 칸 순번으로 옮긴 누른 위치
   let slot = pos.charOffset;
+  // 런이 차지한 칸의 끝(런 시작 + 글자 수). 누른 위치가 아니라 런 전체가 믿을 수 있는 칸 안에 있어야 한다
+  let runEnd = slot;
   if (shown !== undefined) {
     const checked = confirm(table, pos, shown);
     if (!checked.ok) {
@@ -169,14 +181,18 @@ export function toEngineAddress(doc: HwpxDocument, pos: RhwpPosition, shown?: Sh
       return { precision: "none", reason: checked.reason, trail: found.trail };
     }
     slot = checked.start + (pos.charOffset - shown.start);
+    runEnd = checked.start + codePointLength(shown.text);
   }
   if (!Number.isInteger(slot) || slot < 0 || slot > table.slots.length) return down(REASONS.offsetOutOfRange);
-  if (table.untrustedReason !== undefined && (slot > table.trusted || (shown !== undefined && slot + codePoints(shown.text) > table.trusted))) {
+  const guideAt = guide === undefined ? undefined : guideSlot(table, guide, slot);
+  if (guideAt !== undefined) {
+    slot = guideAt;
+    runEnd = guideAt;
+  }
+  if (table.untrustedReason !== undefined && (slot > table.trusted || runEnd > table.trusted)) {
     return down(`${REASONS.widthUnknown}:${table.untrustedReason}`);
   }
-  if (guide !== undefined && !table.guides.some((g) => g.at === slot && g.text === guide)) {
-    return { precision: "none", reason: REASONS.unpositionedText, trail: found.trail };
-  }
+  if (guide !== undefined && guideAt === undefined) return { precision: "none", reason: REASONS.unpositionedText, trail: found.trail };
   const offset = logicalOffsetAt(table, slot, edge);
   if (offset === undefined) return down(REASONS.offsetOutOfRange);
   return { address: { ...address, offset }, precision: "char", trail: found.trail };
@@ -256,4 +272,63 @@ export function paragraphAtAddress(doc: HwpxDocument, address: EngineAddress): P
     paragraph = paragraph.subLists[path[n] ?? -1]?.paragraphs[path[n + 1] ?? -1];
   }
   return paragraph;
+}
+
+/**
+ * 렌더 트리의 표 경로(`CellRef`: 표를 담은 문단 번호·컨트롤 번호·눌린 칸의 행·열)가 가리키는 엔진 칸. 칸 안 첫 문단 앞까지의 엔진 경로(`prefix`: `[문단, 하위목록, …]`)와 칸의 하위 목록.
+ * 칸은 rhwp의 칸 색인이 아니라 엔진 모델의 행·열로 찾는다(rhwp의 칸 색인은 표에 따라 병합 칸 뒤에서 어긋난다).
+ */
+function resolveCell(doc: HwpxDocument, ref: CellRef): { prefix: number[]; trail: string[]; sub: SubListNode } | StepFail {
+  const section = doc.sections[ref.sectionIndex];
+  if (section === undefined) return { reason: REASONS.sectionNotFound, trail: [] };
+  const prefix: number[] = [];
+  const trail: string[] = [];
+  let sub: SubListNode | undefined;
+  for (const step of ref.steps) {
+    const owner = (sub === undefined ? section.paragraphs : sub.paragraphs)[step.paragraph];
+    if (owner === undefined) return { reason: REASONS.paragraphNotFound, trail };
+    const slots = controlSlots(owner);
+    const slot = slots[step.control];
+    if (slot === undefined) return { reason: REASONS.controlNotFound, trail };
+    if (!slot.known || slots.slice(0, step.control).some((s) => !s.known)) return { reason: REASONS.controlUnknown, trail };
+    if (slot.cells === undefined) return { reason: REASONS.controlNotContainer, trail };
+    const cell = slot.cells.find((c) => c.row === step.row && c.col === step.col);
+    if (cell?.subList == null) return { reason: REASONS.cellNotFound, trail };
+    prefix.push(step.paragraph, owner.subLists.indexOf(cell.subList));
+    trail.push(slot.kind);
+    sub = cell.subList;
+  }
+  return sub === undefined ? { reason: REASONS.cellNotFound, trail } : { prefix, trail, sub };
+}
+
+/**
+ * 빈 곳을 누른 표 칸의 문단. 칸(`cell`)은 렌더 트리의 표 경로로, 엔진 모델의 표·행·열에서 찾는다.
+ * - 칸 안 줄 후보(`cell.runs`, 점에 가까운 줄부터)를 차례로 `locatePicked`로 엔진 문단에 옮겨 보고, 그 문단이 위에서 찾은 칸 안의 문단인 첫 후보를 쓴다. `paragraph`(`NEAREST_LINE`).
+ *   후보가 칸 안 안쪽 표·글상자의 글이면(엔진 주소가 칸 문단보다 깊다) 그것을 담은 칸 문단이 칸의 줄이다.
+ *   - 글이 빈 후보는 확인할 글이 없다: 다른 칸의 문단으로 옮겨지거나 옮겨지지 않으면 건너뛴다(rhwp가 폭이 좁은 빈 칸의 빈 런을 이웃 칸 자리에 그리는 것이 관측됐다).
+ *   - 글 있는 후보는 글이 증거다: 엔진 문단의 글과 달라 옮겨지지 않으면(`none`) 그 결과를, 다른 칸의 문단으로 옮겨지면 `none`(`CELL_MISMATCH`)을 낸다 —
+ *     렌더 트리의 칸(행·열)과 그 사각형 안에 그려진 글의 칸이 다르면 칸과 글의 위치가 어긋난 표이므로 더 먼 줄이나 칸의 첫 문단으로 바꾸지 않는다.
+ * - 이 칸의 후보가 없으면(글이 없는 표, 후보가 모두 글이 빈 다른 칸의 런) 그 칸의 첫 문단이다. `paragraph`(`NEAREST_LINE`).
+ */
+export function locateInCell(doc: HwpxDocument, cell: CellRef): Located | Unlocated {
+  const found = resolveCell(doc, cell);
+  if ("reason" in found) return { precision: "none", reason: found.reason, trail: found.trail };
+  const { prefix, trail, sub } = found;
+  for (const run of cell.runs ?? []) {
+    const located = locatePicked(doc, { position: run.position, shown: run.shown, limit: "paragraph", reason: REASONS.nearestLine });
+    const text = run.shown.text !== "";
+    if (located.precision === "none") {
+      if (text) return located;
+      continue;
+    }
+    const path = located.address.path;
+    if (located.address.sectionIndex === cell.sectionIndex && path.length > prefix.length && prefix.every((v, i) => path[i] === v)) {
+      if (path.length === prefix.length + 1) return located;
+      // 칸 문단 안 안쪽 표·글상자의 글: 그것을 담은 칸 문단
+      return { address: { sectionIndex: cell.sectionIndex, path: path.slice(0, prefix.length + 1) }, precision: "paragraph", reason: REASONS.nearestLine, trail };
+    }
+    if (text) return { precision: "none", reason: REASONS.cellMismatch, trail: located.trail };
+  }
+  if (sub.paragraphs[0] === undefined) return { precision: "none", reason: REASONS.cellParagraphNotFound, trail };
+  return { address: { sectionIndex: cell.sectionIndex, path: [...prefix, 0] }, precision: "paragraph", reason: REASONS.nearestLine, trail };
 }

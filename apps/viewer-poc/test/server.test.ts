@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { createViewerApp, HOST, PORT, type ViewerApp } from "../src/app.ts";
 import { defaultDraftIndex } from "../web/choice.ts";
 import type { AnchorDraftJson, FillResponse, LocateResponse, MarksResponse, OpenResponse } from "../src/api-types.ts";
-import { FIELD_BEGIN, FIELD_END, P, R, T, ensureRhwp, fixtureNames, readFixture, synth } from "../../../packages/viewer/test/helpers.ts";
+import { FIELD_BEGIN, FIELD_END, P, R, SUBP, T, TBL, ensureRhwp, fixtureNames, readFixture, synth } from "../../../packages/viewer/test/helpers.ts";
 import { hasDocCoords, openDocument, runLength, runPosition, type LayoutRun, type ViewerDocument } from "../../../packages/viewer/src/rhwp/index.ts";
 
 let app: ViewerApp;
@@ -720,4 +720,173 @@ test("D7: 세션 저장소는 열린 수 한도에 더해 총 바이트 한도(�
   const g2 = grow.open("g2", new Uint8Array(doc));
   grow.replace(g2, new Uint8Array(doc));
   assert.deepEqual([grow.get(g1.id), grow.get(g2.id) === undefined], [undefined, false]);
+});
+
+test("리뷰 11: 채우기 요청의 앵커가 id를 들고 와도 서버가 붙인 id(a0, a1, …)가 이기고, 규칙이 그 앵커를 가리킨다", async () => {
+  const session = await openFixture("hancom/ph-single");
+  const holders = (await marksOf(session)).marks.filter((m) => m.kind === "placeholder");
+  assert.ok(holders.length >= 2);
+  const [h0, h1] = holders;
+  assert.ok(h0 !== undefined && h1 !== undefined);
+  // 첫째는 없는 id, 둘째는 첫째 자리의 id(a0)를 들고 온다: 서버 id가 이기지 않으면 id가 겹치거나 규칙이 다른 앵커를 가리킨다
+  const res = await post(`/api/session/${session.session}/fill`, {
+    fills: [
+      { anchor: { ...h0.anchor, id: "ghost" }, value: "알파" },
+      { anchor: { ...h1.anchor, id: "a0" }, value: "베타" },
+    ],
+  });
+  const r = await json<FillResponse>(res);
+  assert.ok(r.ok, JSON.stringify(r));
+  assert.deepEqual(r.summary.actions.map((a) => [a.anchor, a.targets]), [["a0", 1], ["a1", 1]]);
+  const doc = await viewOf(session);
+  try {
+    assert.equal(paragraphText(doc, { paragraphIndex: 1 }), "사업명: 알파 입니다.");
+    assert.match(paragraphText(doc, { paragraphIndex: 2 }), /^기간: 베타 /);
+  } finally {
+    doc.free();
+  }
+});
+
+test("리뷰 10: /api 아래의 거절(허용되지 않은 Host)과 서버 내부 오류도 { error: { code, message } } JSON이고, API 밖은 글이다", async () => {
+  const get = (path: string, host: string): Promise<{ status: number; type: string; body: string }> =>
+    new Promise((resolve, reject) => {
+      const req = request({ host: HOST, port, path, method: "GET", headers: { Host: host } }, (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c: Buffer) => chunks.push(c));
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, type: String(res.headers["content-type"]), body: Buffer.concat(chunks).toString("utf8") }));
+      });
+      req.on("error", reject);
+      req.end();
+    });
+  const denied = await get("/api/fixtures", "evil.example");
+  assert.equal(denied.status, 403);
+  assert.match(denied.type, /^application\/json/);
+  const parsed = JSON.parse(denied.body) as { error: { code: string; message: string } };
+  assert.equal(typeof parsed.error.code, "string");
+  assert.equal(typeof parsed.error.message, "string");
+  // API 밖(정적 파일)은 그대로 글이다
+  const plain = await get("/", "evil.example");
+  assert.equal(plain.status, 403);
+  assert.match(plain.type, /^text\/plain/);
+
+  // 서버 내부 오류 응답을 만드는 규칙(같은 함수를 호스트 거절과 마지막 catch가 쓴다)
+  const { errorReply } = await import("../src/app.ts");
+  assert.match(errorReply("/api/session/x/locate", "INTERNAL", "서버 내부 오류입니다.").contentType, /^application\/json/);
+  assert.deepEqual(JSON.parse(errorReply("/api/open", "INTERNAL", "서버 내부 오류입니다.").body), { error: { code: "INTERNAL", message: "서버 내부 오류입니다." } });
+  assert.match(errorReply("/app/main.ts", "INTERNAL", "서버 내부 오류입니다.").contentType, /^text\/plain/);
+});
+
+// ── 리뷰 15: 표 칸의 빈 곳(cell) ──────────────────────────────────
+
+async function openBytes(bytes: Uint8Array): Promise<OpenResponse> {
+  const res = await fetch(`${base}/api/open`, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: new Uint8Array(bytes) });
+  assert.equal(res.status, 200);
+  return json<OpenResponse>(res);
+}
+
+test("리뷰 15: 글이 없는 표의 빈 칸을 누르면 칸만(cell) 보내도 서버가 엔진 표·행·열로 그 칸의 첫 문단과 셀 초안을 낸다", async () => {
+  const empty = Array.from({ length: 2 }, () => [SUBP(""), SUBP("")]);
+  const session = await openBytes(synth([P(R(TBL(empty, "0")))]));
+  const doc = await viewOf(session);
+  try {
+    const cells = JSON.parse(doc.native.getPageControlLayout(0)).controls.find((c: { type: string }) => c.type === "table").cells as { row: number; col: number; x: number; y: number; w: number; h: number }[];
+    const target = cells.find((c) => c.row === 1 && c.col === 1);
+    assert.ok(target !== undefined);
+    const picked = doc.pick(0, target.x + target.w / 2, target.y + target.h / 2);
+    assert.ok(picked.cell !== undefined && picked.limit === "paragraph" && picked.reason === "NEAREST_LINE");
+    assert.deepEqual(picked.cell.steps, [{ paragraph: 1, control: 0, row: 1, col: 1 }]);
+    const located = await locate(session, { from: { cell: picked.cell } });
+    assert.deepEqual([located.precision, located.reason, located.trail], ["paragraph", "NEAREST_LINE", ["tbl"]]);
+    assert.deepEqual(located.address?.path, [1, 3, 0], "행 1·열 1 칸은 문서 순서로 넷째 칸(하위 목록 3)");
+    const kinds = located.drafts.map((d) => d.anchor.kind);
+    assert.ok(kinds.includes("line") && kinds.includes("cell"), JSON.stringify(kinds));
+    const cell = located.drafts.find((d) => d.anchor.kind === "cell")?.anchor;
+    assert.deepEqual(cell && "row" in cell ? [cell.row, cell.col] : undefined, [1, 1]);
+    // 끌어 놓은 범위(to)가 같이 와도 칸의 문단 단위로 낸다
+    const ranged = await locate(session, { from: { cell: picked.cell }, to: { position: { sectionIndex: 0, paragraphIndex: 1, charOffset: 0 } } });
+    assert.deepEqual(ranged.address?.path, [1, 3, 0]);
+  } finally {
+    doc.free();
+  }
+});
+
+test("리뷰 15: D2의 좁은 빈 칸 — 화면이 이웃 칸의 빈 런을 후보로 보내도(rhwp가 칸 밖에 그린다) 서버는 이 칸의 후보만 쓰고, 칸 안 줄 후보가 모두 남의 칸이면 칸의 첫 문단이다", async () => {
+  const session = await openFixture("D2");
+  const doc = await viewOf(session);
+  try {
+    const picked = doc.pick(1, 292.1, 143.3);
+    assert.deepEqual(picked.cell?.steps, [{ paragraph: 17, control: 1, row: 0, col: 2 }]);
+    assert.ok((picked.cell?.runs?.length ?? 0) >= 2, "이웃 칸의 빈 런이 후보에 든다");
+    const located = await locate(session, { from: { cell: picked.cell } });
+    assert.deepEqual([located.precision, located.address?.path], ["paragraph", [17, 2, 0]], "0행 2열 칸(문서 순서 2번)의 문단");
+    // 후보를 모두 지우면(글이 없는 줄) 칸의 첫 문단이다
+    const bare = await locate(session, { from: { cell: { ...picked.cell, runs: [] } } });
+    assert.deepEqual(bare.address?.path, [17, 2, 0]);
+    // 칸 안 줄 후보가 모두 이웃 칸의 것이어도 칸의 첫 문단이다(후보의 런은 0열 칸의 것)
+    const foreign = picked.cell?.runs?.filter((r) => r.position.cellPath?.[0]?.cellIndex !== 2);
+    assert.ok(foreign !== undefined && foreign.length > 0);
+    const only = await locate(session, { from: { cell: { ...picked.cell, runs: foreign } } });
+    assert.deepEqual(only.address?.path, [17, 2, 0]);
+  } finally {
+    doc.free();
+  }
+});
+
+test("리뷰 15: 칸 표 경로가 엔진과 맞지 않으면 옮기지 않고(none, 사유 코드), 잘못된 cell 입력은 400이다", async () => {
+  const session = await openFixture("D2");
+  const step = { paragraph: 17, control: 1, row: 0, col: 2 };
+  const cases: [unknown, string][] = [
+    [{ sectionIndex: 9, steps: [step] }, "SECTION_NOT_FOUND"],
+    [{ sectionIndex: 0, steps: [{ ...step, paragraph: 9999 }] }, "PARAGRAPH_NOT_FOUND"],
+    [{ sectionIndex: 0, steps: [{ ...step, control: 9 }] }, "CONTROL_NOT_FOUND"],
+    [{ sectionIndex: 0, steps: [{ ...step, control: 0 }] }, "CONTROL_NOT_CONTAINER"],
+    [{ sectionIndex: 0, steps: [{ ...step, row: 50 }] }, "CELL_NOT_FOUND"],
+  ];
+  for (const [cell, reason] of cases) {
+    const r = await locate(session, { from: { cell } });
+    assert.deepEqual([r.precision, r.reason, r.drafts], ["none", reason, []], JSON.stringify(cell));
+  }
+  for (const cell of [{}, { sectionIndex: 0, steps: [] }, { sectionIndex: 0, steps: [{ paragraph: 1 }] }, { sectionIndex: 0, steps: [step], runs: [{ position: {}, shown: { text: "", start: 0 } }] }, { sectionIndex: 0, steps: [step], runs: [1] }]) {
+    const res = await post(`/api/session/${session.session}/locate`, { from: { cell } });
+    assert.equal(res.status, 400, JSON.stringify(cell));
+  }
+});
+
+test("리뷰 15: 칸 사각형 안에 다른 칸의 글 있는 런이 후보로 걸리면 옮기지 않는다(none, CELL_MISMATCH) — 글이 빈 이웃 칸 런과 달리 글이 증거라 칸의 첫 문단으로 바꾸지 않는다", async () => {
+  const session = await openBytes(synth([P(R(TBL([[SUBP("가"), SUBP("")]], "0")))]));
+  const doc = await viewOf(session);
+  try {
+    const own = doc.pageLayout(0).runs.find((r) => r.text === "가");
+    assert.ok(own !== undefined);
+    const position = runPosition(own);
+    assert.ok(position !== undefined);
+    // 렌더 트리의 칸은 0행 1열(빈 칸)인데 후보는 0행 0열 칸의 글 "가"
+    const cell = { sectionIndex: 0, steps: [{ paragraph: 1, control: 0, row: 0, col: 1 }], runs: [{ position, shown: { text: "가", start: position.charOffset } }] };
+    const r = await locate(session, { from: { cell } });
+    assert.deepEqual([r.precision, r.reason, r.drafts], ["none", "CELL_MISMATCH", []]);
+    // 후보가 이 칸의 것이면(0행 0열) 그 문단이다
+    const mine = await locate(session, { from: { cell: { ...cell, steps: [{ paragraph: 1, control: 0, row: 0, col: 0 }] } } });
+    assert.deepEqual([mine.precision, mine.address?.path], ["paragraph", [1, 0, 0]]);
+  } finally {
+    doc.free();
+  }
+});
+
+test("리뷰 15: 칸 안 줄 후보가 안쪽 표의 글뿐이면(칸 문단 안 안쪽 표) 서버는 그 표를 담은 칸 문단을 낸다 — 칸의 첫 문단이 아니다", async () => {
+  const tall = ["가", "나", "다", "라", "마", "바", "사", "아"].map((t) => SUBP(t)).join("");
+  const session = await openBytes(synth([P(R(TBL([[SUBP("") + P(R(TBL([[SUBP("다")]], "0"))), tall]], "0")))]));
+  const doc = await viewOf(session);
+  try {
+    const inner = doc.pageLayout(0).runs.find((r) => r.text === "다" && r.cellPath?.length === 2);
+    assert.ok(inner !== undefined);
+    const position = runPosition(inner);
+    assert.ok(position !== undefined);
+    const cell = { sectionIndex: 0, steps: [{ paragraph: 1, control: 0, row: 0, col: 0 }], runs: [{ position, shown: { text: "다", start: position.charOffset } }] };
+    const r = await locate(session, { from: { cell } });
+    assert.deepEqual([r.precision, r.reason, r.address?.path, r.trail], ["paragraph", "NEAREST_LINE", [1, 0, 1], ["tbl"]], "둘째 문단이 안쪽 표를 담는다");
+    const none = await locate(session, { from: { cell: { ...cell, runs: [] } } });
+    assert.deepEqual(none.address?.path, [1, 0, 0], "후보가 없으면 첫 문단");
+  } finally {
+    doc.free();
+  }
 });

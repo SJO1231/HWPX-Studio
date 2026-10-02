@@ -320,3 +320,22 @@ test("묶음 개체 안의 글상자가 여럿이면 rhwp가 어느 글상자의
     rdoc.free();
   }
 });
+
+test("리뷰 7: 믿을 수 없는 개체(폭 모름) 앞에서 끝나는 런은 런 안 어디를 눌러도 글자 단위다 — 런의 끝은 런 시작 + 글자 수이고, 누른 위치를 다시 더하지 않는다", () => {
+  const SWITCH = '<hp:switch><hp:case hp:required-namespace="http://example/x"><hp:t>x</hp:t></hp:case><hp:default><hp:t>y</hp:t></hp:default></hp:switch>';
+  const doc = parse(synth([P(R(T("가나다라마바")) + R(SWITCH) + R(T("사")))]));
+  const table = offsetTable(doc.sections[0]?.paragraphs[BODY] as ParagraphNode);
+  assert.deepEqual([table.trusted, table.untrustedReason, table.slots.length], [6, "switch", 7], "여섯 글자는 믿을 수 있고 그 뒤는 믿을 수 없다");
+  const shown = { text: "가나다라마바", start: 0 };
+  for (let k = 0; k <= 6; k++) {
+    const at = toEngineAddress(doc, { sectionIndex: 0, paragraphIndex: BODY, charOffset: k }, shown);
+    assert.equal(at.precision, "char", `${k}번째 경계: ${String(at.reason)}`);
+    if (k < 6) assert.equal(at.address?.offset, k);
+  }
+  // 런 끝 경계의 `end` 쪽은 객체 자리 글자 앞(논리 오프셋 6), `start` 쪽은 그 뒤(7)다
+  const end = toEngineAddress(doc, { sectionIndex: 0, paragraphIndex: BODY, charOffset: 6 }, shown, "end");
+  assert.deepEqual([end.precision, end.address?.offset], ["char", 6]);
+  // 믿을 수 없는 개체 뒤의 글(같은 문단의 `사`)은 여전히 문단 단위다
+  const after = toEngineAddress(doc, { sectionIndex: 0, paragraphIndex: BODY, charOffset: 6 }, { text: "사", start: 6 });
+  assert.deepEqual([after.precision, after.reason], ["paragraph", "OBJECT_WIDTH_UNKNOWN:switch"]);
+});

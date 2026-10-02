@@ -1,6 +1,6 @@
 // 쪽을 세로로 이어 그리고, 배율·클릭·끌기·강조 표시를 다룬다. 브라우저 전용이다(엔진은 가져오지 않는다. 위치 변환은 호스트가 한다).
 // 쪽은 SVG를 `<img>`로 넣어 그린다(문서가 만든 SVG 안의 스크립트·외부 요청이 실행되지 않는다).
-import type { RhwpPosition, Shown } from "../map/types.ts";
+import type { CellRef, RhwpPosition, Shown } from "../map/types.ts";
 import type { Hit, Pick, PickLimit, ViewerDocument } from "../rhwp/document.ts";
 import { caretAt, guideRect, rangeCover, rangeRects, sameParagraph, samePosition, type PageLayout, type Rect } from "../rhwp/layout.ts";
 import { clampScale, toPagePoint, toScreenRect } from "./geometry.ts";
@@ -25,6 +25,8 @@ export type ViewMark = {
 export type PickEvent = {
   page: number;
   hit: Hit;
+  /** 표 칸의 빈 곳: 눌린 칸(렌더 트리의 표 경로)과 칸 안 줄 후보. 서버가 이것으로 칸의 문단을 낸다(후보가 없으면, 즉 `hit.position`이 없으면 칸의 첫 문단) */
+  cell?: CellRef;
   /** 눌린 위치를 확인할 런(글과 첫 글자 순번) */
   shown?: Shown;
   /** 문서 좌표 없이 그려진 안내문 글을 눌렀다(안내문 상태 누름틀 후보). `guideText`는 눌린 글 */
@@ -46,6 +48,9 @@ export type PageViewOptions = {
   scale: number;
   onPick(event: PickEvent): void;
   onError?(error: unknown): void;
+  /** 끌기 미리보기를 프레임마다 한 번만 계산하기 위한 프레임 예약기(기본은 브라우저의 `requestAnimationFrame`). 시험이 직접 돌릴 수 있게 바꿔 끼울 수 있다. */
+  requestFrame?(callback: () => void): number;
+  cancelFrame?(handle: number): void;
 };
 
 export type PageView = {
@@ -92,6 +97,10 @@ export function createPageView(options: PageViewOptions): PageView {
   let destroyed = false;
   const slots: Slot[] = [];
   const fail = (e: unknown): void => (options.onError === undefined ? console.error(e) : options.onError(e));
+  const requestFrame = options.requestFrame ?? ((cb: () => void): number => window.requestAnimationFrame(() => cb()));
+  const cancelFrame = options.cancelFrame ?? ((handle: number): void => window.cancelAnimationFrame(handle));
+  /** 진행 중인 끌기의 정리(창에 단 듣개 제거·예약된 프레임 취소). 끌기가 없으면 undefined. */
+  let endDrag: (() => void) | undefined;
 
   container.replaceChildren();
   container.classList.add("page-view");
@@ -187,15 +196,19 @@ export function createPageView(options: PageViewOptions): PageView {
       return;
     }
     let moved = false;
+    // 범위는 두 끝이 모두 글자까지 믿을 수 있는 런 위일 때만 그린다(빈 곳·겹친 곳은 글자 순번이 다른 기준이다)
+    const from = start.limit === "char" && !start.guide ? start.hit.position : undefined;
+    // 미리보기는 프레임마다 한 번, 그 프레임 직전의 마우스 좌표로 계산한다
+    let latest: { x: number; y: number } | undefined;
+    let frame: number | undefined;
 
-    const onMove = (move: MouseEvent): void => {
-      if (!moved && Math.hypot(move.clientX - down.clientX, move.clientY - down.clientY) < DRAG_THRESHOLD) return;
-      moved = true;
-      // 범위는 두 끝이 모두 글자까지 믿을 수 있는 런 위일 때만 그린다(빈 곳·겹친 곳은 글자 순번이 다른 기준이다)
-      const from = start.limit === "char" && !start.guide ? start.hit.position : undefined;
-      if (from === undefined) return;
+    const updatePreview = (): void => {
+      frame = undefined;
+      if (destroyed || from === undefined || latest === undefined) return;
+      const { x, y } = latest;
+      latest = undefined;
       try {
-        const now = pickAt(slot, move.clientX, move.clientY);
+        const now = pickAt(slot, x, y);
         const to = now.limit === "char" && !now.guide ? now.hit.position : undefined;
         if (to === undefined || !sameParagraph(from, to)) {
           preview = undefined;
@@ -210,13 +223,30 @@ export function createPageView(options: PageViewOptions): PageView {
       }
     };
 
-    const onUp = (up: MouseEvent): void => {
+    const onMove = (move: MouseEvent): void => {
+      if (!moved && Math.hypot(move.clientX - down.clientX, move.clientY - down.clientY) < DRAG_THRESHOLD) return;
+      moved = true;
+      if (from === undefined) return;
+      latest = { x: move.clientX, y: move.clientY };
+      if (frame === undefined) frame = requestFrame(updatePreview);
+    };
+
+    const cleanup = (): void => {
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
+      if (frame !== undefined) cancelFrame(frame);
+      frame = undefined;
+      latest = undefined;
+      if (endDrag === cleanup) endDrag = undefined;
+    };
+
+    const onUp = (up: MouseEvent): void => {
+      cleanup();
       preview = undefined;
       drawOverlay(slot);
       try {
         const event: PickEvent = { page: slot.index, hit: start.hit, guide: start.guide, limit: start.limit };
+        if (start.cell !== undefined) event.cell = start.cell;
         if (start.shown !== undefined) event.shown = start.shown;
         if (start.guideText !== undefined) event.guideText = start.guideText;
         if (start.glyph !== undefined) event.glyph = start.glyph;
@@ -239,6 +269,7 @@ export function createPageView(options: PageViewOptions): PageView {
 
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
+    endDrag = cleanup;
   };
 
   for (const slot of slots) slot.wrapper.addEventListener("mousedown", onDown);
@@ -257,6 +288,7 @@ export function createPageView(options: PageViewOptions): PageView {
     },
     destroy() {
       destroyed = true;
+      endDrag?.();
       observer.disconnect();
       for (const slot of slots) {
         if (slot.url !== undefined) URL.revokeObjectURL(slot.url);

@@ -129,6 +129,19 @@ export function nearestLineRun(layout: PageLayout, x: number, y: number): Layout
   return best;
 }
 
+/** `nearestLineRun`의 순서로 가까운 줄의 런을 `limit`개까지(가장 가까운 것부터) 모은다. 같은 줄 안에서는 가로로 가까운 런이 먼저다. */
+export function nearestLineRuns(layout: PageLayout, x: number, y: number, limit: number): LayoutRun[] {
+  const out: LayoutRun[] = [];
+  let rest = layout.runs;
+  while (out.length < limit) {
+    const run = nearestLineRun({ runs: rest }, x, y);
+    if (run === undefined) break;
+    out.push(run);
+    rest = rest.filter((r) => r !== run);
+  }
+  return out;
+}
+
 /**
  * 빈 곳을 눌렀을 때 rhwp의 `hitTest`가 가리킨 문단(`para`)이 정말 점에서 가장 가까운 줄(`nearestLineRun`)의 문단인지 확인하고, 그 런을 돌려준다.
  * 가장 가까운 줄의 런이 `para`의 것이 아니면 undefined(`hitTest`의 문단을 믿을 수 없다).

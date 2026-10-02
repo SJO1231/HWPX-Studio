@@ -3,10 +3,10 @@
 // 이런 문단에서도 맞는 자리를 고르거나 문단 단위로 내려가는지(조용히 틀리지 않는지) 본다.
 import assert from "node:assert/strict";
 import { before, test } from "node:test";
-import { offsetTable, toEngineAddress, toRhwpPosition } from "../src/map/index.ts";
+import { locatePicked, offsetTable, toEngineAddress, toRhwpPosition } from "../src/map/index.ts";
 import { hasDocCoords, openDocument, runLength, runPosition, type LayoutRun } from "../src/rhwp/index.ts";
 import { engineTextAt } from "../tools/verify.ts";
-import { PIC, P, R, T, ensureRhwp, parse, synth } from "./helpers.ts";
+import { FIELD_BEGIN, FIELD_END, PIC, P, R, T, ensureRhwp, parse, synth } from "./helpers.ts";
 
 before(ensureRhwp);
 
@@ -145,4 +145,58 @@ test("무작위 합성 문단 300개(그림·탭·책갈피·글자 모양 바�
   assert.ok(stats.char / stats.runs > 0.95, `char 비율 ${stats.char}/${stats.runs}`);
   assert.ok(stats.shifted > 50, "순번이 밀린 런이 표본에 있어야 이 시험이 의미가 있다");
   t.diagnostic(`런 ${stats.runs}: char ${stats.char}(그 가운데 순번이 밀린 런 ${stats.shifted}), 모호 ${stats.ambiguous}, 개체 런 ${stats.objectRun}, 개체 연속 문단의 어긋난 런 ${stats.anomalous}`);
+});
+
+// ── 리뷰 13: 그림 뒤 안내문 상태 누름틀 ─────────────────────────────
+
+const GUIDE = "소속 입력";
+const guideField = (id: string): string => FIELD_BEGIN(id, `필드${id}`, "0", GUIDE) + FIELD_END(id);
+
+/** 안내문 상태 누름틀들의 안내문을 차례로 눌러(겹치지 않는 마지막 글자) 서버가 하는 대로 엔진 주소로 옮긴 결과 */
+function guideClicks(para: string): { located: ReturnType<typeof locatePicked>; expected: number }[] {
+  const bytes = synth([para]);
+  const doc = parse(bytes);
+  const rdoc = openDocument(bytes);
+  try {
+    const paragraph = doc.sections[0]?.paragraphs[BODY];
+    assert.ok(paragraph !== undefined);
+    const guides = offsetTable(paragraph).guides;
+    const runs = rdoc.pageLayout(0).runs.filter((r) => !hasDocCoords(r) && r.text === GUIDE);
+    assert.equal(runs.length, guides.length, "안내문마다 좌표 없는 런이 하나씩 그려진다");
+    return runs.map((run, i) => {
+      const picked = rdoc.pick(0, run.x + (run.charX[run.charX.length - 2] ?? 0) + 3, run.y + run.h / 2);
+      assert.ok(picked.guide && picked.hit.position !== undefined && picked.limit === "char", `${i}번째 안내문을 눌렀다`);
+      const located = locatePicked(doc, { position: picked.hit.position, ...(picked.shown === undefined ? {} : { shown: picked.shown }), guide: picked.guideText ?? "" }, "guide");
+      return { located, expected: guides[i]?.logicalStart ?? -1 };
+    });
+  } finally {
+    rdoc.free();
+  }
+}
+
+test("리뷰 13: 글자처럼 취급 그림 뒤의 안내문 상태 누름틀 — 같은 글의 안내문이 문단에 하나뿐이면, rhwp가 그림을 덜 센 빈 런 순번이어도 그 안내문으로 옮긴다", () => {
+  for (const [label, para] of [
+    ["그림, 앞, 안내문", P(R(PIC("1") + T("앞") + guideField("12") + T("뒤 글")))],
+    ["그림, 안내문", P(R(PIC("1") + guideField("12") + T("뒤 글")))],
+    ["앞, 그림, 안내문", P(R(T("앞") + PIC("1") + guideField("12") + T("뒤 글")))],
+    ["그림 둘, 안내문", P(R(PIC("1") + PIC("1") + guideField("12") + T("뒤 글")))],
+    ["글자 모양이 다른 런들", P(R(PIC("1")) + R(T("앞"), "1") + R(guideField("12") + T("뒤 글")))],
+  ] as const) {
+    const [one] = guideClicks(para);
+    assert.ok(one !== undefined);
+    assert.equal(one.located.precision, "char", `${label}: ${String(one.located.reason)}`);
+    assert.equal(one.located.address?.offset, one.expected, label);
+  }
+});
+
+test("리뷰 13: 같은 글의 안내문 상태 누름틀이 둘 이상이면 순번 구간만으로 고르지 않는다 — 맞는 안내문이거나 문단 밖으로 거절(none)이고, 다른 안내문으로 옮기지 않는다", () => {
+  for (const para of [
+    P(R(PIC("1") + guideField("1") + T("중간") + guideField("2") + T("끝"))),
+    P(R(PIC("1") + T("가") + guideField("1") + guideField("2") + T("끝"))),
+  ]) {
+    for (const { located, expected } of guideClicks(para)) {
+      if (located.precision === "none") assert.equal(located.reason, "UNPOSITIONED_TEXT");
+      else assert.equal(located.address?.offset, expected, "다른 안내문으로 조용히 옮겼다");
+    }
+  }
 });

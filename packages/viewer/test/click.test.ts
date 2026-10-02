@@ -8,7 +8,7 @@ import { openPackage, readEntry, rewriteArchive } from "../../hwpx-engine/src/in
 import { paragraphAtAddress, type EngineAddress } from "../src/map/index.ts";
 import { openDocument, type LayoutRun, type ViewerDocument } from "../src/rhwp/index.ts";
 import { checkClicks, clickAt, engineGlyphs, fillOnce, mergeClickReports, newClickReport, objectsOnlyBetween, paragraphKey, rowParagraphKeys, type ClickReport, type ClickResult } from "../tools/verify.ts";
-import { FIELD_BEGIN, FIELD_END, PIC, P, R, RECT, SUBLIST, SUBP, T, TBL, ensureRhwp, fixtureNames, parse, readFixture, synth, syntheticDocs } from "./helpers.ts";
+import { FIELD_BEGIN, FIELD_END, PIC, P, R, RECT, SUBLIST, SUBP, T, TBL, ensureRhwp, fixtureNames, parse, readFixture, synth, syntheticDocs, withMasterPage } from "./helpers.ts";
 
 before(ensureRhwp);
 
@@ -415,6 +415,29 @@ test("시험 문서 전부와 합성 문서: 눌러 본 모든 점에서 조용�
   assert.equal(total.byKind.blank.char, 0);
   assert.equal(total.byKind.marker.char, 0);
   t.diagnostic(`누른 점 ${JSON.stringify(total.presses)}; 결과 ${JSON.stringify(total.byKind)}; 사유 ${JSON.stringify(total.reasons)}; hitTest와 다른 글자 클릭 ${JSON.stringify(total.hitDisagree)}`);
+});
+
+test("리뷰 2·15 도구: 글이 없는 표(칸 한가운데 눌림)와 본문 표의 빈 칸이 바탕쪽 글을 덮는 문서도 조용한 불일치 0, 영역 오판 0이다 — 칸 한가운데는 `cell` 출처로 따로 센다", () => {
+  const empty = (rows: number, cols: number) => Array.from({ length: rows }, () => Array.from({ length: cols }, () => SUBP("")));
+  const masterRows = Array.from({ length: 30 }, (_, r) => Array.from({ length: 6 }, (_, c) => SUBP(`바탕${r}_${c}`)));
+  const docs: [string, Uint8Array][] = [
+    ["글이 없는 표", synth([P(R(TBL(empty(4, 3), "0")))])],
+    ["글이 없는 중첩 표", synth([P(R(TBL([[SUBP(""), SUBP("") + P(R(TBL(empty(2, 2), "0")))]], "0")))])],
+    ["여러 쪽 표", synth([P(R(TBL(empty(120, 2), "0")))])],
+    ["본문 빈 칸이 바탕쪽 글을 덮음", withMasterPage(synth([P(R(TBL(empty(12, 6), "0")))]), P(R(TBL(masterRows, "0"))))],
+  ];
+  const total = newClickReport();
+  for (const [name, bytes] of docs) {
+    const r = checkClicks(bytes, { pageCap: 50, runCap: 400 });
+    assert.equal(r.silent, 0, `${name}: ${JSON.stringify(r.silentKinds)}`);
+    assert.equal(r.regionBad, 0, `${name}: ${JSON.stringify(r.regionKinds)}`);
+    assert.equal(r.errors, 0, name);
+    // 바탕쪽 표의 칸도 쪽 컨트롤 배치에는 칸으로 나오고 그 한가운데는 본문 위를 덮은 바탕쪽 칸이라 옮기지 않는다: 합계는 바탕쪽 없는 문서만
+    if (!name.includes("바탕쪽")) mergeClickReports(total, r);
+  }
+  // 칸 한가운데 눌림이 실제로 있고(글이 없는 표는 다른 점으로는 칸을 거의 누르지 못한다), 모두 칸의 문단으로 옮겨진다(none 0)
+  assert.ok(total.blankBy.cell.paragraph + total.blankBy.cell.none >= 100, JSON.stringify(total.blankBy));
+  assert.equal(total.blankBy.cell.none, 0, JSON.stringify(total.blankPlaceReasons));
 });
 
 test("채움 뒤 다시 그려진 문서(엔진이 줄 배치 정보를 지운 구역): 눌러 본 모든 점에서 조용한 불일치 0, 영역 오판 0", (t) => {

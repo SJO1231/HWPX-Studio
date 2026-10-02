@@ -25,6 +25,27 @@ function send(res: ServerResponse, status: number, contentType: string, body: st
   res.end(body);
 }
 
+/** 요청 경로(쿼리 제외). 풀 수 없는 주소는 `/`로 본다. */
+const pathOf = (url: string | undefined): string => {
+  try {
+    return new URL(url ?? "/", `http://${HOST}`).pathname;
+  } catch {
+    return "/";
+  }
+};
+
+/** 오류 응답의 형. `/api/` 아래는 화면이 읽을 수 있게 `{ error: { code, message } }` JSON이고, 그 밖(정적 파일)은 글이다. */
+export function errorReply(url: string | undefined, code: string, message: string): { contentType: string; body: string } {
+  return pathOf(url).startsWith("/api/")
+    ? { contentType: "application/json; charset=utf-8", body: JSON.stringify({ error: { code, message } }) }
+    : { contentType: "text/plain; charset=utf-8", body: message };
+}
+
+function sendError(req: IncomingMessage, res: ServerResponse, status: number, code: string, message: string): void {
+  const reply = errorReply(req.url, code, message);
+  send(res, status, reply.contentType, reply.body);
+}
+
 /**
  * 요청 본문을 읽는다. 한도(`MAX_UPLOAD`)를 넘으면 undefined다: 이미 받은 조각은 버리고(메모리에 쌓지 않는다) 남은 본문도 읽어서 버린다 —
  * 본문을 읽지 않은 채 응답하면 같은 연결의 다음 요청이 남은 본문과 섞이고 클라이언트는 ECONNRESET을 만난다. 한도의 두 배를 넘게 보내면 연결을 끊는다.
@@ -62,7 +83,7 @@ export function createViewerApp(): ViewerApp {
     void (async () => {
       try {
         const port = (server.address() as { port?: number } | null)?.port ?? PORT;
-        if (!hostAllowed(req, port)) return send(res, 403, "text/plain; charset=utf-8", "허용되지 않은 호스트입니다.");
+        if (!hostAllowed(req, port)) return sendError(req, res, 403, "HOST", "허용되지 않은 호스트입니다.");
         const url = new URL(req.url ?? "/", `http://${HOST}:${port}`);
 
         if (url.pathname.startsWith("/api/")) {
@@ -90,7 +111,7 @@ export function createViewerApp(): ViewerApp {
           : new Uint8Array(bytes);
         return send(res, 200, file.type, body);
       } catch {
-        if (!res.headersSent) send(res, 500, "text/plain; charset=utf-8", "서버 내부 오류입니다.");
+        if (!res.headersSent) sendError(req, res, 500, "INTERNAL", "서버 내부 오류입니다.");
         else res.end();
       }
     })();

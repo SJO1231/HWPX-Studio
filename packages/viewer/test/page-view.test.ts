@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { after, before, test } from "node:test";
 import { createPageView, type PickEvent, type ViewMark } from "../src/dom/index.ts";
 import { charRect, glyphsAt, hasDocCoords, openDocument, runPosition } from "../src/rhwp/index.ts";
-import { P, R, RECT, SUBLIST, SUBP, T, ensureRhwp, readFixture, synth } from "./helpers.ts";
+import { P, R, RECT, SUBLIST, SUBP, T, TBL, ensureRhwp, readFixture, synth } from "./helpers.ts";
 
 type Listener = (event: never) => void;
 
@@ -191,7 +191,8 @@ test("끌기: 같은 문단 안이면 to가 붙고 강조(selection)가 그려�
   const to = charRect(run, 3);
   const container = new FakeElement("div");
   const picks: PickEvent[] = [];
-  const view = createPageView({ container: container as never, doc, scale: 1, onPick: (e) => picks.push(e) });
+  const frames = manualFrames();
+  const view = createPageView({ container: container as never, doc, scale: 1, onPick: (e) => picks.push(e), ...frames });
   try {
     const page = container.children[0];
     assert.ok(page !== undefined);
@@ -201,6 +202,7 @@ test("끌기: 같은 문단 안이면 to가 붙고 강조(selection)가 그려�
     const y = from.y + from.h / 2;
     page.fire("mousedown", { button: 0, clientX: ax, clientY: y, currentTarget: page, preventDefault: () => {} });
     fireWindow("mousemove", { clientX: bx, clientY: y });
+    frames.flush(); // 미리보기는 프레임에 그린다
     const overlay = page.children[1];
     assert.ok((overlay?.children.length ?? 0) >= 1 && overlay?.children[0]?.className === "hl mark-selection");
     fireWindow("mouseup", { clientX: bx, clientY: y });
@@ -287,7 +289,8 @@ test("글자가 없는 곳을 누르면 문단까지만(limit paragraph, NEAREST
   assert.ok(run !== undefined);
   const container = new FakeElement("div");
   const picks: PickEvent[] = [];
-  const view = createPageView({ container: container as never, doc, scale: 1, onPick: (e) => picks.push(e) });
+  const frames = manualFrames();
+  const view = createPageView({ container: container as never, doc, scale: 1, onPick: (e) => picks.push(e), ...frames });
   try {
     const page = container.children[0];
     assert.ok(page !== undefined);
@@ -306,10 +309,128 @@ test("글자가 없는 곳을 누르면 문단까지만(limit paragraph, NEAREST
     const sy = start.y + start.h / 2;
     page.fire("mousedown", { button: 0, clientX: sx, clientY: sy, currentTarget: page, preventDefault: () => {} });
     fireWindow("mousemove", { clientX: blank.x, clientY: blank.y });
+    frames.flush();
     assert.equal(page.children[1]?.children.length, 0, "한쪽 끝이 글자 위가 아니면 선택 표시를 그리지 않는다");
     fireWindow("mouseup", { clientX: blank.x, clientY: blank.y });
     const drag = picks[1];
     assert.deepEqual([drag?.limit, drag?.to?.limit, drag?.to?.reason], ["char", "paragraph", "NEAREST_LINE"]);
+  } finally {
+    view.destroy();
+    doc.free();
+  }
+});
+
+/** 시험용 프레임 예약기: 부르는 쪽(시험)이 `flush()`로 프레임을 돌린다 */
+function manualFrames() {
+  const queue = new Map<number, () => void>();
+  let next = 1;
+  return {
+    requestFrame: (cb: () => void): number => {
+      queue.set(next, cb);
+      return next++;
+    },
+    cancelFrame: (handle: number): void => void queue.delete(handle),
+    pending: (): number => queue.size,
+    flush: (): void => {
+      const run = [...queue.values()];
+      queue.clear();
+      for (const cb of run) cb();
+    },
+  };
+}
+
+test("리뷰 8: 끌기 도중 destroy()하면 창에 단 mousemove·mouseup 듣개를 모두 거두고, 이후 mouseup이 와도 onPick은 불리지 않는다", () => {
+  const doc = openDocument(readFixture("hancom/ph-single"));
+  const run = doc.pageLayout(0).runs.find((r) => r.text === "입니다.");
+  assert.ok(run !== undefined);
+  const a = charRect(run, 0);
+  const b = charRect(run, 3);
+  const container = new FakeElement("div");
+  const picks: PickEvent[] = [];
+  const frames = manualFrames();
+  const before = [windowListeners.get("mousemove")?.length ?? 0, windowListeners.get("mouseup")?.length ?? 0];
+  const view = createPageView({ container: container as never, doc, scale: 1, onPick: (e) => picks.push(e), ...frames });
+  try {
+    const page = container.children[0];
+    assert.ok(page !== undefined);
+    const y = a.y + a.h / 2;
+    page.fire("mousedown", { button: 0, clientX: a.x + 1, clientY: y, currentTarget: page, preventDefault: () => {} });
+    fireWindow("mousemove", { clientX: b.x + 1, clientY: y });
+    assert.deepEqual([windowListeners.get("mousemove")?.length, windowListeners.get("mouseup")?.length], [before[0] as number + 1, before[1] as number + 1], "끌기 중에는 듣개가 달려 있다");
+    view.destroy();
+    assert.deepEqual([windowListeners.get("mousemove")?.length ?? 0, windowListeners.get("mouseup")?.length ?? 0], before, "destroy 뒤에는 듣개가 남지 않는다");
+    frames.flush(); // 예약돼 있던 프레임이 와도 그리지 않는다
+    fireWindow("mouseup", { clientX: b.x + 1, clientY: y });
+    assert.equal(picks.length, 0, "destroy된 뷰는 onPick을 부르지 않는다");
+  } finally {
+    view.destroy();
+    doc.free();
+  }
+});
+
+test("리뷰 9: 끌기 미리보기는 프레임마다 한 번만 doc.pick을 부르고(마지막 좌표로), 놓으면 예약된 프레임을 취소한다", () => {
+  const doc = openDocument(readFixture("hancom/ph-single"));
+  const run = doc.pageLayout(0).runs.find((r) => r.text === "입니다.");
+  assert.ok(run !== undefined);
+  const a = charRect(run, 0);
+  const b = charRect(run, 3);
+  let picked = 0;
+  const counted = { ...doc, pick: (page: number, x: number, y: number) => (picked++, doc.pick(page, x, y)) };
+  const container = new FakeElement("div");
+  const picks: PickEvent[] = [];
+  const frames = manualFrames();
+  const view = createPageView({ container: container as never, doc: counted, scale: 1, onPick: (e) => picks.push(e), ...frames });
+  try {
+    const page = container.children[0];
+    assert.ok(page !== undefined);
+    observerCallback?.([{ isIntersecting: true, target: page }]);
+    const y = a.y + a.h / 2;
+    page.fire("mousedown", { button: 0, clientX: a.x + 1, clientY: y, currentTarget: page, preventDefault: () => {} });
+    assert.equal(picked, 1, "누른 점");
+    // 한 프레임 사이에 마우스 이동이 열 번 와도 pick은 아직 부르지 않는다
+    for (let i = 1; i <= 10; i++) fireWindow("mousemove", { clientX: a.x + 1 + ((b.x - a.x) * i) / 10, clientY: y });
+    assert.equal(picked, 1, "프레임 전에는 미리보기를 계산하지 않는다");
+    assert.equal(frames.pending(), 1, "프레임은 하나만 예약한다");
+    frames.flush();
+    assert.equal(picked, 2, "프레임마다 한 번");
+    const overlay = page.children[1];
+    assert.ok(overlay?.children[0]?.className === "hl mark-selection", "마지막 좌표로 미리보기를 그렸다");
+    // 마우스 이동 뒤 프레임이 오기 전에 놓으면 예약을 취소하고, 놓은 점은 pick을 한 번 더 부른다
+    fireWindow("mousemove", { clientX: b.x + 1, clientY: y });
+    assert.equal(frames.pending(), 1);
+    fireWindow("mouseup", { clientX: b.x + 1, clientY: y });
+    assert.equal(frames.pending(), 0, "놓으면 예약된 프레임을 취소한다");
+    assert.equal(picked, 3);
+    assert.equal(overlay?.children.length, 0);
+    assert.equal(picks.length, 1);
+  } finally {
+    view.destroy();
+    doc.free();
+  }
+});
+
+test("리뷰 15: 글이 없는 표의 칸을 누르면 PickEvent에 칸(cell: 표 경로의 행·열과 칸 안 줄 후보)이 실리고, 위치·글은 첫 후보(빈 런)다(limit paragraph, NEAREST_LINE)", () => {
+  const doc = openDocument(synth([P(R(TBL([[SUBP(""), SUBP("")]], "0")))]));
+  const container = new FakeElement("div");
+  const picks: PickEvent[] = [];
+  const view = createPageView({ container: container as never, doc, scale: 1, onPick: (e) => picks.push(e) });
+  try {
+    const page = container.children[0];
+    assert.ok(page !== undefined);
+    const cells = (JSON.parse(doc.native.getPageControlLayout(0)) as { controls: { type: string; cells?: { row: number; col: number; x: number; y: number; w: number; h: number }[] }[] }).controls.find((c) => c.type === "table")?.cells;
+    const cell = cells?.find((c) => c.row === 0 && c.col === 1);
+    assert.ok(cell !== undefined);
+    const x = cell.x + cell.w / 2;
+    const y = cell.y + cell.h / 2;
+    page.fire("mousedown", { button: 0, clientX: x, clientY: y, currentTarget: page, preventDefault: () => {} });
+    fireWindow("mouseup", { clientX: x, clientY: y });
+    const pick = picks[0];
+    assert.deepEqual([pick?.limit, pick?.reason, pick?.hit.region, pick?.shown], ["paragraph", "NEAREST_LINE", "cell", { text: "", start: 0 }]);
+    assert.deepEqual(pick?.cell?.steps, [{ paragraph: 1, control: 0, row: 0, col: 1 }]);
+    assert.equal(pick?.cell?.sectionIndex, 0);
+    // 칸 안 줄 후보는 이 칸 사각형 안의 같은 표의 런이고, 첫 후보가 hit·shown과 같다
+    assert.ok((pick?.cell?.runs?.length ?? 0) >= 1);
+    assert.deepEqual(pick?.cell?.runs?.[0], { position: pick?.hit.position, shown: pick?.shown });
   } finally {
     view.destroy();
     doc.free();

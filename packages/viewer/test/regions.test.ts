@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { before, test } from "node:test";
 import { MARKER_PARA_MIN, hasDocCoords, openDocument, type LayoutRun, type ViewerDocument } from "../src/rhwp/index.ts";
-import { FOOTNOTE, P, R, SUBLIST, SUBP, T, TBL, RECT, ensureRhwp, readFixture, synth } from "./helpers.ts";
+import { FOOTNOTE, P, R, SUBLIST, SUBP, T, TBL, RECT, ensureRhwp, readFixture, synth, withMasterPage } from "./helpers.ts";
 
 before(ensureRhwp);
 
@@ -117,5 +117,38 @@ test("V4: 머리말·꼬리말 영역은 실제로 머리말·꼬리말이 있�
     assert.ok(hit.position !== undefined);
   } finally {
     merged.free();
+  }
+});
+
+test("리뷰 2: 본문 표의 빈 칸 글 상자(칸 폭만큼 넓다)가 바탕쪽 글 위를 덮어도, 바탕쪽 글을 누르면 바탕쪽(none)이지 본문 칸의 글자(char)가 아니다", () => {
+  const masterRows = Array.from({ length: 30 }, (_, r) => Array.from({ length: 6 }, (_, c) => SUBP(`바탕${r}_${c}`)));
+  const bodyRows = Array.from({ length: 12 }, () => Array.from({ length: 6 }, () => SUBP("")));
+  const doc = openDocument(withMasterPage(synth([P(R(TBL(bodyRows, "0")))]), P(R(TBL(masterRows, "0")))));
+  try {
+    const layout = doc.pageLayout(0);
+    const tree = JSON.parse(doc.native.getPageRenderTree(0)) as { type?: string; text?: string; bbox?: { x: number; y: number; w: number; h: number }; children?: unknown[] };
+    const bodyEmpty: { x: number; y: number; w: number; h: number }[] = [];
+    const walk = (n: typeof tree, inBody: boolean): void => {
+      const here = inBody || n.type === "Body";
+      if (n.type === "TextRun" && here && n.text === "" && n.bbox !== undefined) bodyEmpty.push(n.bbox);
+      for (const c of n.children ?? []) walk(c as typeof tree, here);
+    };
+    walk(tree, false);
+    const masterRuns = layout.runs.filter((r) => r.text.startsWith("바탕"));
+    assert.ok(masterRuns.length >= 100, `바탕쪽 글 런이 적다 ${masterRuns.length}`);
+    let covered = 0;
+    for (const run of masterRuns) {
+      const x = run.x + run.w / 2;
+      const y = run.y + run.h / 2;
+      if (bodyEmpty.some((b) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h)) covered++;
+      const picked = doc.pick(0, x, y);
+      assert.notEqual(picked.limit, "char", `바탕쪽 글 ${run.text}(${x.toFixed(0)}, ${y.toFixed(0)})이 ${picked.hit.region} 글자로 나왔다`);
+      assert.equal(picked.hit.position, undefined, `${run.text}: 바탕쪽 글은 문서 위치를 내지 않는다`);
+      assert.ok(picked.hit.region === "masterpage" || picked.reason === "OVERLAPPING_RUNS", `${run.text}: ${picked.hit.region}`);
+      if (picked.reason !== "OVERLAPPING_RUNS") assert.deepEqual([doc.hit(0, x, y).region, doc.hit(0, x, y).position], ["masterpage", undefined], `${run.text}: hit()도 바탕쪽이다`);
+    }
+    assert.ok(covered >= 20, `본문 빈 칸 글 상자가 덮은 바탕쪽 글이 적다 ${covered}: 이 시험이 의미가 없다`);
+  } finally {
+    doc.free();
   }
 });

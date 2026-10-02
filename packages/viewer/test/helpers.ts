@@ -119,3 +119,27 @@ export function syntheticDocs(): Record<string, Uint8Array> {
 /** 묶음 개체(`container`) 안에 글상자(`rect`)를 여럿 둔다. 글자처럼 취급이다. */
 export const CONTAINER = (children: string[]): string =>
   `<hp:container id="1500" zOrder="0" numberingType="NONE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" href="" groupLevel="0" instid="1501"><hp:offset x="0" y="0"/><hp:orgSz width="22000" height="3000"/><hp:curSz width="22000" height="3000"/><hp:flip horizontal="0" vertical="0"/><hp:rotationInfo angle="0" centerX="11000" centerY="1500" rotateimage="1"/><hp:renderingInfo><hc:transMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/><hc:scaMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/><hc:rotMatrix e1="1" e2="0" e3="0" e4="0" e5="1" e6="0"/></hp:renderingInfo>${children.join("")}<hp:sz width="22000" widthRelTo="ABSOLUTE" height="3000" heightRelTo="ABSOLUTE" protect="0"/><hp:pos treatAsChar="1" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="COLUMN" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/><hp:outMargin left="0" right="0" top="0" bottom="0"/></hp:container>`;
+
+/**
+ * 구역 설정에 바탕쪽 하나(`Contents/masterpage0.xml`, 양쪽 쪽 모두)를 달아 붙인 문서의 바이트. `paragraphs`는 바탕쪽 안 문단들이다.
+ * 바탕쪽 글(문서 좌표 없이 표지값으로 나오는 문단 글, 표 칸·글상자 안의 글은 본문과 같은 번호 공간의 좌표로 나온다)을 시험하는 데 쓴다.
+ */
+export function withMasterPage(bytes: Uint8Array, paragraphs: string): Uint8Array {
+  const pkg = openPackage(bytes);
+  const text = (name: string): string => new TextDecoder().decode(readEntry(pkg.archive, bytes, name));
+  const sectionName = pkg.sectionEntries[0] ?? "";
+  const hpf = text("Contents/content.hpf");
+  const namespaces = (/<opf:package ([^>]*?) version=/.exec(hpf)?.[1] ?? "").replace(/xmlns:opf="[^"]*"\s*/, "");
+  const master = `<?xml version="1.0" encoding="UTF-8" standalone="yes" ?><hm:masterPage ${namespaces} id="masterpage0" type="BOTH" pageNumber="0" pageDuplicate="0" pageFront="0"><hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="TOP" linkListIDRef="0" linkListNextIDRef="0" textWidth="42520" textHeight="59528" hasTextRef="0" hasNumRef="0">${paragraphs}</hp:subList></hm:masterPage>`;
+  const section = text(sectionName).replace('masterPageCnt="0">', 'masterPageCnt="1">').replace("</hp:secPr>", '<hp:masterPage idRef="masterpage0"/></hp:secPr>');
+  const manifest = hpf
+    .replace("</opf:manifest>", '<opf:item id="masterpage0" href="Contents/masterpage0.xml" media-type="application/xml"/></opf:manifest>')
+    .replace("</opf:spine>", '<opf:itemref idref="masterpage0" linear="no"/></opf:spine>');
+  return rewriteArchive(bytes, pkg.archive, {
+    replace: new Map([
+      [sectionName, enc(section)],
+      ["Contents/content.hpf", enc(manifest)],
+    ]),
+    add: [{ name: "Contents/masterpage0.xml", data: enc(master), method: 8 }],
+  });
+}

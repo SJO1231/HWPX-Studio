@@ -2,10 +2,11 @@
 // 서버는 이 파일을 Node의 타입 제거로 바꿔서 준다(번들러 없음). 엔진은 가져오지 않는다.
 import { createPageView, type PageView, type PickEvent, type ViewMark } from "../../../packages/viewer/src/dom/index.ts";
 import { defaultDraftIndex } from "./choice.ts";
+import { failureText } from "./failure.ts";
+import { closeReplaced, createLatest } from "./guards.ts";
 import { loadRhwp, openDocument, type HitRegion, type ViewerDocument } from "../../../packages/viewer/src/rhwp/index.ts";
 import type {
   AnchorDraftJson,
-  ApiError,
   DraftView,
   FillResponse,
   FixtureList,
@@ -57,6 +58,8 @@ type State = {
 };
 
 const state: State = { marks: [] };
+/** locate 응답의 순서 번호표: 마지막으로 누른 점의 응답만 반영하고, 문서를 바꾸거나 채울 때는 그때까지 나간 요청의 응답을 버린다 */
+const picks = createLatest();
 
 const REGION: Record<HitRegion, string> = {
   body: "본문",
@@ -82,12 +85,14 @@ function setStatus(text: string, isError = false): void {
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init);
-  const body: unknown = await res.json();
-  if (!res.ok) {
-    const e = (body as ApiError).error;
-    throw new Error(`${e.code}: ${e.message}`);
+  // 본문이 JSON이라고 믿지 않는다(서버 앞단의 거절이 글로 올 수 있다): 글로 읽고, 실패면 상태 코드로 설명한다
+  const text = await res.text();
+  if (!res.ok) throw new Error(failureText(res.status, text));
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(failureText(res.status, text));
   }
-  return body as T;
 }
 
 const post = <T>(path: string, body: unknown): Promise<T> =>
@@ -209,6 +214,7 @@ function resetPanel(): void {
   els.drafts.replaceChildren();
   els.fillOut.replaceChildren();
   delete state.pick;
+  picks.cancel();
   choose(undefined);
 }
 
@@ -219,6 +225,8 @@ async function loadSession(session: OpenResponse, keepScroll: boolean): Promise<
   const doc = openDocument(new Uint8Array(await res.arrayBuffer()));
   state.view?.destroy();
   state.doc?.free();
+  picks.cancel();
+  const previous = state.session?.session;
   state.session = session;
   state.doc = doc;
   state.view = createPageView({
@@ -228,6 +236,8 @@ async function loadSession(session: OpenResponse, keepScroll: boolean): Promise<
     onPick: (e) => void onPick(e),
     onError: (e) => setStatus(String(e instanceof Error ? e.message : e), true),
   });
+  // 새 문서를 열었으니 이전 세션은 서버에서 닫는다(같은 세션을 다시 불러온 경우는 그대로 둔다)
+  void closeReplaced(previous, session.session, (id) => api(`/api/session/${id}`, { method: "DELETE" }));
   els.download.href = `/api/session/${session.session}/download`;
   els.download.classList.remove("disabled");
   els.reset.disabled = false;
@@ -276,11 +286,13 @@ const reasonNote = (precision: LocateResponse["precision"], reason: string): str
 async function onPick(e: PickEvent): Promise<void> {
   const session = state.session;
   if (session === undefined) return;
+  const ticket = picks.begin();
   const { hit } = e;
   els.region.textContent = REGION[hit.region];
   els.fillOut.replaceChildren();
   delete state.pick;
-  if (e.limit === "none" || hit.position === undefined) {
+  // 표 칸의 빈 곳은 위치 없이 칸(과 칸 안 줄 후보)만 보낸다: 서버가 엔진 표·행·열로 칸의 문단을 찾는다
+  if (e.limit === "none" || (hit.position === undefined && e.cell === undefined)) {
     els.address.textContent = "-";
     els.precision.textContent = e.reason === undefined ? "-" : PRECISION.none;
     els.note.textContent = noneNote(e);
@@ -288,12 +300,21 @@ async function onPick(e: PickEvent): Promise<void> {
     refreshMarks();
     return;
   }
-  const from: LocatePoint = { position: hit.position };
-  if (e.shown !== undefined) from.shown = e.shown;
-  if (e.guide && e.guideText !== undefined) from.guide = e.guideText;
-  if (e.trailing === true) from.trailing = true;
-  if (e.limit === "paragraph") from.limit = "paragraph";
-  if (e.reason !== undefined) from.reason = e.reason;
+  // 응답을 기다리는 동안 이전 클릭의 주소·초안이 남아 채우기가 이전 자리에 적용되지 않게 먼저 비운다
+  els.address.textContent = "…";
+  els.precision.textContent = "…";
+  els.note.textContent = "";
+  showDrafts([]);
+  const from: LocatePoint = {};
+  if (e.cell !== undefined) from.cell = e.cell; // 칸이 줄 후보(위치·글)를 담고 있다
+  else {
+    if (hit.position !== undefined) from.position = hit.position;
+    if (e.shown !== undefined) from.shown = e.shown;
+    if (e.guide && e.guideText !== undefined) from.guide = e.guideText;
+    if (e.trailing === true) from.trailing = true;
+    if (e.limit === "paragraph") from.limit = "paragraph";
+    if (e.reason !== undefined) from.reason = e.reason;
+  }
   const request: LocateRequest = { from };
   if (e.to !== undefined) {
     const to: LocatePoint = { position: e.to.position };
@@ -304,13 +325,14 @@ async function onPick(e: PickEvent): Promise<void> {
   }
   try {
     const r = await post<LocateResponse>(`/api/session/${session.session}/locate`, request);
+    if (!picks.current(ticket)) return; // 더 나중에 누른 점이나 문서 교체가 있었다: 이 응답은 낡았다
     els.address.textContent = r.address === undefined ? "-" : `구역 ${r.address.sectionIndex}, 문단 [${r.address.path.join(", ")}]${r.address.offset === undefined ? "" : `, 오프셋 ${r.address.offset}`}${r.trail.length > 0 ? `  (${r.trail.join(" > ")})` : ""}`;
     els.precision.textContent = PRECISION[r.precision];
     els.note.textContent = r.reason === undefined ? "" : reasonNote(r.precision, r.reason);
     // 표 셀과 글상자는 화면만으로는 가를 수 없으므로 서버가 준 지나온 컨테이너로 영역 이름을 바로잡는다
     const last = r.trail[r.trail.length - 1];
     if (hit.region === "cell" && last !== undefined) els.region.textContent = last === "tbl" ? "표 셀" : last.endsWith(":caption") ? "캡션" : REGION.textbox;
-    if (r.precision === "char") {
+    if (r.precision === "char" && hit.position !== undefined) {
       if (e.guide && e.guideText !== undefined) state.pick = { id: "pick", kind: "pick", position: hit.position, endOffset: hit.position.charOffset, guide: e.guideText };
       else {
         // 누른 글자 자신(범위면 두 경계 사이)을 강조한다
@@ -324,7 +346,7 @@ async function onPick(e: PickEvent): Promise<void> {
     showDrafts(r.drafts);
     refreshMarks();
   } catch (error) {
-    setStatus(String(error instanceof Error ? error.message : error), true);
+    if (picks.current(ticket)) setStatus(String(error instanceof Error ? error.message : error), true);
   }
 }
 
@@ -335,6 +357,7 @@ async function doFill(): Promise<void> {
   const chosen = state.chosen;
   if (session === undefined || chosen === undefined) return;
   els.fill.disabled = true;
+  picks.cancel();
   try {
     const r = await post<FillResponse>(`/api/session/${session.session}/fill`, { fills: [{ anchor: chosen.anchor, value: els.value.value }] });
     els.fillOut.replaceChildren();

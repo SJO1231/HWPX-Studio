@@ -1,51 +1,31 @@
-// 쪽 위의 칸·글상자 사각형과 그것이 가리키는 문단 목록(`cellPath` 앞부분). 빈 곳을 눌렀을 때 점을 담은 가장 안쪽 칸·글상자를 찾는 데 쓴다.
-// DOM도 rhwp도 직접 부르지 않는 순수 함수다(쪽 렌더 트리·쪽 컨트롤 배치의 JSON과, 표 경로로 칸 사각형을 묻는 함수를 받는다).
+// 쪽 위의 칸·글상자 사각형과 그것이 가리키는 문단 목록. 빈 곳을 눌렀을 때 점을 담은 가장 안쪽 칸·글상자를 찾는 데 쓴다.
+// DOM도 rhwp도 직접 부르지 않는 순수 함수다(쪽 렌더 트리·쪽 컨트롤 배치의 JSON과 쪽 글자 배치의 런을 받는다).
 //
-// 칸의 정체(어느 표의 몇 번째 칸인지)는 rhwp가 직접 준 것만 쓴다:
-// - 쪽 렌더 트리의 `Table` 노드는 표를 담은 문단 번호 `pi`와 그 문단 안 컨트롤 번호 `ci`를 가진다(칸 안 표면 칸 안 문단 번호). `Cell` 노드는 행·열만 가진다.
-// - 표 경로(`parentPara`, 칸 경로)로 `getTableCellBboxesByPath`를 부르면 칸 색인(`cellIdx`)과 행·열·사각형을 준다. 렌더 트리 칸의 행·열과 사각형이 이 응답과 맞을 때만
-//   그 칸을 식별한 것으로 친다. 안 맞거나 응답이 없으면 식별하지 못한 칸이다(그 안의 점은 옮기지 않는다).
-// - 글상자는 쪽 컨트롤 배치의 `shape` 항목(사각형, 문단 번호, 컨트롤 번호)과 렌더 트리 `Rect`(`TextBox`를 가진 것)의 사각형이 맞을 때만 식별한다. 칸 안 글상자·묶음 개체 안 글상자·
-//   글상자 안의 표는 식별하지 않는다(rhwp가 칸 안 글상자 글에 칸 경로만 붙이는 등 경로를 믿을 수 없다).
-import type { CellStep } from "../map/types.ts";
-import type { LayoutRun, Rect } from "./layout.ts";
+// 표 칸의 정체(어느 표의 어느 칸인지)는 쪽 렌더 트리가 직접 준 것만 쓴다: `Table` 노드는 표를 담은 문단 번호 `pi`와 그 문단 안 컨트롤 번호 `ci`를 가지고(칸 안 표면 칸 안 문단 번호),
+// `Cell` 노드는 시작 행·열을 가진다. 이것을 바깥 표부터 이은 표 경로(`TableStep[]`)가 칸의 식별이다. 그 칸의 엔진 문단은 서버가 엔진 모델의 표·행·열로 찾으므로(`locateInCell`)
+// rhwp의 칸 색인(표에 따라 어긋난다)은 쓰지 않고, 표 경로를 묻는 rhwp 함수도 부르지 않는다. 머리말·꼬리말·바탕쪽·각주 영역 안의 표와 글상자 안의 표는 식별하지 않는다
+// (그 안의 문서 좌표는 본문과 겹쳐 보인다).
+// 글상자는 쪽 컨트롤 배치의 `shape` 항목(사각형, 문단 번호, 컨트롤 번호)과 렌더 트리 `Rect`(`TextBox`를 가진 것)의 사각형이 맞을 때만 식별한다. 칸 안 글상자·묶음 개체 안 글상자·
+// 글상자 안의 표는 식별하지 않는다(rhwp가 칸 안 글상자 글에 칸 경로만 붙이는 등 경로를 믿을 수 없다).
+import type { CellStep, TableStep } from "../map/types.ts";
+import { TABLE_CAPTION_CELL } from "../map/types.ts";
+import { hasDocCoords, isRecord, num, rectOf, type LayoutRun, type Rect } from "./layout.ts";
 
-/** 칸·글상자의 문서 위치: 표(또는 글상자)를 담은 최상위 문단 번호와 바깥부터의 경로. 마지막 단계의 `cellParaIndex`는 쓰지 않는다. */
+/** 글상자의 문서 위치: 글상자를 담은 최상위 문단 번호와 바깥부터의 경로. 마지막 단계의 `cellParaIndex`는 쓰지 않는다. */
 export type ContainerId = { parentPara: number; steps: CellStep[] };
 
-export type Container = {
-  rect: Rect;
-  kind: "cell" | "textbox";
-  /** 식별하지 못했으면 없다 */
-  id?: ContainerId;
-};
-
-/** `getTableCellBboxesByPath`의 한 칸 */
-export type ApiCell = { cellIdx: number; row: number; col: number; x: number; y: number; w: number; h: number };
+export type Container =
+  /** `table`: 렌더 트리의 표 경로(바깥 표부터, 마지막이 이 칸). 식별하지 못했으면 없다 */
+  | { rect: Rect; kind: "cell"; table?: TableStep[] }
+  /** `id`: 식별하지 못했으면 없다 */
+  | { rect: Rect; kind: "textbox"; id?: ContainerId };
 
 export type ContainerSource = {
   /** 쪽 컨트롤 배치(`getPageControlLayout`)의 JSON */
   controls: unknown;
-  /**
-   * 쪽 글자 배치의 런. 칸·글상자 식별을 검증하는 데만 쓴다: 칸 사각형 안에 그려진 글 있는 런의 `cellPath`가 식별한 칸 색인과 다르면(rhwp의 표 칸 응답 번호와 런의 칸 번호가
-   * 어긋난 표가 있다: 병합 칸이 있는 표에서 한 칸씩 밀린 것이 관측됐다) 그 표의 칸은 모두 식별하지 못한 것으로 친다. 검증할 글 있는 런이 하나도 없어도 식별하지 않는다.
-   */
+  /** 쪽 글자 배치의 런. 글상자 식별을 검증하는 데만 쓴다(글상자 사각형 안의 글 있는 런이 모두 그 글상자의 것이어야 한다). */
   runs?: readonly LayoutRun[];
-  /** 표 경로의 칸 사각형들. 모르면 undefined */
-  tableCells(parentPara: number, path: CellStep[]): ApiCell[] | undefined;
 };
-
-const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
-const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
-
-function rectOf(v: unknown): Rect | undefined {
-  if (!isRecord(v)) return undefined;
-  const x = num(v["x"]);
-  const y = num(v["y"]);
-  const w = num(v["w"]);
-  const h = num(v["h"]);
-  return x === undefined || y === undefined || w === undefined || h === undefined ? undefined : { x, y, w, h };
-}
 
 /** 런의 왼쪽 끝 가운데 점이 사각형 안에 드는가(글자 폭보다 넓게 그려진 빈 런의 한가운데는 칸 밖일 수 있어 왼쪽 끝으로 본다). */
 const leftInside = (run: LayoutRun, r: Rect): boolean => run.x + 0.5 >= r.x && run.x + 0.5 <= r.x + r.w && run.y + run.h / 2 >= r.y && run.y + run.h / 2 <= r.y + r.h;
@@ -67,15 +47,6 @@ const close = (a: Rect, b: Rect, tol = 1): boolean => Math.abs(a.x - b.x) <= tol
 /** 본문이 아닌 영역의 노드: 그 안의 표·글상자는 문서 좌표가 본문과 겹쳐 보이므로 식별하지 않는다. */
 const ASIDE = new Set(["Header", "Footer", "MasterPage", "FootnoteArea"]);
 
-type Ctx = {
-  /** 이 칸을 담은 표까지의 경로(바깥 칸 단계의 `cellParaIndex`는 채워져 있다) */
-  outer: CellStep[];
-  parentPara: number;
-  /** 이 칸의 표 컨트롤 번호와 칸 색인 */
-  controlIndex: number;
-  cellIdx: number;
-};
-
 /** 쪽 렌더 트리와 쪽 컨트롤 배치에서 칸·글상자 사각형을 모은다(바깥에서 안쪽 순서). */
 export function buildContainers(tree: unknown, source: ContainerSource): Container[] {
   const out: Container[] = [];
@@ -90,8 +61,8 @@ export function buildContainers(tree: unknown, source: ContainerSource): Contain
     }
   }
 
-  /** `ctx`: 지금 있는 칸(식별했으면). `unknown`: 식별하지 못한 칸·본문 밖 영역 안이다. */
-  const walk = (node: unknown, ctx: Ctx | undefined, unknown: boolean, depth: number): void => {
+  /** `outer`: 지금 있는 칸까지의 표 경로(식별했으면). `unknown`: 식별하지 못한 칸·본문 밖 영역 안이다. */
+  const walk = (node: unknown, outer: TableStep[] | undefined, unknown: boolean, depth: number): void => {
     if (!isRecord(node) || depth > 64) return;
     const type = node["type"];
     const bbox = rectOf(node["bbox"]);
@@ -103,73 +74,30 @@ export function buildContainers(tree: unknown, source: ContainerSource): Contain
     if (type === "Table") {
       const pi = num(node["pi"]);
       const ci = num(node["ci"]);
-      let steps: CellStep[] | undefined;
-      let parentPara: number | undefined;
-      if (!unknown && pi !== undefined && ci !== undefined) {
-        if (ctx === undefined) {
-          steps = [];
-          parentPara = pi;
-        } else {
-          steps = [...ctx.outer, { controlIndex: ctx.controlIndex, cellIndex: ctx.cellIdx, cellParaIndex: pi }];
-          parentPara = ctx.parentPara;
-        }
-      }
-      let api: ApiCell[] | undefined;
-      if (steps !== undefined && parentPara !== undefined && ci !== undefined) {
-        try {
-          api = source.tableCells(parentPara, [...steps, { controlIndex: ci, cellIndex: 0, cellParaIndex: 0 }]);
-        } catch {
-          api = undefined;
-        }
-      }
-      type Planned = { node: Record<string, unknown>; rect: Rect; cellIdx?: number };
-      const planned: Planned[] = [];
       for (const cell of children) {
         if (!isRecord(cell) || cell["type"] !== "Cell") {
-          walk(cell, ctx, unknown, depth + 1);
+          walk(cell, outer, unknown, depth + 1);
           continue;
         }
         const rect = rectOf(cell["bbox"]);
         if (rect === undefined) continue;
         const row = num(cell["row"]);
         const col = num(cell["col"]);
-        const found = steps === undefined ? undefined : api?.find((a) => a.row === row && a.col === col && close(rect, a));
-        planned.push(found === undefined ? { node: cell, rect } : { node: cell, rect, cellIdx: found.cellIdx });
-      }
-      // 칸 사각형 안의 글 있는 런이 식별한 칸 색인과 어긋나면(또는 검증할 런이 없으면) 이 표의 칸은 모두 식별하지 않는다
-      let trusted = steps !== undefined && parentPara !== undefined && ci !== undefined;
-      if (trusted && source.runs !== undefined) {
-        let verified = 0;
-        for (const p of planned) {
-          if (p.cellIdx === undefined) continue;
-          for (const run of source.runs) {
-            const path = run.cellPath;
-            if (path === undefined || run.text === "" || run.parentParaIdx !== parentPara || path.length !== (steps?.length ?? 0) + 1 || !leftInside(run, p.rect)) continue;
-            const last = path[path.length - 1];
-            const outerSame = (steps ?? []).every((s, i) => path[i]?.controlIndex === s.controlIndex && path[i]?.cellIndex === s.cellIndex && path[i]?.cellParaIndex === s.cellParaIndex);
-            if (!outerSame || last === undefined || last.controlIndex !== ci) continue;
-            if (last.cellIndex !== p.cellIdx) trusted = false;
-            else verified++;
-          }
-        }
-        if (verified === 0) trusted = false;
-      } else if (source.runs === undefined) trusted = false;
-      for (const p of planned) {
-        const grandchildren = Array.isArray(p.node["children"]) ? p.node["children"] : [];
-        if (!trusted || p.cellIdx === undefined || steps === undefined || parentPara === undefined || ci === undefined) {
-          out.push({ rect: p.rect, kind: "cell" });
+        const grandchildren = Array.isArray(cell["children"]) ? cell["children"] : [];
+        if (unknown || pi === undefined || ci === undefined || row === undefined || col === undefined) {
+          out.push({ rect, kind: "cell" });
           for (const c of grandchildren) walk(c, undefined, true, depth + 2);
           continue;
         }
-        out.push({ rect: p.rect, kind: "cell", id: { parentPara, steps: [...steps, { controlIndex: ci, cellIndex: p.cellIdx, cellParaIndex: 0 }] } });
-        const inner: Ctx = { outer: steps, parentPara, controlIndex: ci, cellIdx: p.cellIdx };
-        for (const c of grandchildren) walk(c, inner, false, depth + 2);
+        const table = [...(outer ?? []), { paragraph: pi, control: ci, row, col }];
+        out.push({ rect, kind: "cell", table });
+        for (const c of grandchildren) walk(c, table, false, depth + 2);
       }
       return;
     }
     if (type === "Rect" && bbox !== undefined && children.some((c) => isRecord(c) && c["type"] === "TextBox")) {
       // 글상자: 칸 밖(본문) 글상자만 식별한다
-      const shape = !unknown && ctx === undefined ? shapes.find((s) => !s.inCell && close(s.rect, bbox)) : undefined;
+      const shape = !unknown && outer === undefined ? shapes.find((s) => !s.inCell && close(s.rect, bbox)) : undefined;
       const container: Container = { rect: bbox, kind: "textbox" };
       if (shape !== undefined && boxTextMatches(source.runs, bbox, shape.paraIdx, shape.controlIdx)) {
         container.id = { parentPara: shape.paraIdx, steps: [{ controlIndex: shape.controlIdx, cellIndex: 0, cellParaIndex: 0 }] };
@@ -179,7 +107,7 @@ export function buildContainers(tree: unknown, source: ContainerSource): Contain
       for (const c of children) walk(c, undefined, true, depth + 1);
       return;
     }
-    for (const c of children) walk(c, ctx, unknown, depth + 1);
+    for (const c of children) walk(c, outer, unknown, depth + 1);
   };
   walk(tree, undefined, false, 0);
   return out;
@@ -194,7 +122,9 @@ export type ContainerHit =
   | { kind: "none" }
   /** 점을 담은 가장 안쪽 칸·글상자를 식별하지 못했거나, 서로 포개지 않은 사각형이 겹쳐 있어 하나로 정할 수 없다 */
   | { kind: "unknown" }
-  | { kind: "in"; container: Container & { id: ContainerId } };
+  /** 식별한 표 칸. `table`은 렌더 트리의 표 경로(마지막이 이 칸), `rect`는 칸 사각형 */
+  | { kind: "cell"; rect: Rect; table: TableStep[] }
+  | { kind: "textbox"; id: ContainerId };
 
 /** 점 `(x, y)`를 담은 가장 안쪽 칸·글상자. 후보 가운데 가장 작은 것이 나머지 모두 안에 들어 있어야 한다. */
 export function containerAt(containers: readonly Container[], x: number, y: number): ContainerHit {
@@ -203,15 +133,32 @@ export function containerAt(containers: readonly Container[], x: number, y: numb
   let inner = around[0] as Container;
   for (const c of around) if (area(c.rect) < area(inner.rect)) inner = c;
   if (!around.every((c) => holds(c.rect, inner.rect))) return { kind: "unknown" };
-  return inner.id === undefined ? { kind: "unknown" } : { kind: "in", container: { ...inner, id: inner.id } };
+  if (inner.kind === "cell") return inner.table === undefined ? { kind: "unknown" } : { kind: "cell", rect: inner.rect, table: inner.table };
+  return inner.id === undefined ? { kind: "unknown" } : { kind: "textbox", id: inner.id };
 }
 
-/** 런이 칸·글상자 `id`에 속하는가: 같은 부모 문단, 같은 깊이, 단계마다 컨트롤·칸 색인이 같고 바깥 단계는 칸 안 문단 번호도 같다. */
+/** 런이 글상자 `id`에 속하는가: 같은 부모 문단, 같은 깊이, 단계마다 컨트롤·칸 색인이 같고 바깥 단계는 칸 안 문단 번호도 같다. */
 export function runInContainer(run: LayoutRun, id: ContainerId): boolean {
   const path = run.cellPath;
   if (path === undefined || run.parentParaIdx !== id.parentPara || path.length !== id.steps.length) return false;
   return id.steps.every((s, i) => {
     const p = path[i];
     return p !== undefined && p.controlIndex === s.controlIndex && p.cellIndex === s.cellIndex && (i === id.steps.length - 1 || p.cellParaIndex === s.cellParaIndex);
+  });
+}
+
+/**
+ * 표 경로 `table`의 칸 안(칸 안 문단과 그 안의 안쪽 표·글상자)에 속한 런들: 문서 좌표가 있고, 같은 최상위 문단이며, 칸 경로가 `table`만큼은 단계마다 표 컨트롤 번호가 같고
+ * 바깥 단계의 칸 안 문단 번호가 안쪽 표를 담은 문단 번호(`paragraph`)와 같고(표 캡션 런은 아니다), 런의 왼쪽 끝이 칸 사각형 `rect` 안에 드는 것. 칸 색인은 보지 않는다
+ * (rhwp의 칸 번호는 표에 따라 행·열과 어긋나므로 칸은 사각형으로 가리고, 서버가 행·열로 맞대어 본다). 칸 경로가 `table`보다 긴 런은 이 칸의 문단 안 안쪽 표·글상자의 글이다:
+ * 칸에 안쪽 표만 보이는 쪽(칸이 쪽을 넘어 이어질 때)에서 그 표를 담은 문단이 칸의 줄이다.
+ * 칸 위에 떠 있는 글상자의 글은 컨트롤 번호가 달라 들지 않는다. 오른쪽 가장자리 1.5픽셀 안에서 시작하는 런도 뺀다(이웃 칸의 글이 자기 칸 왼쪽 가장자리보다 1픽셀 왼쪽에서 시작하는 것이 관측됐다).
+ */
+export function runsInCell(runs: readonly LayoutRun[], table: readonly TableStep[], rect: Rect): LayoutRun[] {
+  return runs.filter((run) => {
+    const path = run.cellPath;
+    if (!hasDocCoords(run) || path === undefined || run.parentParaIdx !== table[0]?.paragraph || path.length < table.length) return false;
+    if (path[table.length - 1]?.cellIndex === TABLE_CAPTION_CELL) return false;
+    return table.every((s, i) => path[i]?.controlIndex === s.control && (i === table.length - 1 || path[i]?.cellParaIndex === table[i + 1]?.paragraph)) && leftInside(run, { ...rect, w: rect.w - 1.5 });
   });
 }

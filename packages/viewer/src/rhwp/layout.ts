@@ -66,14 +66,30 @@ export function samePosition(a: RhwpPosition, b: RhwpPosition): boolean {
   return sameParagraph(a, b) && a.charOffset === b.charOffset;
 }
 
-/** 런의 글자 수(유니코드 글자 단위). `charX`의 길이는 이 값 + 1이다. */
-export function runLength(run: LayoutRun): number {
+/** 글의 글자 수(유니코드 글자 단위: 대리쌍은 한 글자). */
+export function codePointLength(text: string): number {
   let n = 0;
-  for (const _ of run.text) n++;
+  for (const _ of text) n++;
   return n;
 }
 
+/** 런의 글자 수(유니코드 글자 단위). `charX`의 길이는 이 값 + 1이다. */
+export const runLength = (run: LayoutRun): number => codePointLength(run.text);
+
 export type Rect = { x: number; y: number; w: number; h: number };
+
+export const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+export const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+
+/** `{ x, y, w, h }`가 모두 유한한 수인 객체의 사각형. 아니면 undefined. */
+export function rectOf(v: unknown): Rect | undefined {
+  if (!isRecord(v)) return undefined;
+  const x = num(v["x"]);
+  const y = num(v["y"]);
+  const w = num(v["w"]);
+  const h = num(v["h"]);
+  return x === undefined || y === undefined || w === undefined || h === undefined ? undefined : { x, y, w, h };
+}
 
 /** 런 안 `i`번째 글자(0부터)의 사각형. 쪽 픽셀. */
 export function charRect(run: LayoutRun, i: number): Rect {
@@ -86,21 +102,7 @@ export function charRect(run: LayoutRun, i: number): Rect {
  * 한 문단 안 글자 순번 구간 `[from, to)`의 사각형들(런마다 하나). 런이 구간과 겹치는 만큼만 잘라 낸다.
  * 캐럿 사각형 함수는 쓰지 않고(각주가 있는 문단에서 어긋난다) 글자 배치의 `x + charX`와 런의 `y/h`로 만든다.
  */
-export function rangeRects(layout: PageLayout, para: RhwpPosition, from: number, to: number): Rect[] {
-  const out: Rect[] = [];
-  for (const run of layout.runs) {
-    const start = runPosition(run);
-    if (start === undefined || !sameParagraph(start, para)) continue;
-    const n = runLength(run);
-    const a = Math.max(from, start.charOffset);
-    const b = Math.min(to, start.charOffset + n);
-    if (a >= b) continue;
-    const left = run.charX[a - start.charOffset] ?? 0;
-    const right = run.charX[b - start.charOffset] ?? left;
-    out.push({ x: run.x + left, y: run.y, w: right - left, h: run.h });
-  }
-  return out;
-}
+export const rangeRects = (layout: PageLayout, para: RhwpPosition, from: number, to: number): Rect[] => rangeCover(layout, para, from, to).rects;
 
 /**
  * `rangeRects`와 같은 사각형에 더해, 그 사각형들이 덮은 글(런의 글을 구간만큼 잘라 이은 것)을 돌려준다.
@@ -158,8 +160,6 @@ export function guideRect(layout: PageLayout, para: RhwpPosition, k: number, gui
 /** 쪽 영역별로 그 안에 그려진 글(`TextRun`)의 사각형 */
 export type RegionBoxes = { master: Rect[]; body: Rect[]; header: Rect[]; footer: Rect[]; footnote: Rect[] };
 
-const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
-
 const AREA_OF_NODE: Record<string, keyof RegionBoxes> = { MasterPage: "master", Body: "body", Header: "header", Footer: "footer", FootnoteArea: "footnote" };
 
 /**
@@ -185,6 +185,16 @@ export function regionBoxes(tree: unknown): RegionBoxes {
   };
   walk(tree, undefined, 0);
   return out;
+}
+
+/**
+ * 런 자신의 사각형과 같은(0.6 이내) 글 상자가 속한 영역. 본문의 글 상자와도 같으면 본문이다. 같은 상자가 어느 영역에도 없으면 undefined.
+ * 점이 아니라 런으로 가리는 판별이다: 다른 영역의 글 상자(본문 표의 빈 칸 글 상자는 칸 폭만큼 넓다)가 점을 덮어도 그 점 아래 런의 영역은 달라지지 않는다.
+ */
+export function areaOfRun(boxes: RegionBoxes, run: LayoutRun): keyof RegionBoxes | undefined {
+  const same = (r: Rect): boolean => Math.abs(r.x - run.x) <= 0.6 && Math.abs(r.y - run.y) <= 0.6 && Math.abs(r.w - run.w) <= 0.6 && Math.abs(r.h - run.h) <= 0.6;
+  if (boxes.body.some(same)) return "body";
+  return (["header", "footer", "footnote", "master"] as const).find((area) => boxes[area].some(same));
 }
 
 export const insideAny = (rects: Rect[], x: number, y: number): boolean => rects.some((r) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h);

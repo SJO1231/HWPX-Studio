@@ -1,10 +1,10 @@
 import { HwpDocument } from "@rhwp/core";
-import { REASONS, TABLE_CAPTION_CELL, type CellStep, type RhwpPosition, type Shown } from "../map/types.ts";
+import { REASONS, TABLE_CAPTION_CELL, type CellRef, type CellRun, type CellStep, type RhwpPosition, type Shown } from "../map/types.ts";
 import { toViewerError, ViewerError } from "./errors.ts";
-import { buildContainers, containerAt, runInContainer, type ApiCell, type Container } from "./containers.ts";
-import { hasDocCoords, insideAny, regionBoxes, runPosition, type LayoutRun, type PageLayout, type RegionBoxes } from "./layout.ts";
+import { buildContainers, containerAt, runInContainer, runsInCell, type Container } from "./containers.ts";
+import { areaOfRun, hasDocCoords, insideAny, num, regionBoxes, runPosition, type LayoutRun, type PageLayout, type RegionBoxes } from "./layout.ts";
 import { requireLoaded } from "./load.ts";
-import { classifyPoint, nearestLineRun, nearestRunOf } from "./pick.ts";
+import { classifyPoint, nearestLineRun, nearestLineRuns, nearestRunOf } from "./pick.ts";
 
 export type Area = { x: number; y: number; width: number; height: number };
 
@@ -39,6 +39,8 @@ export type PickLimit = "char" | "paragraph" | "none";
  */
 export type Pick = {
   hit: Hit;
+  /** 표 칸의 빈 곳이다: 눌린 칸(렌더 트리의 표 경로의 행·열)과 칸 안 줄 후보. 서버가 엔진 표·행·열로 칸의 문단을 찾는다. `hit.position`·`shown`은 첫 후보이고, 후보가 없으면(글이 없는 표) 없다(칸의 첫 문단으로 낸다) */
+  cell?: CellRef;
   shown?: Shown;
   /** 문서 좌표 없이 그려진 안내문 글을 눌렀다(안내문 상태 누름틀 후보). `shown`은 그 자리의 빈 런, `guideText`는 눌린 글 */
   guide: boolean;
@@ -74,6 +76,9 @@ export type ViewerDocument = {
   free(): void;
 };
 
+/** 표 칸의 빈 곳에서 서버에 보내는 칸 안 줄 후보의 수 상한 */
+const CELL_RUN_CANDIDATES = 12;
+
 function parse(json: string, what: string): unknown {
   try {
     return JSON.parse(json);
@@ -82,7 +87,6 @@ function parse(json: string, what: string): unknown {
   }
 }
 
-const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
 const area = (v: unknown): Area => {
   const o = (v ?? {}) as Record<string, unknown>;
   return { x: num(o["x"]) ?? 0, y: num(o["y"]) ?? 0, width: num(o["width"]) ?? 0, height: num(o["height"]) ?? 0 };
@@ -195,18 +199,33 @@ export function openDocument(bytes: Uint8Array): ViewerDocument {
    * 점 아래에 그려진 글이 본문이 아닌 영역(바탕쪽·머리말·꼬리말·각주)의 글인가(렌더 트리의 영역별 글 사각형으로 가린다). 본문 글 위면 undefined다.
    * rhwp는 바탕쪽 글과 머리말·꼬리말 안 표 칸의 글에도 본문 문단·표 칸 같은 문서 좌표를 붙이므로, 글자 위치만으로는 본문과 가를 수 없다.
    */
-  const outsideBody = (page: number, x: number, y: number): HitRegion | undefined => {
+  const regionsOf = (page: number): RegionBoxes => {
     let region = boxes.get(page);
     if (region === undefined) {
       region = regionBoxes(treeOf(page));
       boxes.set(page, region);
     }
+    return region;
+  };
+  const outsideBody = (page: number, x: number, y: number): HitRegion | undefined => {
+    const region = regionsOf(page);
     if (insideAny(region.body, x, y)) return undefined;
     if (insideAny(region.header, x, y)) return "header";
     if (insideAny(region.footer, x, y)) return "footer";
     if (insideAny(region.footnote, x, y)) return "footnote";
     if (insideAny(region.master, x, y)) return "masterpage";
     return undefined;
+  };
+
+  const AREA_REGION = { header: "header", footer: "footer", footnote: "footnote", master: "masterpage" } as const;
+  /**
+   * 점 아래의 글자 하나만 있는 런 `run`이 본문이 아닌 영역의 글인가. 런 자신의 사각형으로 먼저 가린다(본문 표의 빈 칸 글 상자는 칸 폭만큼 넓어서, 그 뒤에 그려진 바탕쪽 글의 점을 덮는다).
+   * 런의 사각형과 같은 글 상자를 렌더 트리에서 찾지 못하면 점으로 가린다(`outsideBody`).
+   */
+  const outsideBodyRun = (page: number, run: LayoutRun, x: number, y: number): HitRegion | undefined => {
+    const own = areaOfRun(regionsOf(page), run);
+    if (own === "body") return undefined;
+    return own === undefined ? outsideBody(page, x, y) : AREA_REGION[own];
   };
 
   const treeOf = (page: number): unknown => {
@@ -217,42 +236,11 @@ export function openDocument(bytes: Uint8Array): ViewerDocument {
     }
     return tree;
   };
-  /** 쪽 위의 칸·글상자 사각형과 그 문단 위치(`containers.ts`). 표 칸 식별은 rhwp의 표 경로 칸 사각형 응답과 맞대어 본다. */
+  /** 쪽 위의 칸·글상자 사각형과 그 식별(`containers.ts`). 표 칸은 쪽 렌더 트리의 표 경로로, 글상자는 쪽 컨트롤 배치로 식별한다. */
   const containersOf = (page: number): Container[] => {
     let list = containerLists.get(page);
     if (list === undefined) {
-      const section = pageSection(page);
-      list = buildContainers(treeOf(page), {
-        controls: parse(call(() => doc.getPageControlLayout(page)), "쪽 컨트롤 배치"),
-        runs: layoutOf(page).runs,
-        tableCells(parentPara, path) {
-          const raw = parse(call(() => doc.getTableCellBboxesByPath(section, parentPara, JSON.stringify(path))), "표 칸 사각형");
-          if (!Array.isArray(raw)) return undefined;
-          const boxes = (raw as unknown[]).filter((c): c is ApiCell => typeof c === "object" && c !== null && typeof (c as ApiCell).cellIdx === "number");
-          // 칸 사각형 응답의 `cellIdx`는 경로(`cellPath`)의 칸 색인과 다를 수 있다(병합 칸이 있는 표에서 1부터 시작하는 것이 관측됐다). 경로의 칸 색인은
-          // 칸 정보 함수(`getCellInfoByPath`)가 같은 색인에 주는 행·열로 직접 잇는다: 색인 0, 1, 2…의 행·열을 읽어 사각형 응답의 행·열과 맞춘다.
-          const last = path[path.length - 1];
-          if (last === undefined) return undefined;
-          const byPosition = new Map<string, number>();
-          for (let k = 0; k <= boxes.length + 8; k++) {
-            let info: unknown;
-            try {
-              info = parse(call(() => doc.getCellInfoByPath(section, parentPara, JSON.stringify([...path.slice(0, -1), { controlIndex: last.controlIndex, cellIndex: k, cellParaIndex: 0 }]))), "칸 정보");
-            } catch {
-              break;
-            }
-            const row = (info as { row?: unknown }).row;
-            const col = (info as { col?: unknown }).col;
-            if (typeof row === "number" && typeof col === "number") byPosition.set(`${row}:${col}`, k);
-          }
-          const out: ApiCell[] = [];
-          for (const b of boxes) {
-            const k = byPosition.get(`${b.row}:${b.col}`);
-            if (k !== undefined) out.push({ ...b, cellIdx: k });
-          }
-          return out;
-        },
-      });
+      list = buildContainers(treeOf(page), { controls: parse(call(() => doc.getPageControlLayout(page)), "쪽 컨트롤 배치"), runs: layoutOf(page).runs });
       containerLists.set(page, list);
     }
     return list;
@@ -272,7 +260,7 @@ export function openDocument(bytes: Uint8Array): ViewerDocument {
       if (region !== undefined) return { region };
     }
     // 문서 좌표가 있는 글이라도 바탕쪽·머리말·꼬리말·각주 안의 글이면 그 영역이다(본문 좌표와 겹쳐 보인다)
-    const outside = outsideBody(page, x, y);
+    const outside = under.kind === "glyph" ? outsideBodyRun(page, under.run, x, y) : outsideBody(page, x, y);
     if (outside !== undefined && (onBody || outside === "masterpage")) return { region: outside };
     const raw = parse(call(() => doc.hitTest(page, x, y)), "위치") as Record<string, unknown>;
     const position = positionOf(raw);
@@ -337,7 +325,7 @@ export function openDocument(bytes: Uint8Array): ViewerDocument {
           return { hit: { region, position: empty }, shown: { text: "", start: empty.charOffset }, guide: true, guideText: under.run.text, limit: "char" };
         }
         case "glyph": {
-          const outside = outsideBody(page, x, y);
+          const outside = outsideBodyRun(page, under.run, x, y);
           if (outside !== undefined) return none(outside);
           const start = runPosition(under.run);
           if (start === undefined) return none(where());
@@ -351,17 +339,29 @@ export function openDocument(bytes: Uint8Array): ViewerDocument {
           // 글자가 없는 곳: rhwp가 가리킨 가장 가까운 줄의 문단을, 점에서 가장 가까운 런이 그 문단의 것일 때만 문단 단위로 쓴다
           const near = hitAt(page, x, y);
           if (near.position === undefined) return none(near.region);
-          // 점을 담은 가장 안쪽 칸·글상자를 먼저 찾는다. 칸·글상자 안이면 줄 후보는 그 칸에 속한 런뿐이고(`hitTest`와 달라도 소속으로 확정한다),
+          // 점을 담은 가장 안쪽 칸·글상자를 먼저 찾는다. 칸·글상자 안이면 줄 후보는 그 칸·글상자에 속한 런뿐이고(`hitTest`와 달라도 소속으로 확정한다),
           // 칸 밖이면 본문 런뿐이다(이때만 `hitTest`가 가리킨 문단과 같은지 확인한다). 어느 칸인지 정할 수 없으면 옮기지 않는다.
           const where = containerAt(containersOf(page), x, y);
           if (where.kind === "unknown") return none(near.region, REASONS.nearestUnconfirmed);
-          if (where.kind === "in") {
-            const id = where.container.id;
+          if (where.kind === "cell") {
+            // 칸은 렌더 트리의 표 경로(`cell`)로 서버에 알린다. 칸 사각형 안의 같은 표의 런을 점에 가까운 줄부터 후보(`cell.runs`)로 함께 보내면, 서버가 엔진 표·행·열의 칸과 맞는
+            // 첫 후보의 문단을 쓰고(후보가 없으면, 글이 없는 표면, 칸의 첫 문단), 그 런의 위치·글은 `hit`·`shown`에도 첫 후보로 둔다.
+            const cell: CellRef = { sectionIndex: pageSection(page), steps: where.table };
+            const runs: CellRun[] = [];
+            for (const run of nearestLineRuns({ runs: runsInCell(layout.runs, where.table, where.rect) }, x, y, CELL_RUN_CANDIDATES)) {
+              const position = runPosition(run);
+              if (position !== undefined) runs.push({ position, shown: { text: run.text, start: position.charOffset } });
+            }
+            if (runs.length > 0) cell.runs = runs;
+            const first = runs[0];
+            return { hit: first === undefined ? { region: "cell" } : { region: "cell", position: first.position }, cell, ...(first === undefined ? {} : { shown: first.shown }), guide: false, limit: "paragraph", reason: REASONS.nearestLine };
+          }
+          if (where.kind === "textbox") {
+            const id = where.id;
             const inside = nearestLineRun({ runs: layout.runs.filter((r) => hasDocCoords(r) && runInContainer(r, id)) }, x, y);
             const first = inside === undefined ? undefined : runPosition(inside);
-            const region: HitRegion = where.container.kind === "textbox" ? "textbox" : "cell";
-            if (inside === undefined || first === undefined) return none(region, REASONS.nearestUnconfirmed);
-            return { hit: { region, position: first }, shown: { text: inside.text, start: first.charOffset }, guide: false, limit: "paragraph", reason: REASONS.nearestLine };
+            if (inside === undefined || first === undefined) return none("textbox", REASONS.nearestUnconfirmed);
+            return { hit: { region: "textbox", position: first }, shown: { text: inside.text, start: first.charOffset }, guide: false, limit: "paragraph", reason: REASONS.nearestLine };
           }
           const run = nearestRunOf({ runs: layout.runs.filter((r) => r.cellPath === undefined) }, near.position, x, y);
           const start = run === undefined ? undefined : runPosition(run);
