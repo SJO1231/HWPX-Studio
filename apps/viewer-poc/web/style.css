@@ -1,0 +1,41 @@
+* { box-sizing: border-box; }
+body { margin: 0; font: 14px/1.45 "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif; color: #1c1c1c; background: #e9eaed; }
+#bar { position: sticky; top: 0; z-index: 10; display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; padding: 8px 14px; background: #fff; border-bottom: 1px solid #c9ccd2; }
+#bar a.disabled { pointer-events: none; color: #9aa; }
+#status { margin-left: auto; color: #555; }
+#status.error { color: #b00020; }
+main { display: flex; align-items: flex-start; gap: 14px; padding: 14px; }
+#pages { flex: 1 1 auto; min-width: 0; overflow-x: auto; }
+#panel { flex: 0 0 360px; position: sticky; top: 56px; max-height: calc(100vh - 70px); overflow-y: auto; background: #fff; border: 1px solid #c9ccd2; border-radius: 6px; padding: 4px 14px 14px; }
+#panel h2 { font-size: 14px; margin: 14px 0 6px; }
+dl { display: grid; grid-template-columns: 70px 1fr; gap: 2px 8px; margin: 0; }
+dt { color: #666; }
+dd { margin: 0; word-break: break-all; }
+#w-note { color: #8a5a00; margin: 6px 0 0; min-height: 1.2em; }
+.choices { list-style: none; margin: 0; padding: 0; }
+.choices li { display: block; margin: 0 0 4px; }
+.choices label { display: block; padding: 5px 7px; border: 1px solid #d8dbe0; border-radius: 4px; cursor: pointer; }
+.choices label:hover { background: #f4f6fa; }
+.choices input { margin-right: 6px; }
+.choices .kind { display: inline-block; min-width: 3.2em; color: #fff; background: #5b6b8c; border-radius: 3px; padding: 0 5px; margin-right: 6px; font-size: 12px; }
+.choices .sub { display: block; color: #666; font-size: 12px; margin-left: 24px; word-break: break-all; }
+.value-row { display: flex; gap: 6px; align-items: center; margin: 8px 0 6px; }
+.value-row input { flex: 1; }
+#fill-out { margin-top: 8px; font-size: 13px; }
+#fill-out .ok { color: #1b6e2d; }
+#fill-out .bad { color: #b00020; }
+#fill-out ul { margin: 4px 0 0 18px; padding: 0; }
+
+.page-view .page { position: relative; margin: 0 auto 12px; background: #fff; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25); }
+.page-img { display: block; width: 100%; height: 100%; user-select: none; -webkit-user-drag: none; }
+.page-overlay { position: absolute; inset: 0; pointer-events: none; }
+.page { cursor: text; }
+.hl { position: absolute; border-radius: 2px; }
+.mark-field { background: rgba(255, 193, 7, 0.35); outline: 1px solid #e0a000; }
+.mark-placeholder { background: rgba(33, 150, 243, 0.3); outline: 1px solid #1976d2; }
+.mark-blankMark, .mark-emptyCell, .mark-labelColon { background: rgba(156, 39, 176, 0.22); outline: 1px dashed #8e24aa; }
+.mark-pick { background: rgba(76, 175, 80, 0.35); }
+.mark-chosen { background: rgba(244, 67, 54, 0.3); outline: 2px solid #d32f2f; }
+.mark-selection { background: rgba(0, 0, 0, 0.2); }
+.choices label.blocked { background: #f7f2f2; border-style: dashed; }
+.choices .badge-blocked { display: inline-block; margin-left: 6px; padding: 0 5px; font-size: 11px; color: #8a1c1c; background: #fbe4e4; border-radius: 3px; }

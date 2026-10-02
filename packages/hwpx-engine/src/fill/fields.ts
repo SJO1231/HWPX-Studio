@@ -41,6 +41,16 @@ export function fieldShapeError(shape: FieldShape): Fail {
 }
 
 /**
+ * 이 누름틀을 값으로 채울 수 없는 사유(모양이 `simple`·`empty`가 아니거나 끝 표식이 없거나 시작·끝이 같은 조각이다). 채울 수 있으면 undefined.
+ * 채움(`planFieldFill`)과 앵커 초안(`draftAnchors`: 채울 수 없는 모양의 누름틀은 `field` 초안을 만들지 않는다)이 같은 판단을 쓴다.
+ */
+export function fieldFillBlock(target: FieldTarget): Fail["fail"] | undefined {
+  const { info, begin, end } = target;
+  if ((info.shape !== "simple" && info.shape !== "empty") || end === null || begin.pieceIndex === end.pieceIndex) return fieldShapeError(info.shape).fail;
+  return undefined;
+}
+
+/**
  * 누름틀에 값을 넣는다(안내문과 비교하지 않는다).
  * - `simple`: 시작과 끝 사이 첫 글 조각에 값을 넣고 나머지 글 조각은 비운다.
  * - `empty`: 시작 컨트롤 바로 뒤에 `hp:t`를 넣는다.
@@ -49,9 +59,8 @@ export function fieldShapeError(shape: FieldShape): Fail {
  */
 export function planFieldFill(ctx: Ctx, target: FieldTarget, value: string, reason: string): FieldFill | Fail {
   const { paragraph: par, begin, end, info } = target;
-  if ((info.shape !== "simple" && info.shape !== "empty") || end === null || begin.pieceIndex === end.pieceIndex) {
-    return fieldShapeError(info.shape);
-  }
+  const block = fieldFillBlock(target);
+  if (block !== undefined || end === null) return { fail: block ?? fieldShapeError(info.shape).fail };
   const beginPiece = par.pieces[begin.pieceIndex];
   const endPiece = par.pieces[end.pieceIndex];
   if (beginPiece === undefined || endPiece === undefined) return fieldShapeError(info.shape);

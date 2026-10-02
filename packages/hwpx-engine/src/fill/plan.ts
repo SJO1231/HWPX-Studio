@@ -22,13 +22,13 @@ import {
 import { digestValue, lookupPath, resolveValue } from "../template/value.ts";
 import { resolveAnchors, type ResolvedAnchor } from "./anchors.ts";
 import { addDelta, deltaOfElements, deltaRecord, scaleDelta, zeroDelta, type Delta } from "./census.ts";
-import { applyRepls, contentObjects, groupBy, hasSecPr, siblingsAtPath, type Repl } from "./doc.ts";
+import { applyRepls, groupBy, hasSecPr, siblingsAtPath, type Repl } from "./doc.ts";
 import { planFieldFill } from "./fields.ts";
 import { fillFragment } from "./fragment-fill.ts";
 import { fillPlaceholders } from "./placeholders.ts";
 import { buildParagraphs, planRowDeletes, splitLines } from "./structure.ts";
 import { planFitTables, planTableAction, fillRowCopy, inheritedOfRow, rowDataset, tableElementOf, tableLabel, type RepeatStep } from "./table-actions.ts";
-import { planClear, planLineFill, planRangeReplace, span, type Ctx, type TextPlan } from "./text.ts";
+import { cellFillBlock, lineFillBlock, planClear, planLineFill, planRangeReplace, span, type Ctx, type TextPlan } from "./text.ts";
 
 export type FillOptions = {
   /** 누락 정책. 템플릿의 `options.missing`보다 앞선다. 기본 `error`. */
@@ -572,8 +572,9 @@ export function buildFillPlan(
         }
       } else if (anchor.kind === "line") {
         if (!dropIf(anchor.section, anchor.paragraph)) {
-          if (contentObjects(anchor.paragraph).length > 0) {
-            issues.push(issueFor("FILL_HAS_OBJECT", "문단에 객체(표·그림·누름틀 등)가 있어 문단 글을 바꿀 수 없습니다.", rule.id));
+          const block = lineFillBlock(anchor.paragraph);
+          if (block !== undefined) {
+            issues.push(issueFor(block.code, block.message, rule.id));
           } else {
             const plan = planLineFill(ctxOf(anchor.section), anchor.paragraph, text, reason);
             if ("fail" in plan) issues.push(issueFor(plan.fail.code, plan.fail.message, rule.id));
@@ -586,10 +587,11 @@ export function buildFillPlan(
       } else if (anchor.kind === "cell") {
         const paragraphs = anchor.cell.subList?.paragraphs ?? [];
         const first = paragraphs[0];
+        const cellBlock = cellFillBlock(paragraphs);
         if (first === undefined) {
           issues.push(issueFor("ANCHOR_NOT_FOUND", "셀에 문단이 없습니다.", rule.id));
-        } else if (paragraphs.some((p) => contentObjects(p).length > 0 || p.subLists.length > 0)) {
-          issues.push(issueFor("FILL_HAS_OBJECT", "셀 안에 객체(표·그림·누름틀 등)가 있어 셀 글을 바꿀 수 없습니다.", rule.id));
+        } else if (cellBlock !== undefined) {
+          issues.push(issueFor(cellBlock.code, cellBlock.message, rule.id));
         } else if (!paragraphs.some((p) => dropIf(anchor.section, p))) {
           const ctx = ctxOf(anchor.section);
           const plan = planLineFill(ctx, first, text, reason);

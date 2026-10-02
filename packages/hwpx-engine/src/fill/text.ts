@@ -3,7 +3,7 @@ import { clusterBoundaries } from "../model/clusters.ts";
 import type { ParagraphNode, Piece } from "../model/types.ts";
 import { escapeText } from "../xml/chars.ts";
 import { childEls } from "../xml/tree.ts";
-import { isTextPiece, nsPrefixOf, type Repl } from "./doc.ts";
+import { contentObjects, isTextPiece, nsPrefixOf, type Repl } from "./doc.ts";
 
 /** 편집 대상 구역 파일 하나: 항목 이름과 그 텍스트(편집 오프셋의 기준). */
 export type Ctx = { entry: string; text: string };
@@ -50,10 +50,49 @@ function replacePiece(ctx: Ctx, piece: Piece, value: string, reason: string, ls 
   };
 }
 
+/** 논리 구간 `[ls, le)`에 겹친 조각 */
+const piecesInside = (par: ParagraphNode, ls: number, le: number): Piece[] =>
+  par.pieces.filter((p) => {
+    const zero = p.logicalStart === p.logicalEnd;
+    return zero ? ls < p.logicalStart && p.logicalStart < le : p.logicalStart < le && p.logicalEnd > ls;
+  });
+
 /**
- * 논리 구간 `[ls, le)`의 글을 값으로 바꾼다(`word` 앵커·`{{}}`).
+ * 논리 구간 `[ls, le)`의 글을 값으로 바꿀 수 없는 사유. 바꿀 수 있으면 undefined. 편집은 만들지 않고 판단만 한다 —
+ * `planRangeReplace`와 앵커 초안(`draftAnchors`의 `blocked`)이 같은 판단을 쓴다.
  * 구간 안에 경계 조각(inline·object)이 있으면 `FILL_CROSSES_MARKUP`, 구간의 시작·끝이 글자 묶음(grapheme cluster) 한가운데면 `FILL_SPLITS_CLUSTER`,
  * 글자모양이 다른 run에 걸치면 `FILL_MIXED_FORMAT`(`mixed: "first"`면 통과).
+ */
+export function rangeReplaceBlock(par: ParagraphNode, ls: number, le: number, mixed: "skip" | "first"): Skip["skip"] | undefined {
+  const inside = piecesInside(par, ls, le);
+  if (inside.some((p) => p.kind === "inline" || p.kind === "object")) {
+    return { code: "FILL_CROSSES_MARKUP", message: "치환할 글 사이에 탭·줄바꿈·객체가 끼어 있어 건너뜁니다." };
+  }
+  const clusters = clusterBoundaries(par);
+  if (!clusters.has(ls) || !clusters.has(le)) {
+    return { code: "FILL_SPLITS_CLUSTER", message: "치환할 글의 시작이나 끝이 결합 부호·옛한글 조합 자모 같은 글자 묶음 한가운데라 건너뜁니다." };
+  }
+  const formats = new Set(inside.filter(isTextPiece).map((p) => par.runs[p.runOrdinal]?.charPrIDRef ?? ""));
+  if (formats.size > 1 && mixed === "skip") {
+    return { code: "FILL_MIXED_FORMAT", message: "치환할 글이 글자모양이 다른 run들에 걸쳐 있어 건너뜁니다(mixedFormat: \"first\"로 첫 run에 넣을 수 있습니다)." };
+  }
+  return undefined;
+}
+
+/** 문단의 글을 `line` 앵커로 바꿀 수 없는 사유(문단에 객체가 있다). 바꿀 수 있으면 undefined. 채움과 앵커 초안이 같은 판단을 쓴다. */
+export function lineFillBlock(par: ParagraphNode): { code: "FILL_HAS_OBJECT"; message: string } | undefined {
+  return contentObjects(par).length > 0 ? { code: "FILL_HAS_OBJECT", message: "문단에 객체(표·그림·누름틀 등)가 있어 문단 글을 바꿀 수 없습니다." } : undefined;
+}
+
+/** 셀의 글을 `cell` 앵커로 바꿀 수 없는 사유(셀 안에 객체나 하위 목록이 있다). 바꿀 수 있으면 undefined. 채움과 앵커 초안이 같은 판단을 쓴다. */
+export function cellFillBlock(paragraphs: ParagraphNode[]): { code: "FILL_HAS_OBJECT"; message: string } | undefined {
+  return paragraphs.some((p) => contentObjects(p).length > 0 || p.subLists.length > 0)
+    ? { code: "FILL_HAS_OBJECT", message: "셀 안에 객체(표·그림·누름틀 등)가 있어 셀 글을 바꿀 수 없습니다." }
+    : undefined;
+}
+
+/**
+ * 논리 구간 `[ls, le)`의 글을 값으로 바꾼다(`word` 앵커·`{{}}`). 바꿀 수 없는 경우는 `rangeReplaceBlock`이 정한다.
  * 첫 글 조각에 값을 넣고 나머지 겹친 구간은 지운다. run·`hp:t` 요소는 지우지 않는다.
  */
 export function planRangeReplace(
@@ -65,22 +104,9 @@ export function planRangeReplace(
   mixed: "skip" | "first",
   reason: string,
 ): TextPlan | Skip {
-  const inside = par.pieces.filter((p) => {
-    const zero = p.logicalStart === p.logicalEnd;
-    return zero ? ls < p.logicalStart && p.logicalStart < le : p.logicalStart < le && p.logicalEnd > ls;
-  });
-  if (inside.some((p) => p.kind === "inline" || p.kind === "object")) {
-    return { skip: { code: "FILL_CROSSES_MARKUP", message: "치환할 글 사이에 탭·줄바꿈·객체가 끼어 있어 건너뜁니다." } };
-  }
-  const clusters = clusterBoundaries(par);
-  if (!clusters.has(ls) || !clusters.has(le)) {
-    return { skip: { code: "FILL_SPLITS_CLUSTER", message: "치환할 글의 시작이나 끝이 결합 부호·옛한글 조합 자모 같은 글자 묶음 한가운데라 건너뜁니다." } };
-  }
-  const texts = inside.filter(isTextPiece);
-  const formats = new Set(texts.map((p) => par.runs[p.runOrdinal]?.charPrIDRef ?? ""));
-  if (formats.size > 1 && mixed === "skip") {
-    return { skip: { code: "FILL_MIXED_FORMAT", message: "치환할 글이 글자모양이 다른 run들에 걸쳐 있어 건너뜁니다(mixedFormat: \"first\"로 첫 run에 넣을 수 있습니다)." } };
-  }
+  const block = rangeReplaceBlock(par, ls, le, mixed);
+  if (block !== undefined) return { skip: block };
+  const texts = piecesInside(par, ls, le).filter(isTextPiece);
   const plan: TextPlan = { edits: [], repls: [] };
   texts.forEach((piece, i) => {
     const r = replacePiece(ctx, piece, i === 0 ? value : "", reason, ls, le);

@@ -14,6 +14,7 @@
 | Node.js | 24 이상 | 타입 제거 실행, 내장 `zlib.crc32`·`node:sqlite`. 확인한 버전 24.19 |
 | 패키지 관리 | npm workspaces | pnpm·yarn 없음 |
 | 엔진 런타임 의존성 | 없음 | [엔진 명세](engine-spec.md) 0절 |
+| 뷰어 런타임 의존성 | `@rhwp/core` 0.8.6(MIT, 버전 고정). 고지는 `THIRD_PARTY_NOTICES.md` | [뷰어 명세](viewer-spec.md) 2절 |
 | devDependencies | `typescript`, `@types/node` | — |
 
 ## 명령
@@ -29,6 +30,8 @@
 | 실제 문서 스트레스 시험 | `node tools/stress/campaign.ts --corpus <폴더> --seed 1 --pairs 150 --oracle-sample 40` | 확인 |
 | 실제 문서 표 스트레스 시험 | `node tools/stress/tables.ts --corpus <폴더> --seed 21 --docs 160 --ops 1500 [--prefer-merged-only] [--no-com \| --com-sample 15]` | 확인 |
 | 한컴 표 대조 테스트 | `HWPX_COM=1 node --test packages/hwpx-engine/test/table-com.test.ts` | 확인(한컴 13) |
+| 뷰어 시험 앱 | `node apps/viewer-poc/server.ts` → `http://127.0.0.1:4173` (`.claude/launch.json`의 `viewer-poc`) | 확인 |
+| 뷰어 위치 대조(실제 문서) | `HWPX_CORPUS_DIR=<폴더> node packages/viewer/tools/crosscheck.ts --clicks --after-fill --report tools/stress/out/<이름>.json` | 확인 |
 | 한컴으로 열기·PDF | `python tools/com/open_check.py --out 결과.json [--pdf-dir 폴더] 파일...` | 확인(한컴 13) |
 | 한컴 시험 문서 다시 만들기 | `python tools/com/make_fixtures.py` | 확인 |
 
@@ -40,6 +43,8 @@
 | --- | --- | --- |
 | `packages/hwpx-engine/` | 엔진(자체 구현). `src/`와 `test/` | 포함 |
 | `apps/cli/` | 명령줄 도구. 파일 입출력은 여기만 | 포함 |
+| `packages/viewer/` | 뷰어(rhwp 임베드, 위치 변환). 런타임 의존은 `@rhwp/core` 하나 | 포함 |
+| `apps/viewer-poc/` | 뷰어 시험 앱(로컬 서버와 웹 화면) | 포함 |
 | `tools/oracle/` | 검증 보조 스크립트(선택 실행) | 포함 |
 | `docs/` | 정본 문서 | 포함 |
 | `skills/`, `.claude/skills/`, `.claude/agents/` | 작업 체계. `skills/`가 정본이고 `.claude/skills/`는 사본 | 포함 |

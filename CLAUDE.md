@@ -17,6 +17,7 @@
 | --- | --- |
 | 제품 정의·아키텍처·결정과 그 상태 구분(사실/추정/미검증) | [아키텍처 리뷰](docs/architecture-review.md) |
 | 엔진 계약(패키지·모델·조각·앵커·템플릿·쓰기·오류 코드·시나리오) | [엔진 명세](docs/engine-spec.md) |
+| 뷰어 계약(rhwp 임베드, 위치 변환, 시험 구현 범위) | [뷰어 명세](docs/viewer-spec.md) |
 | 저장 게이트·검사 항목·오라클 | [검증 기준](docs/validation.md) |
 | 참고 프로젝트의 원리·라이선스·참고 경계 | [참고 프로젝트](docs/reference-projects.md) |
 | 실행·검증 명령, 폴더 구조, 위임 역할, Git 규칙 | [프로젝트 사실](docs/project-context.md) |

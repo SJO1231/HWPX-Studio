@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HWPX Studio 뷰어 시험</title>
+    <link rel="stylesheet" href="/app/style.css" />
+  </head>
+  <body>
+    <header id="bar">
+      <strong>뷰어 시험</strong>
+      <label>시험 문서 <select id="fixture"></select></label>
+      <button id="open-fixture" type="button">열기</button>
+      <label>또는 파일 <input id="file" type="file" accept=".hwpx" /></label>
+      <label>배율 <input id="scale" type="range" min="50" max="200" step="10" value="100" /> <output id="scale-out">100%</output></label>
+      <label><input id="show-marks" type="checkbox" checked /> 누름틀·{{}} 강조</label>
+      <button id="reset" type="button" disabled>처음으로</button>
+      <a id="download" href="#" class="disabled">결과 내려받기</a>
+      <span id="status" role="status"></span>
+    </header>
+    <main>
+      <div id="pages" aria-label="문서 쪽"></div>
+      <aside id="panel">
+        <section>
+          <h2>누른 자리</h2>
+          <dl id="where">
+            <dt>영역</dt>
+            <dd id="w-region">-</dd>
+            <dt>엔진 주소</dt>
+            <dd id="w-address">-</dd>
+            <dt>정밀도</dt>
+            <dd id="w-precision">-</dd>
+          </dl>
+          <p id="w-note"></p>
+        </section>
+        <section>
+          <h2>앵커 초안</h2>
+          <ol id="drafts" class="choices"></ol>
+          <label class="value-row">값 <input id="value" type="text" autocomplete="off" /></label>
+          <button id="fill" type="button" disabled>채우기</button>
+          <div id="fill-out"></div>
+        </section>
+        <section>
+          <h2>강조된 자리</h2>
+          <ol id="marks" class="choices"></ol>
+        </section>
+      </aside>
+    </main>
+    <script type="module" src="/app/main.ts"></script>
+  </body>
+</html>

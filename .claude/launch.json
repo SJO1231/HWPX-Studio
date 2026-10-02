@@ -1,4 +1,11 @@
 {
   "version": "0.0.1",
-  "configurations": []
+  "configurations": [
+    {
+      "name": "viewer-poc",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["apps/viewer-poc/server.ts"],
+      "port": 4173
+    }
+  ]
 }
