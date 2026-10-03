@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HWPX Studio 빠른 생성</title>
+    <link rel="stylesheet" href="/app/style.css" />
+  </head>
+  <body>
+    <header id="bar">
+      <strong>HWPX Studio 빠른 생성</strong>
+      <span id="status" role="status"></span>
+    </header>
+    <main>
+      <section id="step-template">
+        <h2>1. 문서 올리기</h2>
+        <p class="hint">한컴에서 <code>{{키}}</code>나 누름틀을 적어 둔 .hwpx 파일입니다.</p>
+        <input id="file-template" type="file" accept=".hwpx" />
+        <div id="places"></div>
+      </section>
+      <section id="step-data">
+        <h2>2. 데이터 올리기</h2>
+        <p class="hint">JSON 파일: 객체 하나, 객체의 배열(여러 건), 또는 묶음 형식입니다.</p>
+        <input id="file-data" type="file" accept=".json,application/json" disabled />
+        <div id="data-info"></div>
+        <table id="matches" hidden></table>
+        <details id="keys-box" hidden>
+          <summary>데이터의 키 목록</summary>
+          <table id="keys"></table>
+        </details>
+      </section>
+      <section id="step-generate">
+        <h2>3. 만들기</h2>
+        <fieldset id="missing">
+          <legend>데이터에 없는 키는</legend>
+          <label><input type="radio" name="missing" value="error" checked /> 오류로 멈춤</label>
+          <label><input type="radio" name="missing" value="empty" /> 빈칸으로 채움</label>
+          <label><input type="radio" name="missing" value="keep" /> 그대로 둠</label>
+        </fieldset>
+        <button id="generate" type="button" disabled>생성</button>
+      </section>
+      <section id="step-results">
+        <h2>4. 결과</h2>
+        <div id="folder-row" hidden>
+          <span>저장 폴더: <code id="folder"></code></span>
+          <button id="open-folder" type="button">폴더 열기</button>
+        </div>
+        <div id="save-error" class="bad"></div>
+        <table id="results" hidden></table>
+        <div id="preview-box" hidden>
+          <h3 id="preview-title"></h3>
+          <div id="preview"></div>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="/app/main.ts"></script>
+  </body>
+</html>

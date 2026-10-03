@@ -6,6 +6,12 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["apps/viewer-poc/server.ts"],
       "port": 4173
+    },
+    {
+      "name": "studio",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["apps/studio/server.ts"],
+      "port": 4174
     }
   ]
 }

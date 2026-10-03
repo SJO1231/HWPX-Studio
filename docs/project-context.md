@@ -34,6 +34,7 @@
 | 뷰어 위치 대조(실제 문서) | `HWPX_CORPUS_DIR=<폴더> node packages/viewer/tools/crosscheck.ts --clicks --after-fill --report tools/stress/out/<이름>.json` | 확인 |
 | 한컴으로 열기·PDF | `python tools/com/open_check.py --out 결과.json [--pdf-dir 폴더] 파일...` | 확인(한컴 13) |
 | 한컴 시험 문서 다시 만들기 | `python tools/com/make_fixtures.py` | 확인 |
+| 빠른 생성 예시 서식 다시 만들기 | `python tools/com/make_examples.py` → `examples/quick/*.hwpx` | 확인(한컴 13) |
 
 - 한컴 COM을 쓰는 작업은 한 번에 하나만 돌린다. 여러 작업이 동시에 한컴을 띄우면 서로의 실행이 실패한다(확인).
 
@@ -45,6 +46,8 @@
 | `apps/cli/` | 명령줄 도구. 파일 입출력은 여기만 | 포함 |
 | `packages/viewer/` | 뷰어(rhwp 임베드, 위치 변환). 런타임 의존은 `@rhwp/core` 하나 | 포함 |
 | `apps/viewer-poc/` | 뷰어 시험 앱(로컬 서버와 웹 화면) | 포함 |
+| `apps/studio/` | 스튜디오. 빠른 생성 화면과 로컬 서버(`server.ts`, 4174) | 포함 |
+| `examples/quick/` | 빠른 생성 예시 서식(한컴 저장본)과 데이터(가짜 값). 사용자가 고쳐 시험하는 용도. 순서는 그 폴더의 `README.md` | 포함 |
 | `tools/oracle/` | 검증 보조 스크립트(선택 실행) | 포함 |
 | `docs/` | 정본 문서 | 포함 |
 | `skills/`, `.claude/skills/`, `.claude/agents/` | 작업 체계. `skills/`가 정본이고 `.claude/skills/`는 사본 | 포함 |

@@ -689,6 +689,7 @@ test("D7: 올린 본문이 한도(64 MiB)를 넘으면 413을 주고 연결을 �
     const big = await send("POST", "/api/open", Buffer.alloc(64 * 1024 * 1024 + 1024));
     assert.equal(big.status, 413);
     assert.match(big.text, /TOO_LARGE/);
+    assert.equal((JSON.parse(big.text) as { error: { plain?: string } }).error.plain, "올린 내용이 너무 큽니다(한도 64 MiB).", "껍데기의 거절도 쉬운 말(plain)이 있다");
     assert.equal(big.connection, "close", "413 응답은 연결을 닫겠다고 알린다");
     // 같은 에이전트(연결 재사용 시도)로 다음 요청: 새 연결로 정상 응답한다
     const next = await send("GET", "/api/fixtures");
@@ -766,9 +767,10 @@ test("리뷰 10: /api 아래의 거절(허용되지 않은 Host)과 서버 내�
   const denied = await get("/api/fixtures", "evil.example");
   assert.equal(denied.status, 403);
   assert.match(denied.type, /^application\/json/);
-  const parsed = JSON.parse(denied.body) as { error: { code: string; message: string } };
+  const parsed = JSON.parse(denied.body) as { error: { code: string; message: string; plain?: string } };
   assert.equal(typeof parsed.error.code, "string");
   assert.equal(typeof parsed.error.message, "string");
+  assert.equal(parsed.error.plain, `이 주소로는 열 수 없습니다. 브라우저에서 http://${HOST}:${port} 로 여세요.`);
   // API 밖(정적 파일)은 그대로 글이다
   const plain = await get("/", "evil.example");
   assert.equal(plain.status, 403);
@@ -779,6 +781,9 @@ test("리뷰 10: /api 아래의 거절(허용되지 않은 Host)과 서버 내�
   assert.match(errorReply("/api/session/x/locate", "INTERNAL", "서버 내부 오류입니다.").contentType, /^application\/json/);
   assert.deepEqual(JSON.parse(errorReply("/api/open", "INTERNAL", "서버 내부 오류입니다.").body), { error: { code: "INTERNAL", message: "서버 내부 오류입니다." } });
   assert.match(errorReply("/app/main.ts", "INTERNAL", "서버 내부 오류입니다.").contentType, /^text\/plain/);
+  // 쉬운 말을 주면 JSON에 담고, API 밖의 글은 그대로 message다
+  assert.deepEqual(JSON.parse(errorReply("/api/open", "HOST", "허용되지 않은 호스트입니다.", "쉬운 말").body), { error: { code: "HOST", message: "허용되지 않은 호스트입니다.", plain: "쉬운 말" } });
+  assert.equal(errorReply("/app/main.ts", "HOST", "허용되지 않은 호스트입니다.", "쉬운 말").body, "허용되지 않은 호스트입니다.");
 });
 
 // ── 리뷰 15: 표 칸의 빈 곳(cell) ──────────────────────────────────

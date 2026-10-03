@@ -45,17 +45,26 @@ const pathOf = (url: string | undefined): string => {
   }
 };
 
-/** 오류 응답의 형. `/api/` 아래는 화면이 읽을 수 있게 `{ error: { code, message } }` JSON이고, 그 밖(정적 파일)은 글이다. */
-export function errorReply(url: string | undefined, code: string, message: string): { contentType: string; body: string } {
+/** 껍데기 거절 응답의 JSON 본문: `plain`은 비전문가가 읽는 쉬운 말 한 문장이다. */
+const errorJson = (code: string, message: string, plain?: string): string => JSON.stringify({ error: plain === undefined ? { code, message } : { code, message, plain } });
+
+/**
+ * 오류 응답의 형. `/api/` 아래는 화면이 읽을 수 있게 `{ error: { code, message } }` JSON(`plain`을 주면 `plain`도 담는다)이고,
+ * 그 밖(정적 파일)은 `message`만 있는 글이다.
+ */
+export function errorReply(url: string | undefined, code: string, message: string, plain?: string): { contentType: string; body: string } {
   return pathOf(url).startsWith("/api/")
-    ? { contentType: "application/json; charset=utf-8", body: JSON.stringify({ error: { code, message } }) }
+    ? { contentType: "application/json; charset=utf-8", body: errorJson(code, message, plain) }
     : { contentType: "text/plain; charset=utf-8", body: message };
 }
 
-function sendError(req: IncomingMessage, res: ServerResponse, status: number, code: string, message: string): void {
-  const reply = errorReply(req.url, code, message);
+function sendError(req: IncomingMessage, res: ServerResponse, status: number, code: string, message: string, plain?: string): void {
+  const reply = errorReply(req.url, code, message, plain);
   send(res, status, reply.contentType, reply.body);
 }
+
+/** 본문 한도를 사람이 읽는 크기로(1 MiB 미만이면 KiB). */
+const sizeText = (bytes: number): string => (bytes >= 1024 * 1024 ? `${Math.round((bytes / 1024 / 1024) * 10) / 10} MiB` : `${Math.ceil(bytes / 1024)} KiB`);
 
 /**
  * 요청 본문을 읽는다. 한도(`maxBody`)를 넘으면 undefined다: 이미 받은 조각은 버리고(메모리에 쌓지 않는다) 남은 본문도 읽어서 버린다 —
@@ -93,18 +102,20 @@ export function createShell(options: ShellOptions): Server {
     void (async () => {
       try {
         const port = (server.address() as { port?: number } | null)?.port ?? options.port;
-        if (!hostAllowed(req, port)) return sendError(req, res, 403, "HOST", "허용되지 않은 호스트입니다.");
+        if (!hostAllowed(req, port)) return sendError(req, res, 403, "HOST", "허용되지 않은 호스트입니다.", `이 주소로는 열 수 없습니다. 브라우저에서 http://${HOST}:${port} 로 여세요.`);
         const url = new URL(req.url ?? "/", `http://${HOST}:${port}`);
 
         if (url.pathname.startsWith("/api/")) {
           // 같은 출처의 화면에서 온 요청만 받는다(다른 사이트의 페이지가 로컬 서버를 두드리지 못하게)
           const origin = req.headers.origin;
           if (origin !== undefined && origin !== `http://${HOST}:${port}` && origin !== `http://localhost:${port}`) {
-            return send(res, 403, "application/json; charset=utf-8", JSON.stringify({ error: { code: "ORIGIN", message: "허용되지 않은 출처입니다." } }));
+            return send(res, 403, "application/json; charset=utf-8", errorJson("ORIGIN", "허용되지 않은 출처입니다.", "다른 사이트에서 온 요청이라 받지 않았습니다."));
           }
           const body = req.method === "GET" || req.method === "HEAD" ? new Uint8Array(0) : await readBody(req, options.maxBody);
           // 413 뒤에는 연결을 닫는다(본문을 끝까지 읽지 못했을 수 있어 같은 연결을 다시 쓰면 안 된다)
-          if (body === undefined) return send(res, 413, "application/json; charset=utf-8", JSON.stringify({ error: { code: "TOO_LARGE", message: "본문이 너무 큽니다." } }), { Connection: "close" });
+          if (body === undefined) {
+            return send(res, 413, "application/json; charset=utf-8", errorJson("TOO_LARGE", "본문이 너무 큽니다.", `올린 내용이 너무 큽니다(한도 ${sizeText(options.maxBody)}).`), { Connection: "close" });
+          }
           const out = await options.api({ method: req.method ?? "GET", pathname: url.pathname, query: url.searchParams, contentType: req.headers["content-type"] ?? "", body });
           return send(res, out.status, out.contentType, out.body, out.headers);
         }

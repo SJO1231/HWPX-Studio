@@ -1,0 +1,14 @@
+{
+  "name": "@hwpx-studio/studio",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit && tsc --noEmit -p web/tsconfig.json"
+  },
+  "dependencies": {
+    "@hwpx-studio/engine": "0.0.0",
+    "@hwpx-studio/viewer": "0.0.0",
+    "@rhwp/core": "0.8.6"
+  }
+}

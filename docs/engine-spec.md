@@ -177,7 +177,7 @@ type HwpxDocument = {
 
 - `FieldInfo = { name, type, occurrence(같은 이름 안 순번, 0부터), sectionIndex, path, valueText, dirty, shape }`
 - `shape`: `simple`(begin·end가 같은 문단, 사이에 `hp:t`가 하나 이상, 인라인 자식 없음) / `empty`(사이에 `hp:t` 없음) / `inline`(사이에 인라인 자식 있음) / `crossParagraph` / `unpaired`
-- `type`이 `HYPERLINK`인 필드는 목록에서 뺀다. 그 밖의 알 수 없는 type은 포함한다.
+- `type`이 `HYPERLINK`인 필드는 목록에서 뺀다. 그 밖의 알 수 없는 type은 포함한다. 단, 누름틀 암묵 채움(8.3)과 빠른 생성 화면([스튜디오 명세](studio-spec.md) 4a)은 `type`이 `CLICK_HERE`인 것만 누름틀로 다룬다(책갈피·날짜·메일 머지 같은 다른 type은 건드리지 않는다).
 
 ### 5.4 모델 내보내기 `src/store/` `exportModel(doc): ModelJson`
 
@@ -709,16 +709,13 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 
 - `fill`의 경로는 `data`에서 찾고, 없으면 `derived`에서 찾는다. CLI는 묶음 형식이 아닌 일반 JSON도 받는다(전체를 `data`로 본다).
 - 값 변환: 문자열은 그대로, 숫자·불리언은 문자열로. 객체·배열은 `DATA_NOT_SCALAR`. null·없음은 `options.missing`에 따른다: `error`(기본, `DATA_MISSING`으로 전체 중단), `empty`(빈 글), `keep`(자리를 그대로 둠).
-- **지금 동작**: 값에 XML 금지 문자나 줄바꿈·탭이 있으면 `VALUE_CONTROL_CHAR`(`insertText`의 줄바꿈은 예외).
-- **바꿀 예정(미구현, 2026-10-02 결정 대기 중 작업 중단)**: 값의 줄바꿈과 탭. 사용자 데이터에 줄바꿈이 흔하다.
-  - `
-`과 `
-`은 `
-`으로 맞춘다. `
-`은 줄바꿈 요소(`lineBreak`), 탭은 탭 요소(`tab`)로 `hp:t` 안에 넣는다. 문단은 나누지 않는다. 요소의 속성 구성은 한컴이 저장한 문서의 것을 따른다.
+- 값의 줄바꿈과 탭(2026-10-03 구현. 사용자 데이터에 줄바꿈이 흔하다):
+  - `\r\n`과 `\r`은 `\n`으로 맞춘다. `\n`은 줄바꿈 요소(`lineBreak`), 탭은 탭 요소(`tab`)로 `hp:t` 안에 넣는다. 문단은 나누지 않는다. 요소의 속성 구성은 한컴이 저장한 문서의 것을 따른다.
   - 대상: `fill`(누름틀·낱말·문단·셀), 문서 안 `{{}}`, 행 반복의 값. `insertText`는 지금처럼 줄바꿈마다 문단을 나눈다.
-  - 값 재읽기는 논리 텍스트(줄바꿈 요소는 `
-`, 탭 요소는 `	`)와 맞춘 값이 같아야 한다.
+  - 값 재읽기는 논리 텍스트(줄바꿈 요소는 `\n`, 탭 요소는 `\t`)와 맞춘 값이 같아야 한다.
+  - 요소의 모양 [확인: 한컴 13 저장본]: 줄바꿈은 `hp:t` 안의 `<hp:lineBreak/>`(속성 없음), 탭은 `<hp:tab width="0" leader="0" type="1"/>`(한컴은 `width`·`type`을 읽을 때 쓰지 않고 다시 저장하면 조판 값으로 바꾼다. rhwp는 `type="1"`이어야 한컴과 같은 자리에 그린다). 접두사는 그 run의 것을 따른다.
+  - 한컴의 필드 읽기 API는 줄바꿈 요소를 글자로 주지 않는다(`첫 줄둘째 줄`). 보존 확인은 한컴이 다시 저장한 문서를 엔진이 읽어 `\n`이 남는 것으로 한다.
+  - 줄바꿈이 든 값으로 채운 누름틀은 모양이 `inline`이 되어 다시 채울 수 없다(한컴이 만든 줄바꿈 누름틀도 같다). 한계로 둔다. 실제 문서에서는 유일한 누름틀이 여러 문단에 걸친 모양(`crossParagraph`)인 경우가 흔해(자리 있는 153건 중 56건, 2026-10-03 독립 검증) 이 두 모양의 채움은 M1 뒤의 과제다([검증 기준](validation.md) 15절, [작업 기록](task-record.md)). 빠른 생성 화면은 이 모양을 "채울 수 없는 모양"으로 미리 표시한다.
   - 그 밖의 XML 금지 문자(제어 문자)는 지금처럼 `VALUE_CONTROL_CHAR`다.
   - md·txt 어댑터의 규칙은 9절 그대로다(md 표 셀의 줄바꿈은 거부).
 
@@ -732,6 +729,8 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 
 **자리별 채움**
 
+- **누름틀 암묵 채움**(2026-10-03): 대상은 `type`이 `CLICK_HERE`인 필드만이다(다른 type의 필드는 채우지도 보고하지도 않는다. 독립 검증에서 책갈피 범위 필드가 `DATA_MISSING`으로 생성을 막는 것을 보고 2026-10-03 고침). 템플릿이 없거나 그 누름틀을 가리키는 `field` 규칙이 없으면, 이름이 데이터 경로 문법에 맞는 누름틀은 "이름 = 경로"로 채운다(`{{}}`의 암묵 규칙과 같은 자리, 같은 누락 정책). 이름이 경로가 아니면 건너뜀 `FIELD_NAME_NOT_PATH`, 채울 수 없는 모양이면 건너뜀 `FIELD_UNSUPPORTED_SHAPE`(오류가 아니다). 같은 이름은 전부 같은 값. 삭제·교체되는 문단과 반복 원형 행 안의 누름틀은 `dropped`.
+- **적용된 액션이 0이면 실패**: `FILL_NOTHING_APPLIED`(출력 없음, 메시지에 건너뜀 코드별 건수). CLI도 종료 코드 1.
 - 누름틀(shape별): `simple` → 시작과 끝 사이 첫 글 조각에 값을 넣고 나머지 글 조각은 비운다. `empty` → 시작 컨트롤 바로 뒤에 `<접두사:t>값</접두사:t>`를 넣는다. 둘 다 시작 요소의 `dirty`를 `"1"`로 한다(없으면 속성 추가). 안내문과 값을 비교하지 않는다. `inline`·`crossParagraph`·`unpaired`는 `FIELD_UNSUPPORTED_SHAPE`.
   - **안내문 상태**(`dirty`가 `"1"`이 아님) [확인: 한컴 13 저장본]: 시작 컨트롤, 안내문 글, 끝 컨트롤이 서로 다른 run에 있고 안내문 run은 안내문용 글자모양(빨강·기울임)을 쓴다. 값을 넣을 때 시작 run과 끝 run 사이에 있는 run들의 `charPrIDRef`를 **시작 컨트롤이 든 run의 값**으로 바꾼다(한컴이 값을 넣었을 때의 결과와 같은 글자모양). 빈 값을 넣는 경우에는 `dirty`와 글자모양을 건드리지 않는다.
   - 채운 뒤 `listFields`의 `valueText`가 넣은 값과 같아야 한다(값 재읽기).
@@ -820,6 +819,11 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 - 추가한 코드: `REPAIR_REGRESSION`(오류), `REPAIR_FIELD_PAIR`, `REPAIR_NO_DEFAULT`, `REPAIR_ENTRY_SKIPPED`(경고).
 - 한컴 확인(2026-10-01): 기본 보정을 적용한 실제 문서 표본 15건을 한컴 13이 모두 열었다(원본을 한컴이 열지 못하던 1건도 보정본은 열렸다). 쪽 수는 14건 중 13건이 같았고, 1쪽 늘어난 1건은 구역 수 선언을 고친 문서였다. 개수 속성만 고친 문서는 쪽 수가 같았다(197쪽). 그래서 구역 수 교정을 기본에서 뺀다.
 
+### 8.36 여러 건 생성 (`src/fill/batch.ts`, 2026-10-03)
+
+- `generateBatch(bytes, template, records, options): Generator<BatchItem>` — 데이터 원소마다 `generate`를 부르고 건별 결과를 내놓는다(한 건이 실패해도 계속). `readBatchRecords(input)`: 최상위 배열 또는 묶음 형식의 `data` 배열을 건 목록으로(`derived`는 공유).
+- 이름: `planBatchNames(records, baseName, nameFrom?)`. 기본 `<원본 이름>-<번호 3자리>`, `nameFrom`이 `{{경로}}`이면 그 값(문자열·숫자만. 비면 기본 이름). `safeFileStem(value)`: 금지 문자 `_`, 앞뒤 공백·뒤쪽 `.` 제거, 100 코드 포인트, Windows 장치 이름 뒤 `_`. `sanitizeFileStem(input)`: 폴더 부분과 `.hwpx`를 뗀 뒤 `safeFileStem`, 비면 `문서`. 중복은 대소문자 무시로 `-2`, `-3`.
+
 ### 8.4 CLI (`apps/cli`) — S3b
 
 | 명령 | 동작 |
@@ -828,7 +832,8 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | `hwpx candidates <파일> [--json]` | 후보 자리 목록 |
 | `hwpx fragment extract <파일> --section N --from A --to B [--parent 주소] -o 조각.json` | 조각 추출 |
 | `hwpx fragment import <대상> <조각.json> --section N --index I [--parent 주소] [--before] -o 출력.hwpx` | 조각 가져오기(게이트 포함) |
-| `hwpx fill <파일> --data d.json [--template t.json] -o 출력 [--mode baseline\|strict\|repair] [--missing error\|empty\|keep] [--dry-run] [--report r.json] [--overwrite]` | 생성 |
+| `hwpx fill <파일> --data d.json [--template t.json] -o 출력 [--mode baseline\|strict\|repair] [--missing error\|empty\|keep] [--dry-run] [--report r.json] [--overwrite]` | 생성. 템플릿 없이도 `{{}}`와 누름틀을 채운다 |
+| `hwpx fill <파일> --data 배열.json --batch -o <폴더> [--name "{{경로}}"] [--dry-run] [--report r.json] [--overwrite]` | 여러 건 생성(8.36). 한 건이 실패해도 나머지는 만들고 종료 코드 1. 폴더가 없거나 같은 이름 파일이 있으면 2 |
 | `hwpx validate <파일> [--baseline 원본] [--strict] [--json]` | 검사 |
 | `hwpx diff <원본> <결과> [--json]` | 항목별 동일 여부와 수량 비교 |
 | `hwpx compile <파일> -o 승격본 --experimental` | `{{}}`를 누름틀로 |
