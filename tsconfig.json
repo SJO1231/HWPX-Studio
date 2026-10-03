@@ -1,0 +1,9 @@
+{
+  "compilerOptions": {
+    "target": "esnext", "module": "nodenext", "moduleResolution": "nodenext",
+    "lib": ["esnext"], "types": ["node"], "strict": true,
+    "erasableSyntaxOnly": true, "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true, "noEmit": true, "skipLibCheck": true
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts", "vendor/hwpx-engine/**/*.ts"]
+}

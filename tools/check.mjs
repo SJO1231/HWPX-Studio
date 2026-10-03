@@ -1,0 +1,14 @@
+import { readFileSync, readdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
+import { resolve } from 'node:path';
+import assert from 'node:assert/strict';
+const run=(args)=>{const r=spawnSync(process.execPath,args,{stdio:'inherit'});assert.equal(r.status,0,`검사 실패: ${args.join(' ')}`);};
+run(['--check','web/app.js']);
+run(['node_modules/typescript/bin/tsc','--noEmit']);
+const hashes=JSON.parse(readFileSync('vendor/provenance.json','utf8'));
+for(const [file,hash] of Object.entries(hashes.files)) assert.equal(createHash('sha256').update(readFileSync(resolve('vendor',file))).digest('hex'),hash,`재사용 원본 변경: ${file}`);
+const app=readFileSync('web/app.js','utf8');
+assert(!/\.(?:toHwpx|insertText|insertParagraph|setFieldText|deleteText|applyCharFormat|save)\(/.test(app),'RHWP 편집 API 사용 금지');
+assert(!/\b(?:eval|Function)\s*\(/.test(readFileSync('src/core.ts','utf8')),'조건의 코드 실행 금지');
+console.log(`PASS: 구문·TypeScript·재사용 파일 ${Object.keys(hashes.files).length}개 해시·읽기 전용 뷰어 경계`);
