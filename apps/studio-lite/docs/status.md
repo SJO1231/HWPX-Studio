@@ -10,7 +10,7 @@
 - 이전 전 Lite 검사 34/34 통과. 통합 후 루트 필수 검사: 형 검사, 시험 1,136개 통과·실패 0·선택 시험 48개 건너뜀, 공통 엔진 연결·RHWP 해시·읽기 전용 경계 통과. 첫 실행의 검사 도구 경로 오류를 수정한 뒤 재실행했다. `artifacts/integration-verify.log`가 근거다.
 - 원래 SQLite를 보존하고 새 앱 폴더로 backup했다. 저장 프로젝트 2개의 모든 행 일치, 8개 HTTP 경로, 실제 생성 HWPX의 사업명·금액·선택 조항과 구조 검증을 확인했다. `artifacts/migration-runtime.json`이 근거다. 사용자 데이터·검증 산출물은 Git에 넣지 않는다.
 - 이번 이전은 UI 코드 변경이 없다. 새 작업 폴더의 브라우저 시각 검증·실제 공고서 전체 캠페인·한컴은 재실행하지 않았다. 기존 Core 결함 5개를 수정한 작업이 아니다.
-- 기존 Lite 로컬 폴더와 Git bundle은 복구용으로 유지한다. 신규 개발 기준은 Studio `studio-lite`다. 원격 게시·삭제 결과는 후속 기록에서 확인한다.
+- 기존 Lite 로컬 폴더와 Git bundle은 복구용으로 유지한다. 신규 개발 기준은 Studio `studio-lite`다. 통합 커밋 `464b3f8`의 원격 게시를 확인했고 기존 `HWP-Studio-lite` 브랜치는 삭제했다. 이후 추가된 Helper 빈 문자열 처리와 시험·문서도 검증 후 이전했으며 원래 이력 `bd3367f`를 함께 보존한다. 별도 Lite 저장소 삭제는 API 403 이후 Chrome 삭제 절차에서 GitHub 본인 확인(Confirm access)을 기다리는 중이다. 삭제 완료로 기록하지 않는다.
 
 ## G2B Helper 문서 생성 연결 구현·검증 (2026-10-03)
 
@@ -31,6 +31,8 @@
 Helper 통합은 `E:/Prodev/G2B_Helper/scripts/verify-document-bridge.mjs`로 8개 흐름을 실제 실행했다. 격리 SQLite·실제 Python Native 프레이밍·Studio HTTP·실제 HWPX 파일을 사용했다. 새 Helper 연결 UI에서 프로필을 저장하고, 화면과 DB의 같은 자료로 생성한 문서 재파싱 내용이 일치했으며 선행0/큰 소수 문자열/0/false·미선택 행 제외·Helper DB 무변경을 확인했다. 요청 재사용/다른 본문 거절, 지연과 응답 유실 후 같은 요청 복구, 미연결 서식 지정, 누락/중첩/기존 파일 보존/Studio 미실행을 검사했다. 스크린샷과 결과는 Helper `artifacts/document-bridge`에 있다. 브라우저 메시지 전달/캡처만 검증 어댑터이며 실제 설치 확장, 업무 서식 한 개의 내용 인수, 한컴 열기는 아직 미검증이다.
 
 코어 대조의 기준: 110파일 검사는 provenance manifest의 고정 스냅샷과 vendor 일치 검사다. 관련 생성/매핑 경로를 별도 읽기 대조한 결과 fill/gate.ts·fragment-fill.ts·template/condition.ts는 현재 원본과도 동일했고 fill/index.ts·draft.ts는 이후 원본의 API/blocked 판단 추가로 달랐다. Lite 연결은 그 신규 API에 의존하지 않으며 원본/vendor 양쪽을 별도로 수정하지 않았다. 전체 프로젝트 중복량을 조사한 결과로 확대하지 않는다.
+
+빈 값 보존 최종 보완(같은 날): 어댑터의 매핑 누락 검사를 기존 `boundData`와 맞춰 없는 key/null만 거절하고 명시적으로 존재하는 텍스트 `''`는 빈 문자열로 출력한다. 새 required 속성이나 원본 엔진 변경은 없다. 기존 빈 하위 표 시험에 text Field의 빈 원천 Column 매핑을 추가하고 생성 HWPX를 재파싱해 `구분앞[]구분뒤`를 확인했다. 빈 금액은 `MONEY_PRECISION`, 빈 조건값은 `MISSING_CONDITION_FIELDS`로 계속 보완 요청한다. 해당 메시지에는 누락 원천 키가 포함되며 값은 표시하지 않는다. 승인된 `npm run verify` 재실행은 **34/34 통과, 실패/건너뜀 0**, 구문·TypeScript·원본 110파일 해시·RHWP 경계 통과다.
 
 확인일: 2026-10-03. 이 파일이 구현 상태·검증 근거·남은 작업의 정본입니다.
 

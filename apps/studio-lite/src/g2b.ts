@@ -57,7 +57,7 @@ function itemProject(project:Project,item:Item):Project {
   if(collisions.length) throw new NeedsInput('FIELD_COLLISION','원천 값과 사용자 입력의 이름이 겹칩니다. 이름을 구분한 뒤 다시 요청하세요.',{conflicts:collisions});
   const row={...item.fields,...item.userValues};
   const fields=project.fields.filter(f=>f.approved && f.kind==='field');
-  const missing=[...new Set(fields.map(f=>f.column||f.name).filter(k=>!Object.hasOwn(row,k) || row[k]===null || row[k]===''))];
+  const missing=[...new Set(fields.map(f=>f.column||f.name).filter(k=>!Object.hasOwn(row,k) || row[k]===null))];
   if(missing.length) throw new NeedsInput('MISSING_FIELDS',`필수 데이터 값이 없습니다: ${missing.join(', ')}. 값을 입력하거나 저장된 프로젝트의 Column 매핑을 확인하세요.`,{missingFields:missing});
   // boundData writes Field aliases into the row. Detect alias collisions first.
   const aliasValues=new Map<string,unknown>();

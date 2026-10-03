@@ -112,9 +112,10 @@ test('children·값 충돌·필수값 누락·금액 정밀도는 needs-input, �
 test('빈 하위 표와 사용하지 않는 빈 필드는 scalar 생성 허용; 잘못된 표·중첩 값은 거절',async()=>{
   const root=mkdtempSync(join(tmpdir(),'studio-g2b-'));const app=await start(join(root,'test.sqlite'));
   try {
-    const output=join(root,'output');await setup(app,output);
-    const blank={...item(),fields:{...item().fields,blank:''},children:[{key:'items',label:'물품',kind:'items',rows:[]},{key:'qualification',label:'참가자격',kind:'qualification',rows:[]}]};
-    const generated=await app.post('/api/g2b/generate',body('empty-children',[blank]),false);assert.equal(generated.body.status,'success');assert(text(readFileSync(generated.body.results[0].path)).includes('조달 시험'));
+    const output=join(root,'output'), p=project();p.markdown+='\n\n구분앞[{{빈텍스트}}]구분뒤';p.fields.push({id:'blank',name:'빈텍스트',column:'원천빈값',kind:'field',approved:true,format:'text',values:[],targets:[],evidence:'빈 값 보존 시험',confidence:1});await setup(app,output,p);
+    const blank={...item(),fields:{...item().fields,blank:'',원천빈값:''},children:[{key:'items',label:'물품',kind:'items',rows:[]},{key:'qualification',label:'참가자격',kind:'qualification',rows:[]}]};
+    const generated=await app.post('/api/g2b/generate',body('empty-children',[blank]),false);assert.equal(generated.body.status,'success');const rendered=text(readFileSync(generated.body.results[0].path));assert(rendered.includes('조달 시험'));assert(rendered.includes('구분앞[]구분뒤'));assert(!rendered.includes('{{빈텍스트}}'));
+    const blankMoney={...blank,fields:{...blank.fields,원천금액:''}};const moneyResponse=await app.post('/api/g2b/generate',body('blank-money',[blankMoney]),false);assert.equal(moneyResponse.body.status,'needs-input');assert.equal(moneyResponse.body.results[0].code,'MONEY_PRECISION');
     const changed={...blank,fields:{...blank.fields,blank:'값 변경'}};assert.equal((await app.post('/api/g2b/generate',body('empty-children',[changed]),false)).http,409);
     const malformed=[null,{}, {key:'bad',label:'잘못된 표',kind:'items',rows:{}}, {key:'bad',label:'잘못된 표',kind:'items',rows:[1]}, {key:'bad',label:'잘못된 표',kind:'unknown',rows:[]}].map(child=>({...item(),children:[child]}));
     const rejected=await app.post('/api/g2b/generate',body('malformed-children',malformed),false);assert.equal(rejected.body.status,'needs-input');assert(rejected.body.results.every((r:any)=>r.code==='INVALID_CHILDREN'));
@@ -130,6 +131,7 @@ test('조건 선택 동률은 보완 요청, 저장된 명시적 Block 선택은
     await setup(app,join(root,'output'),p);
     const missingCondition={...item(),fields:Object.fromEntries(Object.entries(item().fields).filter(([key])=>key!=='수량'))};
     const missingResponse=await app.post('/api/g2b/generate',body('missing-condition',[missingCondition]),false);assert.equal(missingResponse.body.results[0].code,'MISSING_CONDITION_FIELDS');assert(missingResponse.body.results[0].message.includes('수량'));
+    const blankCondition={...item(),fields:{...item().fields,수량:''}};const blankResponse=await app.post('/api/g2b/generate',body('blank-condition',[blankCondition]),false);assert.equal(blankResponse.body.results[0].code,'MISSING_CONDITION_FIELDS');assert(blankResponse.body.results[0].message.includes('수량'));
     const needs=await app.post('/api/g2b/generate',body('ambiguous'),false);assert.equal(needs.body.results[0].code,'BLOCK_SELECTION');assert.deepEqual(needs.body.results[0].conflicts,['a','b']);
     p.selectedBlocks={group:'b'};await setup(app,join(root,'output'),p);
     const chosen=await app.post('/api/g2b/generate',body('selected'),false);assert.equal(chosen.body.status,'success');assert(text(readFileSync(chosen.body.results[0].path)).includes('두 번째 선택'));
