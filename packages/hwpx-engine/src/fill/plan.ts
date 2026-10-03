@@ -111,6 +111,8 @@ const isImplicitKind = (t: FieldTarget): boolean => t.info.type === "CLICK_HERE"
 const pathOfField = (t: FieldTarget): string => (t.info.type === "MAILMERGE" ? (t.info.mergeKey ?? "") : t.info.name);
 /** 암묵 채움의 보고·메시지에 쓰는 자리 이름: 누름틀은 `field:이름`, 메일 머지 필드는 `merge:키`. */
 const fieldIdOf = (t: FieldTarget): string => `${t.info.type === "MAILMERGE" ? "merge" : "field"}:${pathOfField(t)}`;
+/** 문장 주어로 쓰는 필드 이름(조사 포함): 누름틀은 `누름틀 이름이`, 메일 머지 필드는 키 끝 글자와 상관없는 `메일 머지 필드(키 …)가`. */
+const subjectOf = (t: FieldTarget): string => (t.info.type === "MAILMERGE" ? `메일 머지 필드(키 ${pathOfField(t)})가` : `${labelOf(fieldIdOf(t))}이`);
 const issueFor = (code: string, message: string, id: string): Issue => makeIssue("error", code, `${labelOf(id)}: ${message}`, id);
 
 function isOnlyObject(par: ParagraphNode, obj: ObjectNode): boolean {
@@ -529,14 +531,14 @@ export function buildFillPlan(
     if (sp.merge !== undefined) {
       const { between, tables } = sp.merge;
       issues.push(
-        makeIssue("warning", "FIELD_PARAGRAPHS_MERGED", `${labelOf(fieldIdOf(target))}이 걸친 문단 ${between + 2}개를 합쳤고 사이의 문단 ${between}개를 지웠습니다(그 안의 표 ${tables}개 포함).`, label),
+        makeIssue("warning", "FIELD_PARAGRAPHS_MERGED", `${subjectOf(target)} 걸친 문단 ${between + 2}개를 합쳤고 사이의 문단 ${between}개를 지웠습니다(그 안의 표 ${tables}개 포함).`, label),
       );
     }
     // 구간 안에 통째로 들어 함께 지워지는 다른 종류의 필드(하이퍼링크·날짜 등)와 책갈피
     const removed = new Map<string, number>();
     for (const x of sp.removed) removed.set(`${x.kind}:${x.name}`, (removed.get(`${x.kind}:${x.name}`) ?? 0) + 1);
     for (const [anchor, n] of removed) {
-      report.dropped.push({ ruleId: "implicit", anchor, reason: `${labelOf(fieldIdOf(target))}이 지우는 구간 안에 있어 함께 지웠습니다${n > 1 ? `(${n}곳)` : ""}.` });
+      report.dropped.push({ ruleId: "implicit", anchor, reason: `${subjectOf(target)} 지우는 구간 안에 있어 함께 지웠습니다${n > 1 ? `(${n}곳)` : ""}.` });
     }
   };
   /** 이 누름틀이 삭제·교체되는 문단 안인가 */

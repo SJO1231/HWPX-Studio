@@ -61,16 +61,54 @@ test("compile --merge-fields 없이: 메일 머지 필드는 그대로이고(바
   assert.equal(r.report.mergeConverted, 0);
   assert.equal(r.report.promoted, 8, "본문 {{경로}} 8곳만 누름틀로 승격");
   assert.deepEqual(listFields(reparse(r.output)).filter((f) => f.type === "MAILMERGE").map((f) => [f.mergeKey, f.valueText, f.dirty]), BEFORE.filter((f) => f.type === "MAILMERGE").map((f) => [f.mergeKey, f.valueText, f.dirty]));
-  assert.equal(r.report.issues.filter((i) => i.code === "COMPILE_SKIPPED").length, 23, "{{키}}가 표시 글인 경로 꼴 필드 23곳");
+  const skipped = r.report.issues.filter((i) => i.code === "COMPILE_SKIPPED");
+  assert.equal(skipped.length, 23, "{{키}}가 표시 글인 경로 꼴 필드 23곳");
+  assert.ok(skipped.every((i) => i.message.includes("이미 메일 머지 필드 안에 있는 자리라 승격하지 않았습니다")), "누름틀 안이라고 하지 않고 메일 머지 필드 안이라고 한다");
+  // 키 없는 메일 머지 필드 안의 {{}}도 같다. 누름틀 안의 {{}}는 이전 문구 그대로
+  const keyless = `<hp:ctrl><hp:fieldBegin id="90" type="MAILMERGE" name="" fieldid="1"/></hp:ctrl><hp:t>{{가}}</hp:t><hp:ctrl><hp:fieldEnd beginIDRef="90" fieldid="1"/></hp:ctrl>`;
+  const click = `<hp:ctrl><hp:fieldBegin id="91" type="CLICK_HERE" name="나" fieldid="2"/></hp:ctrl><hp:t>{{다}}</hp:t><hp:ctrl><hp:fieldEnd beginIDRef="91" fieldid="2"/></hp:ctrl>`;
+  const messages = compiled(doc(para(1, run(t("앞 ") + keyless + t(" ") + click)))).report.issues.filter((i) => i.code === "COMPILE_SKIPPED").map((i) => i.message.replace(/^[^:]*: /, ""));
+  assert.deepEqual(messages, ["이미 메일 머지 필드 안에 있는 자리라 승격하지 않았습니다.", "이미 누름틀 안에 있는 자리라 승격하지 않았습니다."]);
+});
+
+test("compile --merge-fields는 변환만 한다: 문서의 {{경로}}를 누름틀로 승격하지 않는다(승격 0, 필드 쌍은 변환한 만큼만 변한다). 같은 변환을 두 번 하면 두 번째는 변환 0이고 바이트가 같다", () => {
+  const c0 = censusOfDoc(reparse(FIXTURE));
+  const clickBefore = BEFORE.filter((f) => f.type === "CLICK_HERE").length;
+  assert.equal(clickBefore, 4);
+  for (const mode of ["to-placeholder", "to-field"] as const) {
+    const first = compiled(FIXTURE, mode);
+    assert.equal(first.report.promoted, 0, `${mode}: {{}} 승격 0`);
+    assert.equal(first.report.mergeConverted, 29, mode);
+    const out = reparse(first.output);
+    const click = listFields(out).filter((f) => f.type === "CLICK_HERE").length;
+    // 누름틀 수: to-placeholder는 원본과 같고(4), to-field는 변환한 29개만 늘어난다. 본문 {{경로}} 8곳은 글 그대로다
+    assert.equal(click, mode === "to-placeholder" ? 4 : 4 + 29, mode);
+    assert.ok(!listFields(out).some((f) => f.type === "CLICK_HERE" && /^(project|dates|manager)\./.test(f.name)), `${mode}: 본문 {{경로}}가 누름틀이 되지 않았다`);
+    assert.equal(censusOfDoc(out).fieldPairs, mode === "to-placeholder" ? c0.fieldPairs - 29 : c0.fieldPairs, mode);
+    // 두 번째 변환: 바꿀 것이 없고(변환 0, 승격 0) 바이트가 같다. 키가 경로 꼴이 아닌 4개의 경고만 다시 난다
+    const second = compiled(first.output, mode);
+    assert.equal(second.report.mergeConverted, 0, `${mode}: 두 번째 변환 0`);
+    assert.equal(second.report.promoted, 0, mode);
+    assert.ok(Buffer.from(second.output).equals(Buffer.from(first.output)), `${mode}: 두 번째는 바이트 동일`);
+    assert.equal(second.report.issues.filter((i) => i.code === "COMPILE_SKIPPED").length, 4, mode);
+    // 같은 입력은 같은 바이트
+    assert.ok(Buffer.from(compiled(FIXTURE, mode).output).equals(Buffer.from(first.output)), `${mode}: 결정성`);
+  }
+  // 두 변환을 이어서 해도 두 번째 모드가 바꿀 메일 머지 필드가 없다(첫 변환이 29개를 모두 바꿨다)
+  assert.equal(compiled(compiled(FIXTURE, "to-field").output, "to-placeholder").report.mergeConverted, 0);
+  // {{}} 승격까지 원하면 옵션 없는 compile을 따로 쓴다: 변환 결과에서 본문 {{경로}} 8곳이 승격된다
+  const promoted = compiled(compiled(FIXTURE, "to-placeholder").output);
+  assert.equal(promoted.report.promoted, 8 + 29, "변환으로 생긴 {{키}} 29곳과 본문 {{경로}} 8곳이 이제 승격된다");
+  assert.equal(listFields(reparse(promoted.output)).filter((f) => f.type === "CLICK_HERE").length, 4 + 8 + 29);
 });
 
 test("compile to-field: 경로 꼴 키의 메일 머지 필드 29개가 누름틀(이름 = 키, 표시 글 그대로, dirty=1)이 되고, 경로 꼴이 아닌 4개는 그대로이며 경고가 난다. 구조·수량 그대로, 검사기 새 오류 0", () => {
   const r = compiled(FIXTURE, "to-field");
   assert.equal(r.report.mergeConverted, 29);
-  assert.equal(r.report.promoted, 8);
+  assert.equal(r.report.promoted, 0, "{{}} 승격은 하지 않는다");
   const out = reparse(r.output);
   const after = listFields(out);
-  assert.equal(after.length, BEFORE.length + 8, "본문 {{경로}} 8곳이 누름틀로 승격돼 필드가 8개 늘었다");
+  assert.equal(after.length, BEFORE.length, "필드 수는 그대로(메일 머지 29개가 누름틀로 바뀔 뿐)");
   assert.equal(after.filter((f) => f.type === "MAILMERGE").length, 4);
   assert.deepEqual(after.filter((f) => f.type === "MAILMERGE").map((f) => [f.mergeKey, f.valueText, f.dirty]), nonPath.map((f) => [f.mergeKey, f.valueText, f.dirty]));
   // 바뀐 필드: 문서 순서 그대로, 이름 = 키, 표시 글(안내 글 포함) 그대로, dirty=1, 모양 그대로
@@ -81,8 +119,8 @@ test("compile to-field: 경로 꼴 키의 메일 머지 필드 29개가 누름�
     converted.map((f) => [f.name, f.valueText, f.dirty, f.shape, f.mergeKey]),
     pathKeyed.map((f) => [f.mergeKey, f.valueText, "1", f.shape, undefined]),
   );
-  // 누름틀 4개(원래)와 승격 8개는 그대로 있다
-  assert.equal(after.filter((f) => f.type === "CLICK_HERE").length, 4 + 8 + 29);
+  // 원래 누름틀 4개는 그대로 있고 변환한 29개가 더해진다
+  assert.equal(after.filter((f) => f.type === "CLICK_HERE").length, 4 + 29);
   // 시작·끝 표식: 누름틀의 type·fieldid, 안내 Direction = 키. 끝 표식의 fieldid도 누름틀의 것이다
   const xml = sectionOf(r.output);
   assert.match(xml, /<hp:fieldBegin id="\d+" type="CLICK_HERE" name="사업명" editable="1" dirty="1" zorder="-1" fieldid="627272811" metaTag=""><hp:parameters cnt="3" name=""><hp:integerParam name="Prop">9<\/hp:integerParam><hp:stringParam name="Command" xml:space="preserve">Clickhere:set:\d+:Direction:wstring:3:사업명 /);
@@ -94,7 +132,7 @@ test("compile to-field: 경로 꼴 키의 메일 머지 필드 29개가 누름�
   assert.deepEqual(r.report.issues.filter((i) => i.code === "COMPILE_SKIPPED").map((i) => /'([^']*)'/.exec(i.message)?.[1]).sort(), ["계약 방법(수의)", "사유 설명", "참고 사항", "참고 사항"]);
   assert.ok(r.report.issues.filter((i) => i.severity === "warning").every((i) => i.code === "COMPILE_SKIPPED"));
   // 수량·구조
-  assert.deepEqual(censusOfDoc(out), { ...censusOfDoc(reparse(FIXTURE)), fieldPairs: 37 + 8 }, "필드 쌍은 승격 8개만큼만 늘고 나머지 수량은 그대로");
+  assert.deepEqual(censusOfDoc(out), censusOfDoc(reparse(FIXTURE)), "수량은 그대로(필드 쌍도 그대로)");
   assert.deepEqual(sectionTexts(r.output), sectionTexts(FIXTURE));
   assert.deepEqual(newErrorsAfter(validateDocument(FIXTURE), validateDocument(r.output)), []);
   assert.deepEqual(r.report.newErrors, []);
@@ -113,9 +151,11 @@ test("compile to-field → 채움: 바꾼 문서를 채우면 원본 서식을 �
   assert.ok(filled.ok && !filled.dryRun, JSON.stringify(filled.report.issues));
   assert.deepEqual(sectionTexts(filled.output), sectionTexts(direct.output));
   const after = listFields(reparse(filled.output));
-  assert.equal(after.filter((f) => f.type === "CLICK_HERE").length, 41);
+  assert.equal(after.filter((f) => f.type === "CLICK_HERE").length, 33, "원래 누름틀 4개 + 변환한 29개");
   assert.equal(after.filter((f) => f.type === "MAILMERGE").length, 4, "경로 꼴이 아닌 키 4개는 그대로");
-  assert.equal(filled.report.reread.fields, 41);
+  assert.equal(filled.report.reread.fields, 33, "본문 {{}} 8곳은 필드가 아니라 글이다");
+  // 본문 {{경로}} 8종과, 누름틀로 바뀐 필드의 표시 글 `{{키}}`(누름틀은 표시 글의 {{}}도 같은 값으로 채운다, 기존 동작) 12종
+  assert.equal(filled.report.plan.actions.filter((a) => a.anchor.startsWith("{{")).length, 8 + 12);
   assert.deepEqual(newErrorsAfter(validateDocument(FIXTURE), validateDocument(filled.output)), []);
 });
 
@@ -125,7 +165,8 @@ test("compile to-placeholder: 경로 꼴 키의 메일 머지 필드 29개가 `{
   const out = reparse(r.output);
   const after = listFields(out);
   assert.equal(after.filter((f) => f.type === "MAILMERGE").length, 4);
-  assert.equal(after.filter((f) => f.type === "CLICK_HERE").length, 4 + 8, "원래 누름틀 4개와 승격 8개");
+  assert.equal(r.report.promoted, 0, "{{}} 승격은 하지 않는다");
+  assert.equal(after.filter((f) => f.type === "CLICK_HERE").length, 4, "누름틀은 원본과 같은 4개(본문 {{경로}}가 누름틀이 되지 않았다)");
   // 글: 필드 자리가 `{{키}}`가 됐다(안내 글이었던 자리도)
   const want = sectionTexts(FIXTURE);
   const got = sectionTexts(r.output);
@@ -137,19 +178,19 @@ test("compile to-placeholder: 경로 꼴 키의 메일 머지 필드 29개가 `{
   assert.equal(got.top[6], want.top[6], "경로 꼴이 아닌 키(계약 방법(수의))와 장소 — 장소만 바뀌지만 표시 글이 이미 {{장소}}다");
   assert.deepEqual(got.tables[0]?.slice(3, 6), ["사업명", "{{사업명}}", "{{공고번호}}"]);
   assert.ok(texts(out).filter((x) => x.startsWith("기관: ") || x.startsWith("공고번호: ")).every((x) => !x.includes("(입력 전)")), "머리말·꼬리말의 안내 글도 바뀌었다");
-  // {{키}} 자리 수 = 앞(필드 표시 글 안 23 + 본문 8 = 31개) − 지운 표시 글 안의 자리 23 + 바꾼 필드 29
+  // {{키}} 자리 수 = 앞(필드 표시 글 안 23 + 본문 8 = 31개) − 지운 표시 글 안의 자리 23 + 바꾼 필드 29(본문 8곳은 글 그대로)
   const slots = (doc: HwpxDocument): number => allParagraphs(doc).reduce((n, p) => n + findPlaceholders(p.logicalText).length, 0);
   assert.equal(slots(reparse(FIXTURE)), 23 + 8);
   assert.equal(slots(out), 8 + 29);
   // 건너뛴 4개는 바이트 그대로, 경고 4개
   assert.equal([...sectionOf(r.output).matchAll(/type="MAILMERGE"/g)].length, 4);
   assert.deepEqual(r.report.issues.filter((i) => i.code === "COMPILE_SKIPPED").length, 4);
-  // 구조·수량: 문단·표 수는 그대로, 필드 쌍은 바꾼 29개만큼 줄고 승격 8개만큼 늘었다
+  // 구조·수량: 문단·표 수는 그대로, 필드 쌍은 바꾼 29개만큼 줄었다
   const c0 = censusOfDoc(reparse(FIXTURE));
   const c1 = censusOfDoc(out);
   assert.equal(c1.paragraphs, c0.paragraphs);
   assert.equal(c1.tables, c0.tables);
-  assert.equal(c1.fieldPairs, c0.fieldPairs - 29 + 8);
+  assert.equal(c1.fieldPairs, c0.fieldPairs - 29);
   assert.deepEqual(newErrorsAfter(validateDocument(FIXTURE), validateDocument(r.output)), []);
   assert.ok(Buffer.from(compiled(FIXTURE, "to-placeholder").output).equals(Buffer.from(r.output)), "결정성");
 });
@@ -161,7 +202,11 @@ test("compile to-placeholder → 채움: 바꾼 문서를 채우면 원본 서�
   const filled = generate(r.output, emptyTemplate(), readDataset(DATA));
   assert.ok(filled.ok && !filled.dryRun, JSON.stringify(filled.report.issues));
   assert.deepEqual(sectionTexts(filled.output), sectionTexts(direct.output));
-  assert.equal(listFields(reparse(filled.output)).filter((f) => f.type === "MAILMERGE").length, 4);
+  // 필드 없이 `{{키}}`만으로 쓰는 서식이다: 채운 뒤에도 필드는 원래 누름틀 4개와 건너뛴 메일 머지 4개뿐이다(변환이 {{}}를 누름틀로 만들지 않았다)
+  const after = listFields(reparse(filled.output));
+  assert.deepEqual(after.map((f) => f.type).sort(), [...Array(4).fill("CLICK_HERE"), ...Array(4).fill("MAILMERGE")]);
+  assert.equal(filled.report.reread.fields, 4, "필드는 원래 누름틀 4개뿐이라 값 재읽기도 4개");
+  assert.equal(filled.report.plan.actions.filter((a) => a.anchor.startsWith("{{")).length, 12 + 8, "{{}}로 채워진 경로: 변환된 {{키}}의 키 12종과 본문 {{경로}} 8종");
   assert.deepEqual(newErrorsAfter(validateDocument(FIXTURE), validateDocument(filled.output)), []);
 });
 
@@ -239,7 +284,7 @@ test("한글 2024: 바꾼 서식(to-field·to-placeholder)이 열리고, 한컴�
       spec,
       JSON.stringify({
         documents: [
-          { name: "field", file: join(dir, "field.hwpx"), fields: ["사업명", "기관명", "project.name"], resave: join(dir, "field.resaved.hwpx") },
+          { name: "field", file: join(dir, "field.hwpx"), fields: ["사업명", "기관명"], resave: join(dir, "field.resaved.hwpx") },
           { name: "placeholder", file: join(dir, "placeholder.hwpx"), resave: join(dir, "placeholder.resaved.hwpx"), pdf: join(dir, "placeholder.pdf"), markers: ["{{사업명}}", "{{기관명}}", "{{참고 사항}}"] },
         ],
       }),
@@ -260,13 +305,13 @@ test("한글 2024: 바꾼 서식(to-field·to-placeholder)이 열리고, 한컴�
     tc.diagnostic(`한컴 GetFieldText(to-field) = ${JSON.stringify(field.field_text)}`);
     // to-field: 한컴이 이름(사업명)으로 누름틀을 읽는다. 첫 번째 `사업명` 누름틀(꼬리말·머리말을 거친 문서 순서)의 표시 글이다
     assert.ok((field.field_text["사업명"] ?? "") !== "" || (field.field_text["기관명"] ?? "") !== "", "한컴이 누름틀 값을 읽었다");
-    assert.equal(field.field_text["project.name"], "{{project.name}}");
     const resavedField = listFields(reparse(new Uint8Array(readFileSync(join(dir, "field.resaved.hwpx")))));
-    assert.equal(resavedField.filter((f) => f.type === "CLICK_HERE").length, 41);
+    assert.equal(resavedField.filter((f) => f.type === "CLICK_HERE").length, 33);
     assert.equal(resavedField.filter((f) => f.type === "MAILMERGE").length, 4);
     // to-placeholder: 한컴이 다시 저장한 문서에도 `{{키}}` 글과 남은 메일 머지 필드 4개가 있다. PDF에 `{{사업명}}`이 그려진다
     const resavedPh = reparse(new Uint8Array(readFileSync(join(dir, "placeholder.resaved.hwpx"))));
     assert.equal(listFields(resavedPh).filter((f) => f.type === "MAILMERGE").length, 4);
+    assert.equal(listFields(resavedPh).filter((f) => f.type === "CLICK_HERE").length, 4, "누름틀은 원래 4개뿐");
     assert.ok(texts(resavedPh).some((x) => x.includes("{{사업명}}")));
     const m = placeholder.pdf?.markers;
     assert.ok(m !== null && m !== undefined && m["{{사업명}}"] !== null, "PDF에 {{사업명}}이 있다");

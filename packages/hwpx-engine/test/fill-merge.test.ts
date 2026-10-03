@@ -455,7 +455,7 @@ test("명시 앵커: mergeKey 앵커가 키가 같은 메일 머지 필드 전�
   for (const a of [{ mergeKey: "없는 키" }, { mergeKey: "사업명", occurrence: 9 }]) {
     const miss = generate(FIXTURE, tpl({ anchors: [{ id: "a", kind: "field", ...a }], rules: [{ id: "r", do: { type: "fill", anchor: "a", value: { text: "x" } } }] }), ds(data));
     assert.deepEqual(failedCodes(miss), ["ANCHOR_NOT_FOUND"]);
-    assert.match(miss.report.issues[0]?.message ?? "", /키가 같은 메일 머지 필드/);
+    assert.match(miss.report.issues[0]?.message ?? "", /키가 같은 메일 머지 필드(\(순번 9\))?가 문서에 없습니다/);
   }
   // 이름 앵커는 메일 머지 필드를 가리키지 못한다(이름이 비어 있다): 키를 name으로 줘도 찾지 못한다
   assert.deepEqual(failedCodes(generate(FIXTURE, tpl({ anchors: [{ id: "a", kind: "field", name: "추정가격" }], rules: [{ id: "r", do: { type: "fill", anchor: "a", value: { text: "x" } } }] }), ds(data))), ["ANCHOR_NOT_FOUND"]);
@@ -532,7 +532,7 @@ test("모양 crossParagraph: 여러 문단에 걸친 메일 머지 필드는 값
   assert.deepEqual(texts(reparse(r.output)), ["앞 문단", "성명: 새 값 끝 뒤 글", "뒤 문단"]);
   const warnings = r.report.issues.filter((i) => i.code === "FIELD_PARAGRAPHS_MERGED");
   assert.equal(warnings.length, 1);
-  assert.match(warnings[0]?.message ?? "", /^메일 머지 키이 걸친 문단 3개를 합쳤고/);
+  assert.match(warnings[0]?.message ?? "", /^메일 머지 필드\(키 키\)가 걸친 문단 3개를 합쳤고/);
   assert.deepEqual(merge(reparse(r.output)).map((f) => [f.mergeKey, f.shape, f.dirty, f.valueText]), [["키", "simple", "1", "새 값"]]);
   assert.deepEqual(paramsOf(r.output), paramsOf(doc));
   assert.deepEqual(censusOfDoc(reparse(r.output)).paragraphs, censusOfDoc(reparse(doc)).paragraphs - 2);

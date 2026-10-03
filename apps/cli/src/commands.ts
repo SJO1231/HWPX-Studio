@@ -815,7 +815,7 @@ export function diff(args: string[], out: Out): number {
 // ── compile ─────────────────────────────────────────────────────
 
 export function compile(args: string[], out: Out): number {
-  const usage = "hwpx compile <파일> -o 승격본 --experimental [--merge-fields to-placeholder|to-field] [--overwrite]";
+  const usage = "hwpx compile <파일> -o 승격본 --experimental [--merge-fields to-placeholder|to-field] [--overwrite]   (--merge-fields는 메일 머지 필드 변환만 하고 {{}} 승격은 하지 않는다)";
   const p = parse(
     args,
     { output: { type: "string", short: "o" }, experimental: { type: "boolean" }, "merge-fields": { type: "string" }, overwrite: { type: "boolean" } },
@@ -848,7 +848,7 @@ export function compile(args: string[], out: Out): number {
     return 1;
   }
   writeSafely(output, result.output, [file], flag(p, "overwrite"));
-  out.log(`누름틀 ${result.report.promoted}개로 승격해 저장했습니다: ${output} (${basename(output)})`);
-  if (mergeFields !== undefined) out.log(`메일 머지 필드 ${result.report.mergeConverted}개를 ${mergeFields === "to-field" ? "누름틀(이름 = 키)로" : "{{키}} 글로"} 바꿨습니다.`);
+  if (mergeFields === undefined) out.log(`누름틀 ${result.report.promoted}개로 승격해 저장했습니다: ${output} (${basename(output)})`);
+  else out.log(`메일 머지 필드 ${result.report.mergeConverted}개를 ${mergeFields === "to-field" ? "누름틀(이름 = 키)로" : "{{키}} 글로"} 바꿔 저장했습니다: ${output} (${basename(output)})`);
   return 0;
 }

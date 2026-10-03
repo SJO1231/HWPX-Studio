@@ -36,13 +36,15 @@ function insideField(par: ParagraphNode, index: number): FieldMark | undefined {
  * `{{경로}}` 자리(또는 지정한 구간)를 누름틀로 바꾸는 편집 계획. 이름은 경로(지정한 구간은 `name`)이고, 글은 그대로 두며
  * 시작 요소의 `dirty`는 `"1"`이다. 시작 id는 문서의 인스턴스 id 가운데 가장 큰 값 다음부터 문서 순서대로 준다.
  * 글이 한 `hp:t` 안의 한 덩어리가 아니거나(탭·글자모양 변경으로 갈림, CDATA) 이미 누름틀 안이면 승격하지 않고 `COMPILE_SKIPPED` 경고를 남긴다.
- * `mergeFields`를 주면 메일 머지 필드(키가 있는 것)도 바꾼다(`planMergeConversion`). 그 필드의 표시 글 안의 `{{경로}}`는 그 변환이 맡으므로 따로 승격하지 않고 경고도 내지 않는다.
+ * `mergeFields`를 주면 메일 머지 필드(키가 있는 것)만 바꾸고(`planMergeConversion`) `{{경로}}` 승격은 하지 않는다(구간을 지정한 `anchors`를 함께 주면 그 구간은 승격한다.
+ * 그 경우에도 키 있는 메일 머지 필드의 표시 글 안 구간은 그 변환이 맡으므로 승격하지 않고 경고도 내지 않는다). 변환만 하므로 같은 변환을 다시 하면 바꿀 것이 없다.
  */
 export function planCompile(doc: HwpxDocument, anchors?: CompileTarget[], mergeFields?: MergeFieldsMode): EditPlan {
   const issues: Issue[] = [];
   const found: Found[] = [];
   if (anchors === undefined) {
-    for (const section of doc.sections) {
+    // 메일 머지 필드 변환(`mergeFields`)만 요청하면 문서의 `{{경로}}` 전부를 누름틀로 승격하지 않는다
+    for (const section of mergeFields === undefined ? doc.sections : []) {
       for (const paragraph of walkParagraphs(section.paragraphs)) {
         for (const hit of findPlaceholders(paragraph.logicalText)) found.push({ section, paragraph, start: hit.start, end: hit.end, name: hit.path });
       }
@@ -83,7 +85,7 @@ export function planCompile(doc: HwpxDocument, anchors?: CompileTarget[], mergeF
     const enclosing = piece === undefined ? undefined : insideField(f.paragraph, f.paragraph.pieces.indexOf(piece));
     if (enclosing !== undefined) {
       if (mergeFields === undefined || enclosing.type !== "MAILMERGE" || enclosing.mergeKey === undefined) {
-        issues.push(makeIssue("warning", "COMPILE_SKIPPED", `${where}: 이미 누름틀 안에 있는 자리라 승격하지 않았습니다.`, where));
+        issues.push(makeIssue("warning", "COMPILE_SKIPPED", `${where}: 이미 ${enclosing.type === "MAILMERGE" ? "메일 머지 필드" : "누름틀"} 안에 있는 자리라 승격하지 않았습니다.`, where));
       }
       continue;
     }

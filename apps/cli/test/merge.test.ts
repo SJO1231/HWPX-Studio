@@ -119,7 +119,8 @@ test("fill --batch: 건마다 메일 머지 필드를 채운다(파일 3개)", a
 test("compile --merge-fields to-field: 메일 머지 필드 29개를 누름틀(이름 = 키)로 바꿔 저장한다. 4개는 그대로(경고). 바꾼 파일을 fill로 채울 수 있다", async () => {
   const r = await cli("compile", p("merge.hwpx"), "-o", p("out/c1.hwpx"), "--experimental", "--merge-fields", "to-field");
   assert.equal(r.code, 0, r.err);
-  assert.match(r.out, /메일 머지 필드 29개를 누름틀\(이름 = 키\)로 바꿨습니다/);
+  assert.match(r.out, /메일 머지 필드 29개를 누름틀\(이름 = 키\)로 바꿔 저장했습니다/);
+  assert.doesNotMatch(r.out, /승격해 저장/, "{{}} 승격은 하지 않는다");
   assert.equal([...r.out.matchAll(/COMPILE_SKIPPED/g)].length, 4, r.out);
   const fields = listFields(docOf(p("out/c1.hwpx")));
   assert.equal(fields.filter((f) => f.type === "MAILMERGE").length, 4);
@@ -132,12 +133,28 @@ test("compile --merge-fields to-field: 메일 머지 필드 29개를 누름틀(�
 test("compile --merge-fields to-placeholder: 메일 머지 필드 29개를 {{키}} 글로 바꿔 저장한다. 4개는 그대로(경고). 바꾼 파일을 fill로 채울 수 있다", async () => {
   const r = await cli("compile", p("merge.hwpx"), "-o", p("out/c2.hwpx"), "--experimental", "--merge-fields", "to-placeholder");
   assert.equal(r.code, 0, r.err);
-  assert.match(r.out, /메일 머지 필드 29개를 \{\{키\}\} 글로 바꿨습니다/);
+  assert.match(r.out, /메일 머지 필드 29개를 \{\{키\}\} 글로 바꿔 저장했습니다/);
+  assert.equal(listFields(docOf(p("out/c2.hwpx"))).filter((f) => f.type === "CLICK_HERE").length, 4, "{{}}가 누름틀로 승격되지 않았다(원래 누름틀 4개뿐)");
   assert.ok(textsOf(p("out/c2.hwpx")).includes("사업명: {{사업명}} 입니다."), "안내 글이던 자리가 {{키}}가 됐다");
   assert.equal(listFields(docOf(p("out/c2.hwpx"))).filter((f) => f.type === "MAILMERGE").length, 4);
   const filled = await cli("fill", p("out/c2.hwpx"), "--data", json("d6.json", DATA), "-o", p("out/c2f.hwpx"));
   assert.equal(filled.code, 0, filled.err);
   assert.ok(textsOf(p("out/c2f.hwpx")).includes("사업명: 합성 사업 입니다."));
+});
+
+test("compile --merge-fields: 같은 변환을 두 번 하면 두 번째는 변환 0이고 파일이 같다(두 모드 모두). 다른 모드를 이어 써도 이미 바뀐 필드는 건드리지 않는다", async () => {
+  for (const mode of ["to-placeholder", "to-field"]) {
+    const a = p(`out/i-${mode}-1.hwpx`);
+    const b = p(`out/i-${mode}-2.hwpx`);
+    assert.equal((await cli("compile", p("merge.hwpx"), "-o", a, "--experimental", "--merge-fields", mode)).code, 0);
+    const second = await cli("compile", a, "-o", b, "--experimental", "--merge-fields", mode);
+    assert.equal(second.code, 0, second.err);
+    assert.match(second.out, /메일 머지 필드 0개를/, `${mode}: 두 번째 변환 0`);
+    assert.ok(readFileSync(a).equals(readFileSync(b)), `${mode}: 파일이 같다`);
+  }
+  const c = p("out/i-cross.hwpx");
+  const cross = await cli("compile", p("out/i-to-field-1.hwpx"), "-o", c, "--experimental", "--merge-fields", "to-placeholder");
+  assert.match(cross.out, /메일 머지 필드 0개를/);
 });
 
 test("compile: --merge-fields 없이는 메일 머지 필드를 건드리지 않고, 값이 to-placeholder·to-field가 아니면 사용법 오류(종료 코드 2, 출력 없음)", async () => {

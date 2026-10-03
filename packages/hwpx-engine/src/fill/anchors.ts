@@ -158,8 +158,10 @@ export function resolveAnchors(doc: HwpxDocument, template: Template, only?: Rea
         // 메일 머지 필드는 이름이 비어 있어 키(`mergeKey`)로 찾는다.
         const targets = fields.filter((f) => fieldAnchorMatches(a, f.info));
         if (targets.length === 0) {
+          // 조사: 누름틀은 받침이 있어 "이", 메일 머지 필드는 받침이 없어 "가"
           const what = a.mergeKey === undefined ? "이름이 같은 누름틀" : "키가 같은 메일 머지 필드";
-          issues.push(makeIssue("error", "ANCHOR_NOT_FOUND", `앵커 ${a.id}: ${what}${a.occurrence === undefined ? "" : `(순번 ${a.occurrence})`}이 문서에 없습니다.`, a.id));
+          const josa = a.mergeKey === undefined ? "이" : "가";
+          issues.push(makeIssue("error", "ANCHOR_NOT_FOUND", `앵커 ${a.id}: ${what}${a.occurrence === undefined ? "" : `(순번 ${a.occurrence})`}${josa} 문서에 없습니다.`, a.id));
         } else {
           resolved = { kind: "field", targets };
         }

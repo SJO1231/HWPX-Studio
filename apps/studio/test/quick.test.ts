@@ -39,7 +39,7 @@ const blockedShape = (t: FieldTarget): string => (t.info.shape === "crossParagra
 const isPlaceField = (f: { type: string; mergeKey?: string }): boolean => f.type === "CLICK_HERE" || (f.type === "MAILMERGE" && f.mergeKey !== undefined);
 const keyOf = (f: { type: string; name: string; mergeKey?: string }): string => (f.type === "CLICK_HERE" ? f.name : (f.mergeKey ?? ""));
 
-test("Q4: 모든 시험 문서에서 자리 목록이 listFields(CLICK_HERE만)·findCandidates와 같다", () => {
+test("Q4: 모든 시험 문서에서 자리 목록이 listFields(CLICK_HERE와 키 있는 메일 머지)·findCandidates와 같다", () => {
   const names = fixtureNames();
   assert.ok(names.length >= 20);
   let withFields = 0;
