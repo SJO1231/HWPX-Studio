@@ -1,5 +1,5 @@
-// 앵커 초안 목록의 기본 선택 규칙. 화면(`main.ts`)과 Node 시험이 같이 쓴다(DOM·엔진을 가져오지 않는다).
-import type { DraftView } from "../src/api-types.ts";
+// 앵커 초안 목록의 기본 선택 규칙. 웹 화면들과 Node 시험이 같이 쓴다(DOM·엔진을 가져오지 않는다).
+import type { DraftView } from "../host/types.ts";
 
 /**
  * 기본으로 고를 초안의 순번. 고르지 않으면 undefined.

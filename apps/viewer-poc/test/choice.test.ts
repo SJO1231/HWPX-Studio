@@ -1,8 +1,8 @@
-// 앵커 초안의 기본 선택 규칙(web/choice.ts). 채울 수 없는 초안은 고르지 않고, 문단 초안은 그것만 있을 때만 고른다.
+// 앵커 초안의 기본 선택 규칙(packages/viewer/src/dom/choice.ts). 채울 수 없는 초안은 고르지 않고, 문단 초안은 그것만 있을 때만 고른다.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { AnchorDraftJson } from "../src/api-types.ts";
-import { defaultDraftIndex } from "../web/choice.ts";
+import { defaultDraftIndex } from "../../../packages/viewer/src/dom/choice.ts";
 
 const at = { sectionIndex: 0, path: [1] };
 const print = { text: "글", before: "", after: "", lineHash: "x" } as never;

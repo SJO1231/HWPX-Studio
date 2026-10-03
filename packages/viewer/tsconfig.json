@@ -3,5 +3,5 @@
   "compilerOptions": {
     "lib": ["esnext", "dom"]
   },
-  "include": ["src/map", "src/rhwp", "test", "tools"]
+  "include": ["src/host", "src/map", "src/rhwp", "test", "tools"]
 }

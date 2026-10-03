@@ -1,7 +1,7 @@
-// 서버 응답이 JSON이 아니어도 화면이 상태 코드로 설명하는 규칙(web/failure.ts).
+// 서버 응답이 JSON이 아니어도 화면이 상태 코드로 설명하는 규칙(packages/viewer/src/dom/failure.ts).
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { failureText } from "../web/failure.ts";
+import { failureText } from "../../../packages/viewer/src/dom/failure.ts";
 
 test("리뷰 10: JSON 오류 본문은 코드와 메시지로, JSON이 아닌 본문은 상태 코드로 설명한다", async () => {
   // 예전 화면은 상태를 보기 전에 res.json()을 불러, 글로 온 403이 상태 코드 없는 구문 오류로 보였다

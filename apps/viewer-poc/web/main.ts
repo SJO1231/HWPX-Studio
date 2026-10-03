@@ -1,9 +1,6 @@
 // 시험 구현의 웹 화면. rhwp(WASM)는 이 브라우저에서 돌고, 문서 바이트·위치 변환·앵커 초안·채움은 서버(호스트)가 한다.
 // 서버는 이 파일을 Node의 타입 제거로 바꿔서 준다(번들러 없음). 엔진은 가져오지 않는다.
-import { createPageView, type PageView, type PickEvent, type ViewMark } from "../../../packages/viewer/src/dom/index.ts";
-import { defaultDraftIndex } from "./choice.ts";
-import { failureText } from "./failure.ts";
-import { closeReplaced, createLatest } from "./guards.ts";
+import { closeReplaced, createLatest, createPageView, defaultDraftIndex, failureText, type PageView, type PickEvent, type ViewMark } from "../../../packages/viewer/src/dom/index.ts";
 import { loadRhwp, openDocument, type HitRegion, type ViewerDocument } from "../../../packages/viewer/src/rhwp/index.ts";
 import type {
   AnchorDraftJson,

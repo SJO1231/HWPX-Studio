@@ -1,7 +1,7 @@
-// 화면의 응답 순서·세션 교체 규칙(web/guards.ts).
+// 화면의 응답 순서·세션 교체 규칙(packages/viewer/src/dom/guards.ts).
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { closeReplaced, createLatest } from "../web/guards.ts";
+import { closeReplaced, createLatest } from "../../../packages/viewer/src/dom/guards.ts";
 
 /** 서버 응답을 시험이 원하는 때 돌려주기 위한 약속 */
 function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {

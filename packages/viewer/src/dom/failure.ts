@@ -1,4 +1,4 @@
-// 서버 응답이 실패했을 때 화면에 보일 문장. 화면(`main.ts`)과 Node 시험이 같이 쓴다(DOM·엔진을 가져오지 않는다).
+// 서버 응답이 실패했을 때 화면에 보일 문장. 웹 화면들과 Node 시험이 같이 쓴다(DOM·엔진을 가져오지 않는다).
 
 /** `{ error: { code, message } }` 본문이면 `코드: 메시지`, 아니면 undefined. */
 function errorBody(text: string): string | undefined {

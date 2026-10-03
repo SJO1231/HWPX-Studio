@@ -8,7 +8,7 @@ import type { AddressInfo } from "node:net";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createViewerApp, HOST, PORT, type ViewerApp } from "../src/app.ts";
-import { defaultDraftIndex } from "../web/choice.ts";
+import { defaultDraftIndex } from "../../../packages/viewer/src/dom/choice.ts";
 import type { AnchorDraftJson, FillResponse, LocateResponse, MarksResponse, OpenResponse } from "../src/api-types.ts";
 import { FIELD_BEGIN, FIELD_END, P, R, SUBP, T, TBL, ensureRhwp, fixtureNames, readFixture, synth } from "../../../packages/viewer/test/helpers.ts";
 import { hasDocCoords, openDocument, runLength, runPosition, type LayoutRun, type ViewerDocument } from "../../../packages/viewer/src/rhwp/index.ts";
@@ -518,8 +518,13 @@ const sourcesOf = (dir: URL): { name: string; text: string }[] =>
     .map((e) => ({ name: e.name, text: readFileSync(new URL(e.name, dir), "utf8") }));
 
 test("올린 바이트는 디스크에 쓰지 않는다: 서버 코드에 파일 쓰기·이동·삭제 호출이 없다", () => {
-  const files = [...sourcesOf(new URL("../src/", import.meta.url)), { name: "server.ts", text: readFileSync(new URL("../server.ts", import.meta.url), "utf8") }];
-  assert.ok(files.length >= 6);
+  // 서버 코드의 일부를 호스트 공용 폴더(packages/viewer/src/host/)로 옮겼으므로 그 폴더도 같은 점검을 받는다
+  const files = [
+    ...sourcesOf(new URL("../src/", import.meta.url)),
+    ...sourcesOf(new URL("../../../packages/viewer/src/host/", import.meta.url)),
+    { name: "server.ts", text: readFileSync(new URL("../server.ts", import.meta.url), "utf8") },
+  ];
+  assert.ok(files.length >= 14);
   for (const f of files) {
     const code = f.text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
     assert.doesNotMatch(code, /\b(writeFile|writeFileSync|createWriteStream|appendFile|appendFileSync|mkdir|mkdirSync|rename|renameSync|unlink|unlinkSync|rmSync|rmdirSync|copyFile|copyFileSync|truncate)\b/, `${f.name}: 파일을 쓰거나 지우는 호출이 있다`);
