@@ -1,5 +1,13 @@
 # 구현 및 검증 기록
 
+## 플랫폼별 TypeScript 설치 수정 (2026-10-03)
+
+`885f62a`의 Ubuntu 24.04 CI는 Windows 전용 `@typescript/typescript-win32-x64@7.0.2`가 Lite의 필수 개발 의존성으로 지정되어 `npm ci`에서 `EBADPLATFORM`으로 실패했다. Typecheck와 Test는 실행되지 않았다. 실패 근거: GitHub Actions run `37123792570`, job `111204943554`.
+
+- Lite의 Windows 전용 직접 의존성을 제거하고 `npm install --package-lock-only --ignore-scripts`로 루트 잠금 파일을 갱신했다. Windows 패키지도 `optional: true`로 복원되었으며 TypeScript의 20개 플랫폼 선택 의존성과 기존 패키지 버전을 모두 유지했다.
+- Windows에서 일반 `npm ci`로 깨끗한 설치 후 `npm run verify`: 1,136 통과, 실패 0, 기존 선택 시험 48개 건너뜀. 형 검사·공통 엔진 연결·RHWP 해시·읽기 전용 경계 통과. 근거: 앱 `artifacts/ci-platform-install.log`, `ci-platform-verify.log`.
+- CI workflow, 제품 코드, 테스트, 검사 도구 및 통과 기준은 변경하지 않았다. `--force`, 선택 의존성 전체 제외, 실패 무시로 우회하지 않는다. Linux 실제 결과는 해당 수정 커밋의 기존 Ubuntu CI에서 확인한다.
+
 ## Studio 브랜치 통합 (2026-10-03)
 
 사용자 요청으로 Lite의 이력과 미커밋 Helper 연결을 Studio의 `studio-lite` 브랜치로 통합한다. Studio main에는 병합하지 않는다. 별도 Lite 원격 저장소는 보존·게시 확인 후 삭제한다.

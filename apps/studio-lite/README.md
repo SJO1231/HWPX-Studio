@@ -16,7 +16,7 @@ npm start
 
 [http://127.0.0.1:4318](http://127.0.0.1:4318)을 엽니다. 포트 변경은 `$env:PORT=4319` 후 실행합니다. 서버 종료는 실행 콘솔에서 Ctrl+C입니다.
 
-새 PC에서는 저장소 루트에서 `npm ci --ignore-scripts`를 실행합니다. 생성과 미리보기에 한컴 설치, Python, 모델 다운로드가 필요하지 않습니다. 개발 검사기는 Windows x64용 TypeScript 실행 파일을 사용합니다.
+새 PC에서는 저장소 루트에서 `npm ci --ignore-scripts`를 실행합니다. 생성과 미리보기에 한컴 설치, Python, 모델 다운로드가 필요하지 않습니다. 개발 검사기는 TypeScript가 제공하는 플랫폼별 선택 의존성으로 현재 운영체제·CPU에 맞는 실행 파일을 사용합니다. TypeScript 실행에 필요하므로 설치 시 `--omit=optional`을 사용하지 않습니다.
 
 ## 1분 체험
 
