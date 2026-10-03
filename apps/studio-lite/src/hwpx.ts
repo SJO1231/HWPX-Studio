@@ -12,7 +12,7 @@ const textOf = (bytes: Uint8Array) => docOf(bytes).sections.flatMap(s=>[...walkP
 
 function checked(result: ReturnType<typeof generate>) {
   if (!result.ok || result.dryRun) throw new Error(result.report.issues.filter(i=>i.severity==='error').map(i=>`${i.code}: ${i.message}`).join('\n') || 'HWPX 생성이 중단되었습니다.');
-  assert(result.report.plan.skipped.length===0, '일부 Field가 서식 경계를 가로질러 채워지지 않았습니다. 범위를 나누어 다시 확정하세요.');
+  assert(result.report.plan.skipped.every(skip=>skip.ruleId==='implicit'), '일부 Field가 서식 경계를 가로질러 채워지지 않았습니다. 범위를 나누어 다시 확정하세요.');
   return result;
 }
 
