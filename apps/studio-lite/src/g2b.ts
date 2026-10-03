@@ -2,9 +2,8 @@ import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { boundData, checkProject, checkRecords, object, parseCondition } from './core.ts';
+import { boundData, checkProject, checkRecords, object, parseCondition, matchesCondition } from './core.ts';
 import { applyProject } from './hwpx.ts';
-import { evaluateCondition } from '@hwpx-studio/engine';
 import type { Project } from './model.ts';
 
 type Profile = { id:string; label:string; revisionId:number; outputDirectory:string };
@@ -81,7 +80,7 @@ function itemProject(project:Project,item:Item):Project {
     }
     const conditional=candidates.filter(b=>b.condition.trim()), missingConditions=[...new Set(conditional.flatMap(b=>parseCondition(b.condition).all.map((rule:{path:string})=>rule.path)).filter(key=>!Object.hasOwn(conditionData,key) || conditionData[key]===null || conditionData[key]===''))] as string[];
     if(missingConditions.length) throw new NeedsInput('MISSING_CONDITION_FIELDS',`${group}: 조건 판단에 필요한 데이터가 없습니다: ${missingConditions.join(', ')}. 값을 보완하거나 Studio에서 Block을 직접 선택하세요.`,{missingFields:missingConditions});
-    const conditions=conditional.filter(b=>evaluateCondition(parseCondition(b.condition),{data:conditionData,derived:{}}));
+    const conditions=conditional.filter(b=>matchesCondition(b.condition,conditionData));
     const highest=conditions.length?Math.max(...conditions.map(b=>b.priority)):null;
     const choices=highest===null?candidates.filter(b=>!b.condition.trim()):conditions.filter(b=>b.priority===highest);
     if(choices.length!==1) throw new NeedsInput('BLOCK_SELECTION',`${group}: 적용할 Block이 ${choices.length? '여러 개입니다':'없습니다'}. Studio에서 Block을 명시적으로 선택하고 프로젝트를 저장하세요.`,{conflicts:choices.map(b=>b.id)});

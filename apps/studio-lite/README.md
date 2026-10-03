@@ -4,7 +4,7 @@ Markdown과 원본 HWPX를 같은 Field / In Template 개념으로 다루는 로
 
 관리 저장소는 [SJO1231/HWPX-Studio](https://github.com/SJO1231/HWPX-Studio/tree/studio-lite)이며 작업 브랜치는 `studio-lite`입니다. 이 앱은 `apps/studio-lite`에 있고 공통 `packages/hwpx-engine`를 직접 사용합니다. Studio main에는 병합하지 않았습니다. 사용자 DB·실제 참고자료·시험 산출물은 Git에 포함하지 않으며 `samples/`에는 합성 시험 문서만 포함합니다.
 
-현재 코드 리뷰에서 발견한 미수정 결함 5개가 남아 있습니다. 테스트 통과는 업무용 완성 판정이 아닙니다. 상세 내용은 [검증 상태](docs/status.md), 검토 요청과 개선 순서는 [설계자 검토 의뢰서](docs/architect-review-brief.md)를 참조하세요.
+2026-10-02 리뷰의 오주입·승인·검사 판정 결함 5개를 수정하고 회귀 시험 8개를 추가했습니다. 테스트 통과는 업무용 완성 판정이 아닙니다. 상세 내용은 [검증 상태](docs/status.md), 검토 요청과 개선 순서는 [설계자 검토 의뢰서](docs/architect-review-brief.md)를 참조하세요.
 
 ## 실행
 
@@ -90,7 +90,7 @@ node --test --test-name-pattern='참고자료 공고서' test/studio.test.ts
 Remove-Item Env:HWPX_CORPUS_DIR
 ```
 
-하위 폴더의 `공고서*.hwpx`를 이름 중간 일치로 찾고 SHA-256으로 중복을 제외합니다. 일반값·0원·긴 문자열과 참가자격 Fragment 교체를 시험합니다. Grid 확정은 시험 코드에서 모의 수행하며 실제 업무 템플릿 승인이 아닙니다. 원본과 사용자 DB는 수정하지 않습니다. 최신 결과 폴더는 `artifacts/notice-simulation-latest.txt`, 파일별 결과는 해당 폴더의 `report.json`입니다. 시험 통과에는 생성 차단도 포함되므로 **passed / rejected / failed**를 따로 확인하세요.
+하위 폴더의 `공고서*.hwpx`를 이름 중간 일치로 찾고 SHA-256으로 중복을 제외합니다. 일반값·0원·긴 문자열과 참가자격 Fragment 교체를 시험합니다. Grid 확정은 시험 코드에서 모의 수행하며 실제 업무 템플릿 승인이 아닙니다. 원본과 사용자 DB는 수정하지 않습니다. 최신 결과 폴더는 `artifacts/notice-simulation-latest.txt`, 파일별 결과는 해당 폴더의 `report.json`입니다. **passed / rejected / failed**를 따로 확인하세요. 생성 성공 0건·분석 실패·예상하지 않은 예외는 실패입니다. test/notice-baseline.json의 문서 해시별 차단 코드가 일치할 때만 rejected로 분류하며, 기존 참고자료가 식별되면 전체 106개 기준 사례의 누락과 기존 성공 감소도 실패로 판정합니다. 별도 출력 폴더는 HWPX_CORPUS_OUT_DIR로 지정할 수 있으며 이때 최신 보고서 포인터는 바꾸지 않습니다.
 
 코드 구조는 `src/core.ts`(모델 흐름·비교·조건·매핑), `src/hwpx.ts`(두 엔진 연결), `src/server.ts`(HTTP·SQLite), `web/`(공통 UI), 저장소의 `packages/hwpx-engine/`(공통 Core)입니다.
 

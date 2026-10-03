@@ -30,7 +30,27 @@ export function checkProject(p: any): asserts p is Project {
   assert(new Set((p.sources as Source[]).map(s => s.id)).size === (p.sources as Source[]).length, '문서 ID가 중복되었습니다.');
   assert(new Set((p.blocks as Block[]).map(b => b.id)).size === (p.blocks as Block[]).length, 'Block ID가 중복되었습니다.');
   assert(p.selectedBlocks===undefined || (object(p.selectedBlocks) && Object.entries(p.selectedBlocks).every(([k,v])=>keyOK(k)&&typeof v==='string')),'저장된 Block 선택을 확인하세요.');
+  checkFields(p.fields as Field[]);
   checkRecords(p.records);
+}
+
+// A shared alias must belong to one explicitly merged Field, never two mappings.
+function checkFields(fields: Field[]) {
+  assert(new Set(fields.map(f=>f.id)).size===fields.length,'Field ID가 중복되었습니다.');
+  const aliases=new Map<string,string>();
+  const targets=new Map<string,string>();
+  for(const f of fields) {
+    const names=[f.name,...f.targets.flatMap(t=>t.anchor?.kind==='field'?[t.anchor.name]:t.anchor?.kind==='word'?[/^\{\{([^{}]+)\}\}$/.exec(t.anchor.print.text)?.[1]].filter((x):x is string=>!!x):[])];
+    for(const name of names){const key=name.trim();assert(!aliases.has(key)||aliases.get(key)===f.id,'Field 이름/원본 별칭이 중복되거나 매핑이 충돌합니다: '+key+'. Grid에서 병합하세요.');aliases.set(key,f.id);}
+    for(const t of f.targets){const key=JSON.stringify([t.sourceId,t.line,t.start,t.end]);assert(!targets.has(key)||targets.get(key)===f.id,'Field 대상 위치의 매핑이 충돌합니다. Grid에서 병합하세요.');targets.set(key,f.id);}
+  }
+}
+
+// Lite records have scalar, literal column keys (including dots and spaces).
+// Reuse the engine's scalar comparison without interpreting a column as a path.
+export function matchesCondition(input: string, row: Record<string,unknown>): boolean {
+  const condition=parseCondition(input);
+  return !condition || condition.all.every((rule:any)=>evaluateCondition({...rule,path:'value'},{data:Object.hasOwn(row,rule.path)?{value:row[rule.path]}:{},derived:{}}));
 }
 
 export function checkRecords(rows: any): asserts rows is Record<string, unknown>[] {
@@ -144,6 +164,7 @@ export function analyze(sources: Source[], records: Record<string, unknown>[]): 
 }
 
 export function confirmFields(p: Project): Project {
+  checkProject(p);
   const next = structuredClone(p);
   const source = next.sources[0];
   if (!source) return next;
@@ -177,6 +198,7 @@ export function confirmFields(p: Project): Project {
 }
 
 export function boundData(p: Project, row: Record<string, unknown>) {
+  checkFields(p.fields);
   const data={...row};
   for(const f of p.fields.filter(f=>f.approved && f.kind==='field')) {
     const col=f.column || f.name;
@@ -199,7 +221,7 @@ export function selectBlocks(p: Project, row: Record<string, unknown>, selected:
   const groups=[...new Set(p.mode==='markdown' ? [...p.markdown.matchAll(/\[IN_TEMPLATE:([^\]]+)\]/g)].map(m=>m[1]) : p.ranges.map(r=>r.group))];
   for (const group of groups) {
     const candidates=p.blocks.filter(b=>b.group===group).sort((a,b)=>b.priority-a.priority);
-    const matched=candidates.find(b=>b.condition.trim() && evaluateCondition(parseCondition(b.condition),{data:conditionData,derived:{}}));
+    const matched=candidates.find(b=>b.condition.trim() && matchesCondition(b.condition,conditionData));
     const fallback=candidates.find(b=>!b.condition.trim());
     const manual=selected[group] ? candidates.find(b=>b.id===selected[group]) : undefined;
     assert(!selected[group] || manual, `${group}: 선택한 Block이 없습니다.`);

@@ -318,11 +318,45 @@ test('실제 HTTP: 복합 입력 오류 8종은 output 없이 거절하고 다�
   } finally {await new Promise<void>((done,fail)=>server.close(e=>e?fail(e):done()));}
 });
 
+// Reviewed historical expectations are keyed by content hash, never filename.
+const corpusBaseline=JSON.parse(readFileSync(new URL('./notice-baseline.json',import.meta.url),'utf8'));
+function corpusExpectations(hashes: string[]) {
+  const expected=new Map<string,string>();
+  // Recognizing the reference corpus requires its full reviewed coverage, even if files disappeared.
+  if(corpusBaseline.documents.some((doc:any)=>hashes.includes(doc.sha256)))hashes=corpusBaseline.documents.map((doc:any)=>doc.sha256);
+  for(const doc of corpusBaseline.documents)if(hashes.includes(doc.sha256)&&doc.fill!=='none')for(let i=0;i<3;i++)expected.set(doc.sha256.slice(0,10)+'-fill-'+i,doc.fill);
+  const ids=hashes.map(h=>h.slice(0,10));
+  for(const item of corpusBaseline.fragments)if(item.name.split('-fragment-').every((id:string)=>ids.includes(id)))expected.set(item.name,item.status);
+  return expected;
+}
+function corpusFailure(stage:string,code:string,expected?:string) {
+  return stage==='generate' && expected!==undefined && expected!=='passed' && expected===code?'rejected':'failed';
+}
+function assertCorpusReport(report:any,expected:Map<string,string>) {
+  assert(report.originalsUnchanged,'원본 파일이 변경되었습니다.');
+  assert.equal(report.documents.filter((d:any)=>d.status==='analysis_failed').length,0,'분석 실패: report.json 확인');
+  assert.equal(report.summary.failed,0,'예상하지 않은 생성/출력/보존/렌더 결함: report.json 확인');
+  assert(report.summary.passed>0,'생성 성공 0건: 검증을 통과할 수 없습니다.');
+  for(const [name,status] of expected){const found=report.cases.find((c:any)=>c.name===name);assert(found,'기준 시험 누락: '+name);assert(found.status==='passed'||(status!=='passed'&&found.status==='rejected'&&found.code===status),'기존 성공 범위 감소 또는 차단 사유 변경: '+name);}
+}
+
+test('회귀: 코퍼스는 미예상 예외와 성공 범위 감소를 차단하고 지정한 차단만 인정',()=>{
+  assert.equal(corpusExpectations([corpusBaseline.documents[0].sha256]).size,106,'참고자료가 일부 빠져도 전체 기준 시험을 요구한다');
+  assert.equal(corpusFailure('generate','TypeError','MIXED_FORMAT'),'failed');
+  assert.equal(corpusFailure('generate','MIXED_FORMAT'),'failed');
+  assert.equal(corpusFailure('generate','MIXED_FORMAT','MIXED_FORMAT'),'rejected');
+  assert.equal(corpusFailure('render','MIXED_FORMAT','MIXED_FORMAT'),'failed');
+  const report={originalsUnchanged:true,documents:[],summary:{failed:0,passed:1},cases:[{name:'kept',status:'passed'}]};
+  assert.throws(()=>assertCorpusReport(report,new Map([['missing','passed']])),/누락/);
+  assert.throws(()=>assertCorpusReport({...report,cases:[...report.cases,{name:'lost',status:'rejected',code:'DATA_MISSING'}]},new Map([['lost','passed']])),/성공 범위 감소/);
+  assert.throws(()=>assertCorpusReport({...report,summary:{failed:0,passed:0}},new Map()),/성공 0건/);
+});
+
 // Opt-in local corpus campaign. Never writes to the corpus or the user's SQLite.
 // Automatic confirmation here is a simulated Grid action, not approval of a real template.
 if(process.env.HWPX_CORPUS_DIR) test('참고자료 공고서 시뮬레이션',async()=>{
   const root=resolve(process.env.HWPX_CORPUS_DIR!);
-  const out=resolve(artifact(),`notice-simulation-${new Date().toISOString().replace(/[:.]/g,'-')}`);mkdirSync(out,{recursive:true});
+  const out=resolve(process.env.HWPX_CORPUS_OUT_DIR??artifact(),`notice-simulation-${new Date().toISOString().replace(/[:.]/g,'-')}`);mkdirSync(out,{recursive:true});
   const sha=(b:Uint8Array)=>createHash('sha256').update(b).digest('hex');
   const paths:string[]=[];
   function scan(dir:string){for(const e of readdirSync(dir,{withFileTypes:true})){const path=join(dir,e.name);if(e.isDirectory())scan(path);else if(e.isFile()&&/공고서.*\.hwpx$/i.test(e.name))paths.push(path);}}
@@ -331,6 +365,7 @@ if(process.env.HWPX_CORPUS_DIR) test('참고자료 공고서 시뮬레이션',as
   const unique=snapshots.filter((x,i)=>snapshots.findIndex(y=>y.hash===x.hash)===i);
   const report:any={started:new Date().toISOString(),root,matched:paths.length,unique:unique.length,duplicates:paths.length-unique.length,files:snapshots.map(x=>({file:relative(root,x.path),sha256:x.hash})),documents:[],cases:[],comparisons:[],originalsUnchanged:false};
   const cases:any[]=report.cases;
+  const expectedCases=corpusExpectations(unique.map(x=>x.hash));
   const compact=(name:string)=>name.replace(/\s/g,'');
   const relevant=(f:Field)=>f.confidence===1||/^(수요기관|사업명|공고명|품명|세부품명|사업예산|사업금액|추정가격|계약방법|납품기한|납품장소|수량|수량및단위|입찰공고번호|공고번호)$/.test(compact(f.name));
   const records=(fields:Field[],label:string)=>Array.from({length:3},(_,i)=>Object.fromEntries(fields.map((f,j)=>[f.column,f.format==='money'?[120000000,0,987654321][i]:`SIM_${label}_${i}_${j}${i===2?' 한글 & <검증> '.repeat(8):''}`])));
@@ -371,7 +406,7 @@ if(process.env.HWPX_CORPUS_DIR) test('참고자료 공고서 시뮬레이션',as
       result.fields=p.fields.length;result.targets=p.fields.reduce((n,f)=>n+f.targets.filter(t=>t.sourceId===p.sources[0].id).length,0);
       result.remainingFields=listFields(parseDocument(openPackage(bytes))).length;result.errors=va.errors.length;result.warnings=[...new Set(va.warnings.map(x=>x.code))];result.status='passed';result.stage='complete';
       if(index===0){writeFileSync(join(out,`${name}.hwpx`),bytes);result.output=`${name}.hwpx`;result.expectedMarkers=[...new Set(expected.join('\n').match(/SIM_[\w]+/g)??[])];}
-    } catch(e:any) {result.status=stage==='generate'?'rejected':'failed';result.stage=stage;result.code=e.code??(/SIM_[A-Z_]+/.exec(e.message)?.[0])??(/\b[A-Z][A-Z_]{3,}\b/.exec(e.message)?.[0])??(e.message.includes('서식 경계')?'MIXED_FORMAT':e.name);}
+    } catch(e:any) {result.stage=stage;result.code=e.code??(/SIM_[A-Z_]+/.exec(e.message)?.[0])??(/\b[A-Z][A-Z_]{3,}\b/.exec(e.message)?.[0])??(e.message.includes('서식 경계')?'MIXED_FORMAT':e.name);result.message=e.message;result.status=corpusFailure(stage,result.code,expectedCases.get(name));}
   }
   try {
     for(const entry of unique) {
@@ -412,8 +447,72 @@ if(process.env.HWPX_CORPUS_DIR) test('참고자료 공고서 시뮬레이션',as
   } finally {
     report.originalsUnchanged=snapshots.every(x=>sha(readFileSync(x.path))===x.hash);
     report.finished=new Date().toISOString();report.summary={attempted:cases.length,passed:cases.filter(c=>c.status==='passed').length,rejected:cases.filter(c=>c.status==='rejected').length,failed:cases.filter(c=>c.status==='failed').length,pages:cases.filter(c=>c.status==='passed').reduce((n,c)=>n+c.pages,0)};
-    writeFileSync(join(out,'report.json'),JSON.stringify(report,null,2));writeFileSync(artifact('notice-simulation-latest.txt'),out);
+    writeFileSync(join(out,'report.json'),JSON.stringify(report,null,2));if(!process.env.HWPX_CORPUS_OUT_DIR)writeFileSync(artifact('notice-simulation-latest.txt'),out);
     console.log(JSON.stringify({report:join(out,'report.json'),...report.summary,originalsUnchanged:report.originalsUnchanged}));
   }
-  assert(report.originalsUnchanged,'원본 파일이 변경되었습니다.');assert.equal(report.summary.failed,0,'출력 내용/보존/렌더 결함: report.json 확인');
+  assertCorpusReport(report,expectedCases);
+});
+
+test('회귀: 원본 Fragment 미승인 후보는 DB에 있어도 주입하지 않는다',async()=>{
+  const p=baseNative(await markdownHwpx('# 제목\n\n자리'));
+  p.sources.push(source('donor',await markdownHwpx('# 조각\n\n담당: {{담당자}}')));
+  p.records=[{담당자:'승인 전 비밀'}];p.fields=analyze(p.sources,p.records);
+  p.ranges=[{id:'r',group:'q',sourceId:p.sources[0].id,from:2,to:2}];
+  p.blocks=[{id:'q',group:'q',alias:'연락',engine_type:'hwpx_fragment',condition:'',priority:0,content:'',sourceId:'donor',from:2,to:2}];
+  await assert.rejects(()=>applyProject(p,0),/DATA_MISSING/);
+  p.fields[0].approved=true;p.fields[0].name='연락처';p.fields[0].column='담당자';
+  assert(text(Buffer.from((await applyProject(p,0)).output,'base64')).includes('승인 전 비밀'));
+});
+
+test('회귀: 같은 Field 이름과 ID, 원본 별칭의 충돌은 거부하고 명시적 병합은 허용',async()=>{
+  const p=baseNative(await markdownHwpx('첫째: {{첫째}}\n\n둘째: {{둘째}}'));
+  p.records=[{첫째:111,둘째:222}];p.fields=analyze(p.sources,p.records);p.fields.forEach(f=>f.approved=true);
+  for(const property of ['name','id'] as const){const bad=structuredClone(p);bad.fields[1][property]=bad.fields[0][property];assert.throws(()=>checkProject(bad),/중복|충돌/);assert.throws(()=>confirmFields(bad),/중복|충돌/);await assert.rejects(()=>applyProject(bad,0),/중복|충돌/);}
+  const alias=structuredClone(p);alias.fields[0].name='둘째';alias.fields[1].name='다른이름';
+  assert.throws(()=>checkProject(alias),/중복|충돌/);
+  p.fields[0].targets.push(...p.fields[1].targets);p.fields.splice(1,1);
+  const output=text(Buffer.from((await applyProject(p,0)).output,'base64'));
+  assert(output.includes('첫째: 111'));assert(output.includes('둘째: 111'));
+});
+
+test('회귀: 원본과 Markdown Fragment의 데이터 토큰은 한 번만 치환한다',async()=>{
+  for(const engine_type of ['hwpx_fragment','markdown'] as const){
+    const p=baseNative(await markdownHwpx('# {{추가값}}\n\n자리\n\n유지 문단'));
+    p.sources.push(source('donor',await markdownHwpx('# 조각\n\n{{본문}} / {{본문}}')));
+    p.records=[{본문:'{{추가값}} & <문자>',추가값:'별도 실제값'}];p.fields=analyze(p.sources,p.records);p.fields.forEach(f=>f.approved=true);
+    p.ranges=[{id:'r',group:'q',sourceId:p.sources[0].id,from:2,to:2}];
+    p.blocks=[{id:'q',group:'q',alias:'본문',engine_type,condition:'',priority:0,content:'{{본문}} / {{본문}}',sourceId:'donor',from:2,to:2}];
+    const output=text(Buffer.from((await applyProject(p,0)).output,'base64'));
+    assert.equal(output.split('{{추가값}} & <문자>').length-1,2,engine_type);assert.equal(output.split('별도 실제값').length-1,1);
+  }
+});
+
+test('회귀: 점이 있는 평면 열과 금액 별칭 조건은 실제 숫자로 판정한다',()=>{
+  const p=demo();p.markdown='{{project.amount}}\n\n[IN_TEMPLATE:pay]';
+  p.fields=[{id:'amount',name:'project.amount',column:'raw.amount',kind:'field',approved:true,format:'money',values:[],targets:[],evidence:'시험',confidence:1}];
+  p.blocks=[{id:'large',group:'pay',alias:'고액',engine_type:'markdown',condition:'project.amount>=100000000 AND flags.sme=true',priority:1,content:'분할'}, {id:'small',group:'pay',alias:'기본',engine_type:'markdown',condition:'',priority:0,content:'일시'}];
+  for(const amount of [0,99999999,100000000,120000000]){const row={'raw.amount':amount,'flags.sme':true,project:'평면 키 공존'};const r=renderTemplate(p,row);assert.equal(r.selections.pay.id,amount>=100000000?'large':'small');assert(r.rendered.includes(`${amount.toLocaleString('ko-KR')}원`));}
+});
+
+test('회귀: 손상 공고서만 있는 코퍼스는 실제 테스트 프로세스에서 실패한다',async()=>{
+  const {spawnSync}=await import('node:child_process');
+  const dir=mkdtempSync(join(tmpdir(),'lite-corrupt-corpus-'));
+  try{
+    writeFileSync(join(dir,'공고서-손상.hwpx'),'not-a-zip');
+    const env:NodeJS.ProcessEnv={...process.env,HWPX_CORPUS_DIR:dir,HWPX_CORPUS_OUT_DIR:join(dir,'reports')};delete env.NODE_TEST_CONTEXT;
+    const child=spawnSync(process.execPath,['--test','--test-name-pattern=^참고자료 공고서 시뮬레이션$',fileURLToPath(import.meta.url)],{encoding:'utf8',timeout:60000,env});
+    assert.equal(child.error,undefined);assert.notEqual(child.status,0,child.stdout+child.stderr);
+    assert.match(child.stdout+child.stderr,/분석 실패|analysis_failed/);
+  }finally{rmSync(dir,{recursive:true,force:true});}
+});
+
+test('회귀: 여러 Anchor+ 이동 뒤에도 Markdown 작성 범위의 권한이 원본으로 번지지 않는다',async()=>{
+  const p=baseNative(await markdownHwpx('# 제목\n\n앞 자리\n\n뒤 자리\n\n끝'));
+  p.sources.push(source('raw',await markdownHwpx('# 조각\n\n고정 첫째\n\n고정 둘째')));
+  p.records=[{값:'직접 작성 값'}];p.fields=[];
+  p.ranges=[{id:'md',group:'md',sourceId:p.sources[0].id,from:3,to:3},{id:'raw',group:'raw',sourceId:p.sources[0].id,from:2,to:2}];
+  p.blocks=[{id:'raw',group:'raw',alias:'원본',engine_type:'hwpx_fragment',condition:'',priority:0,content:'',sourceId:'raw',from:2,to:3},{id:'md',group:'md',alias:'작성',engine_type:'markdown',condition:'',priority:0,content:'| 항목 | 값 |\n| --- | --- |\n| 작성 | {{값}} |'}];
+  let r=await applyProject(p,0);assert(text(Buffer.from(r.output,'base64')).includes('직접 작성 값'));assert(text(Buffer.from(r.output,'base64')).includes('고정 둘째'));
+  p.sources[1]=source('raw',await markdownHwpx('# 조각\n\n고정 첫째\n\n{{값}}'));
+  await assert.rejects(()=>applyProject(p,0),/DATA_MISSING/);
 });

@@ -4,10 +4,8 @@ import {
   makeLineAnchor, makeWordAnchor, collectFields, applyPlan, subElements, validateDocument, compareToBaseline,
   readArchive, readEntry, rewriteArchive, walkElements,
 } from '@hwpx-studio/engine';
-import { assert, boundData, selectBlocks, renderTemplate, sourceLines, id } from './core.ts';
+import { assert, boundData, selectBlocks, renderTemplate, sourceLines, id, checkProject } from './core.ts';
 import type { Project, Block } from './model.ts';
-import { fillFragment } from '../../../packages/hwpx-engine/src/fill/fragment-fill.ts';
-import { isValidPath } from '../../../packages/hwpx-engine/src/template/placeholder.ts';
 
 const docOf = (bytes: Uint8Array) => parseDocument(openPackage(bytes));
 const textOf = (bytes: Uint8Array) => docOf(bytes).sections.flatMap(s=>[...walkParagraphs(s.paragraphs)].map(p=>p.logicalText.replace(/\uFFFC/g,'')));
@@ -69,12 +67,14 @@ export function unwrapFields(bytes: Uint8Array, names: Set<string>) {
 }
 
 export async function nativeHwpx(p: Project, row: Record<string,unknown>, selected: Record<string,string>) {
+  checkProject(p);
   const master=p.sources[0]; assert(master?.kind==='hwpx','첫 번째 문서를 원본 HWPX로 불러오세요.');
   const original=Buffer.from(master.content,'base64'); let bytes:Uint8Array=original;
   const data=boundData(p,row); const {selections,recommendations}=selectBlocks(p,data,selected);
   const doc=docOf(bytes); const structural=emptyTemplate();
   const occupied=new Set<number>();
-  for(const range of p.ranges) {
+  const authored=new Set<number>();let shift=0;
+  for(const range of [...p.ranges].sort((a,b)=>a.from-b.from)) {
     assert(range.sourceId===master.id,'Anchor+는 현재 Master에 정의해야 합니다.');
     assert(Number.isInteger(range.from) && Number.isInteger(range.to) && range.from>=1 && range.to>=range.from && range.to<=doc.sections[0].paragraphs.length,'Anchor+ 시작·끝 문단 번호를 확인하세요.');
     for(let i=range.from-1;i<range.to;i++){
@@ -82,24 +82,24 @@ export async function nativeHwpx(p: Project, row: Record<string,unknown>, select
       const anchor=makeLineAnchor(doc,`range-${id(range.id+String(i))}`,0,[i])!;
       structural.anchors.push(anchor);
       if(i===range.from-1) {
-        const filled=fillFragment(await fragmentOf(p,selections[range.group]),{data,derived:{}},'error','skip');
-        const problems=[...filled.outcome.errors,...filled.outcome.skipped];
-        assert(problems.length===0,problems.map(x=>x.message).join('; '));
-        structural.rules.push({id:anchor.id,do:{type:'inject',anchor:anchor.id,position:'replace',fragment:filled.fragment as any}});
+        const block=selections[range.group];
+        const fragment=await fragmentOf(p,block);
+        const count=fragment.source.selection.to-fragment.source.selection.from+1;
+        if(block.engine_type==='markdown')for(let n=0;n<count;n++)authored.add(range.from-1+shift+n);
+        shift+=count-(range.to-range.from+1);
+        structural.rules.push({id:anchor.id,do:{type:'inject',anchor:anchor.id,position:'replace',fragment:fragment as any}});
       } else structural.rules.push({id:anchor.id,do:{type:'delete',anchor:anchor.id}});
     }
   }
   const reports:any[]=[];
   if(structural.rules.length){ const r=checked(generate(bytes,structural,{data:{},derived:{}},{mode:'baseline',missing:'keep'})); bytes=r.output; reports.push(r.report); }
   const fill=emptyTemplate(); const filledNames=new Set<string>(); const current=docOf(bytes);
-  const approvedData:Record<string,unknown>={};
-  const setValue=(path:string,value:unknown)=>{const parts=path.split('.');let at:any=approvedData;for(const key of parts.slice(0,-1)) {assert(!['__proto__','constructor','prototype'].includes(key),'지원하지 않는 Field 이름입니다.');at=at[key]??=(Object.create(null));assert(at && typeof at==='object','데이터 경로가 겹칩니다.');}at[parts.at(-1)!]=value;};
   const placeholderValues=new Map<string,unknown>();
   for(const f of p.fields.filter(f=>f.approved&&f.kind==='field')) {
-    setValue(f.name,data[f.name]);placeholderValues.set(f.name,data[f.name]);
+    placeholderValues.set(f.name,data[f.name]);
     for(const t of f.targets) {
       const token=t.anchor?.kind==='word' && /^\{\{([^{}]+)\}\}$/.exec(t.anchor.print.text);
-      if(token){setValue(token[1].trim(),data[f.name]);placeholderValues.set(token[1].trim(),data[f.name]);}
+      if(token)placeholderValues.set(token[1].trim(),data[f.name]);
     }
   }
   const originalLines=sourceLines(master);
@@ -110,21 +110,23 @@ export async function nativeHwpx(p: Project, row: Record<string,unknown>, select
       assert(target.anchor,'HWPX Field의 원본 Anchor가 없습니다. 문서를 다시 분석하세요.');
       if(target.anchor.kind==='field')continue; // Resolve occurrence after structural changes below.
       const placeholder=target.anchor.kind==='word' && /^\{\{([^{}]+)\}\}$/.exec(target.anchor.print.text);
-      if(placeholder){setValue(placeholder[1].trim(),data[f.name]);continue;}
+      if(placeholder)continue;
       const anchor={...target.anchor,id:`fill-${id(f.id+JSON.stringify(target.anchor))}`};
       fill.anchors.push(anchor); fill.rules.push({id:anchor.id,do:{type:'fill',anchor:anchor.id,value:{text:String(data[f.name])}}});
     }
   }
-  // Core's implicit scanner excludes internal spaces. Resolve those tokens with
-  // explicit current-document anchors, including tokens imported by a Fragment.
+  // Assemble first, then plan every scalar replacement on the unfilled document.
+  // Only authored Markdown ranges may read arbitrary DB columns; raw imports require approval.
   for(const section of current.sections)for(const paragraph of walkParagraphs(section.paragraphs)) {
     for(const match of paragraph.logicalText.matchAll(/\{\{([^{}]+)\}\}/g)) {
-      const name=match[1].trim();if(isValidPath(name))continue;
-      assert(placeholderValues.has(name),`DATA_MISSING: 확정된 Field 값이 없습니다: ${name}`);
+      const name=match[1].trim();
+      const direct=section.index===0 && authored.has(paragraph.path[0]);
+      assert(placeholderValues.has(name)||(direct&&Object.hasOwn(data,name)&&data[name]!=null),'DATA_MISSING: 확정된 Field 값이 없습니다: '+name);
+      const value=placeholderValues.has(name)?placeholderValues.get(name):data[name];
       const aid=`placeholder-${id(section.index+':'+paragraph.path+':'+match.index)}`;
       const anchor=makeWordAnchor(current,aid,section.index,paragraph.path,match.index,match.index+match[0].length);
       assert(anchor,'Field 위치를 찾을 수 없습니다.');
-      fill.anchors.push(anchor);fill.rules.push({id:aid,do:{type:'fill',anchor:aid,value:{text:String(placeholderValues.get(name))}}});
+      fill.anchors.push(anchor);fill.rules.push({id:aid,do:{type:'fill',anchor:aid,value:{text:String(value)}}});
     }
   }
   // Re-enumerate both Master and imported fields: inserting/deleting a Fragment changes occurrences.
@@ -140,8 +142,8 @@ export async function nativeHwpx(p: Project, row: Record<string,unknown>, select
     fill.rules.push({id:aid,do:{type:'fill',anchor:aid,value:{text:String(data[mapped.get(f.info.name)!])}}});
     filledNames.add(f.info.name);
   }
-  // Only confirmed values are available to automatic {{Field}} replacement in the Master.
-  const result=checked(generate(bytes,readTemplate(fill),{data:approvedData,derived:{}},{mode:'baseline'}));
+  // No data reaches the implicit scanner: injected scalar text is never interpreted again.
+  const result=checked(generate(bytes,readTemplate(fill),{data:{},derived:{}},{mode:'baseline',missing:'keep'}));
   bytes=unwrapFields(result.output,filledNames); reports.push(result.report);
   const before=validateDocument(original), after=validateDocument(bytes);
   const regression=compareToBaseline(before,after).newErrors;
@@ -150,6 +152,7 @@ export async function nativeHwpx(p: Project, row: Record<string,unknown>, select
 }
 
 export async function applyProject(p: Project, index: number, selected: Record<string,string>={}) {
+  checkProject(p);
   assert(Number.isInteger(index) && index>=0 && index<p.records.length,'적용할 데이터 행을 선택하세요.');
   const row=p.records[index];
   let bytes:Uint8Array; let preview:any;

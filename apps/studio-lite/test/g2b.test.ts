@@ -137,3 +137,14 @@ test('조건 선택 동률은 보완 요청, 저장된 명시적 Block 선택은
     const chosen=await app.post('/api/g2b/generate',body('selected'),false);assert.equal(chosen.body.status,'success');assert(text(readFileSync(chosen.body.results[0].path)).includes('두 번째 선택'));
   } finally {await app.close();rmSync(root,{recursive:true,force:true});}
 });
+
+test('Helper 회귀: 점이 있는 금액 열의 조건 선택과 실제 출력이 일치한다',async()=>{
+  const root=mkdtempSync(join(tmpdir(),'studio-g2b-dotted-')), app=await start(join(root,'test.sqlite'));
+  try {
+    const p=project();p.fields[0].name='project.amount';p.markdown='{{project.amount}}\n\n[IN_TEMPLATE:pay]';
+    p.blocks=[{id:'large',group:'pay',alias:'고액',engine_type:'markdown',priority:1,condition:'project.amount>=100000',content:'분할 지급'},{id:'small',group:'pay',alias:'기본',engine_type:'markdown',priority:0,condition:'',content:'일시 지급'}];
+    await setup(app,join(root,'output'),p);
+    const result=await app.post('/api/g2b/generate',body('dotted'),false);assert.equal(result.body.status,'success');
+    const rendered=text(readFileSync(result.body.results[0].path));assert(rendered.includes('분할 지급'));assert(!rendered.includes('일시 지급'));assert(rendered.includes('123,456원'));
+  }finally{await app.close();rmSync(root,{recursive:true,force:true});}
+});
