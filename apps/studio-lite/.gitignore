@@ -1,0 +1,12 @@
+node_modules/
+.npm-cache/
+data/
+artifacts/
+*.log
+참고자료/
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-*
+*.db

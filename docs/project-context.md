@@ -30,6 +30,8 @@
 | 실제 문서 스트레스 시험 | `node tools/stress/campaign.ts --corpus <폴더> --seed 1 --pairs 150 --oracle-sample 40` | 확인 |
 | 실제 문서 표 스트레스 시험 | `node tools/stress/tables.ts --corpus <폴더> --seed 21 --docs 160 --ops 1500 [--prefer-merged-only] [--no-com \| --com-sample 15]` | 확인 |
 | 한컴 표 대조 테스트 | `HWPX_COM=1 node --test packages/hwpx-engine/test/table-com.test.ts` | 확인(한컴 13) |
+| Lite 앱 | `npm run start:lite` → `http://127.0.0.1:4318` (`studio-lite` 브랜치) | 확인(통합 브랜치) |
+| Lite 포함 기본 검사 | `npm run verify` | 확인(통합 브랜치) |
 | 뷰어 시험 앱 | `node apps/viewer-poc/server.ts` → `http://127.0.0.1:4173` (`.claude/launch.json`의 `viewer-poc`) | 확인 |
 | 뷰어 위치 대조(실제 문서) | `HWPX_CORPUS_DIR=<폴더> node packages/viewer/tools/crosscheck.ts --clicks --after-fill --report tools/stress/out/<이름>.json` | 확인 |
 | 한컴으로 열기·PDF | `python tools/com/open_check.py --out 결과.json [--pdf-dir 폴더] 파일...` | 확인(한컴 13) |
@@ -46,6 +48,7 @@
 | `packages/hwpx-engine/` | 엔진(자체 구현). `src/`와 `test/` | 포함 |
 | `apps/cli/` | 명령줄 도구. 파일 입출력은 여기만 | 포함 |
 | `packages/viewer/` | 뷰어(rhwp 임베드, 위치 변환). 런타임 의존은 `@rhwp/core` 하나 | 포함 |
+| `apps/studio-lite/` | Markdown·원본 HWPX 생성 MVP. 공통 엔진 사용. 상세 상태는 앱의 `docs/status.md` | 포함 |
 | `apps/viewer-poc/` | 뷰어 시험 앱(로컬 서버와 웹 화면) | 포함 |
 | `apps/studio/` | 스튜디오. 빠른 생성 화면과 로컬 서버(`server.ts`, 4174) | 포함 |
 | `examples/quick/` | 빠른 생성 예시 서식(한컴 저장본)과 데이터(가짜 값). 사용자가 고쳐 시험하는 용도. 순서는 그 폴더의 `README.md` | 포함 |

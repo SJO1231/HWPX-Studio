@@ -1,0 +1,26 @@
+{
+  "name": "hwpx-studio-lite",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.19"
+  },
+  "scripts": {
+    "start": "node src/server.ts",
+    "test": "node --test test/*.test.ts",
+    "check": "node tools/check.mjs",
+    "verify": "npm run check && npm test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@hwpx-studio/engine": "0.0.0",
+    "kordoc": "4.18.2",
+    "markdown-it": "14.3.0"
+  },
+  "devDependencies": {
+    "@types/markdown-it": "^14.2.0",
+    "@types/node": "^24.19.0",
+    "typescript": "^7.0.2"
+  }
+}

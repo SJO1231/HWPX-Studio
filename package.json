@@ -8,7 +8,9 @@
   ],
   "scripts": {
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "node --test \"packages/*/test/**/*.test.ts\" \"apps/*/test/**/*.test.ts\""
+    "test": "node --test \"packages/*/test/**/*.test.ts\" \"apps/*/test/**/*.test.ts\"",
+    "start:lite": "npm start --workspace=hwpx-studio-lite",
+    "verify": "npm run typecheck && npm test && npm run check --workspace=hwpx-studio-lite"
   },
   "devDependencies": {
     "@types/node": "^24.19.0",
