@@ -40,6 +40,14 @@ function intAttr(el: XElement | undefined, name: string, fallback: number): numb
   return Number(v);
 }
 
+/** 메일 머지 필드 시작 요소(`fieldBegin`)의 키: `parameters`의 `stringParam name="FieldValue"` 글. 없거나 비면 undefined. */
+function mergeKeyOf(begin: XElement): string | undefined {
+  const parameters = childEl(begin, "paragraph", "parameters");
+  const param = parameters === undefined ? undefined : childEls(parameters, "paragraph", "stringParam").find((p) => attrValue(p, "name") === "FieldValue");
+  const text = param === undefined ? "" : param.children.map((c) => (isElement(c) ? "" : c.value)).join("");
+  return text === "" ? undefined : text;
+}
+
 /** 문단 요소 안에서 하위 목록(subList) 요소를 문서 순서로 찾는다. subList 안쪽은 들어가지 않는다. */
 function findSubListElements(paragraph: XElement): XElement[] {
   const found: XElement[] = [];
@@ -168,6 +176,8 @@ export function parseParagraph(element: XElement, path: number[]): ParagraphNode
           if (name !== undefined) mark.name = name;
           if (type !== undefined) mark.type = type;
           if (dirty !== undefined) mark.dirty = dirty;
+          const mergeKey = type === "MAILMERGE" ? mergeKeyOf(c) : undefined;
+          if (mergeKey !== undefined) mark.mergeKey = mergeKey;
           fieldMarks.push(mark);
         } else if (elIs(c, "paragraph", "fieldEnd")) {
           const mark: FieldMark = { kind: "end", id: attrValue(c, "fieldid") ?? "", element: c, pieceIndex };

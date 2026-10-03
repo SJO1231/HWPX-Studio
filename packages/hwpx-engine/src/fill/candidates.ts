@@ -4,12 +4,12 @@ import type { CellAnchor, FieldAnchor, LineAnchor, WordAnchor } from "../templat
 import { findPlaceholders } from "../template/placeholder.ts";
 import { linePrintOf, wordPrintAt } from "./anchors.ts";
 import { contentObjects, topLevelObjects } from "./doc.ts";
-import { collectFields } from "./fields.ts";
+import { collectFields, fieldAnchorOf } from "./fields.ts";
 
 export type AnchorDraft = Omit<FieldAnchor, "id"> | Omit<WordAnchor, "id"> | Omit<LineAnchor, "id"> | Omit<CellAnchor, "id">;
 
 export type CandidateKind =
-  /** 누름틀 */
+  /** 누름틀·메일 머지 필드 */
   | "field"
   /** `{{경로}}` 표기 */
   | "placeholder"
@@ -69,8 +69,8 @@ export function findCandidates(doc: HwpxDocument): Candidate[] {
     out.push({
       kind: "field",
       at: { sectionIndex: f.info.sectionIndex, path: [...f.info.path] },
-      anchor: { kind: "field", name: f.info.name, occurrence: f.info.occurrence },
-      evidence: `누름틀 '${f.info.name}'(${f.info.shape}, ${f.info.dirty === "1" ? "값이 있음" : "안내문 상태"})`,
+      anchor: fieldAnchorOf(f.info),
+      evidence: f.info.mergeKey === undefined ? `누름틀 '${f.info.name}'(${f.info.shape}, ${f.info.dirty === "1" ? "값이 있음" : "안내문 상태"})` : `메일 머지 필드 '${f.info.mergeKey}'(${f.info.shape})`,
     });
   }
   for (const section of doc.sections) {

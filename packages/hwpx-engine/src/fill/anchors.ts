@@ -4,7 +4,7 @@ import type { HwpxDocument, ObjectNode, ParagraphNode, SectionModel, TableCell, 
 import type { Anchor, LineAnchor, LinePrint, Template, WordAnchor, WordPrint } from "../template/types.ts";
 import { sha256Hex } from "../template/hash.ts";
 import { paragraphAtPath, topLevelObjects } from "./doc.ts";
-import { collectFields, type FieldTarget } from "./fields.ts";
+import { collectFields, fieldAnchorMatches, type FieldTarget } from "./fields.ts";
 
 export const WORD_CONTEXT = 24;
 export const LINE_PREFIX = 40;
@@ -140,7 +140,7 @@ function resolveObject(doc: HwpxDocument, a: Extract<Anchor, { kind: "object" }>
 
 /**
  * 템플릿의 앵커를 문서에서 찾는다. `only`가 있으면 그 id의 앵커만 해석한다(조건이 거짓인 규칙의 앵커는 찾지 않는다).
- * - `field`: 이름이 같은 누름틀 전부(순번을 주면 그것만). 없으면 `ANCHOR_NOT_FOUND`.
+ * - `field`: 이름이 같은 누름틀 전부(순번을 주면 그것만). `mergeKey`를 주면 키가 같은 메일 머지 필드 전부. 없으면 `ANCHOR_NOT_FOUND`.
  * - `word`·`line`: 주소의 문단을 지문과 대조한다. 맞으면 그 자리, 아니면 같은 구역에서 지문으로 다시 찾는다:
  *   유일하면 `ANCHOR_RELOCATED`(경고), 여럿이면 `ANCHOR_AMBIGUOUS`, 없으면 `ANCHOR_NOT_FOUND`(오류).
  * - `cell`·`object`: 서수로 찾는다. 범위 밖이면 `ANCHOR_NOT_FOUND`.
@@ -155,9 +155,11 @@ export function resolveAnchors(doc: HwpxDocument, template: Template, only?: Rea
     switch (a.kind) {
       case "field": {
         fields ??= collectFields(doc);
-        const targets = fields.filter((f) => f.info.name === a.name && (a.occurrence === undefined || f.info.occurrence === a.occurrence));
+        // 메일 머지 필드는 이름이 비어 있어 키(`mergeKey`)로 찾는다.
+        const targets = fields.filter((f) => fieldAnchorMatches(a, f.info));
         if (targets.length === 0) {
-          issues.push(makeIssue("error", "ANCHOR_NOT_FOUND", `앵커 ${a.id}: 이름이 같은 누름틀${a.occurrence === undefined ? "" : `(순번 ${a.occurrence})`}이 문서에 없습니다.`, a.id));
+          const what = a.mergeKey === undefined ? "이름이 같은 누름틀" : "키가 같은 메일 머지 필드";
+          issues.push(makeIssue("error", "ANCHOR_NOT_FOUND", `앵커 ${a.id}: ${what}${a.occurrence === undefined ? "" : `(순번 ${a.occurrence})`}이 문서에 없습니다.`, a.id));
         } else {
           resolved = { kind: "field", targets };
         }

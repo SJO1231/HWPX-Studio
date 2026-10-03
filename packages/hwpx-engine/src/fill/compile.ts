@@ -4,48 +4,28 @@ import { scanInstanceAttrs } from "../fragment/util.ts";
 import { listFields } from "../model/fields.ts";
 import { parseDocument } from "../model/document.ts";
 import { walkParagraphs } from "../model/paragraph.ts";
-import type { HwpxDocument, ParagraphNode, SectionModel } from "../model/types.ts";
+import type { FieldMark, HwpxDocument, ParagraphNode, SectionModel } from "../model/types.ts";
 import { openPackage } from "../package/open.ts";
 import { findPlaceholders } from "../template/placeholder.ts";
 import { compareToBaseline, validateDocument, type ValidationIssue } from "../validate/index.ts";
-import { escapeAttr, escapeText } from "../xml/chars.ts";
 import { walkElements, type XElement } from "../xml/tree.ts";
 import { censusOfDoc, verifyCensus, zeroDelta } from "./census.ts";
+import { beginXml, endXml } from "./click-here.ts";
 import { paragraphAtPath, nsPrefixOf } from "./doc.ts";
+import { planMergeConversion, type MergeFieldsMode } from "./merge-convert.ts";
 import { span } from "./text.ts";
 import { verifyPreservation } from "./verify.ts";
 
-/**
- * 한컴이 만든 누름틀의 `fieldid`. 한컴 13이 저장한 문서에서 누름틀마다 같은 값이었다
- * (`hancom-field.hwpx`, `hancom/field-states.hwpx`의 네 개 모두). 그래서 새 값을 만들지 않고 그대로 쓴다.
- */
-const HANCOM_FIELD_ID = "627272811";
+export type { MergeFieldsMode } from "./merge-convert.ts";
 
 /** 승격할 글: 문단 주소와 그 문단 논리 텍스트 안의 구간, 누름틀 이름. */
 export type CompileTarget = { sectionIndex: number; path: number[]; start: number; end: number; name: string };
 
 type Found = { section: SectionModel; paragraph: ParagraphNode; start: number; end: number; name: string };
 
-/** 누름틀 시작 컨트롤. 요소·속성 구성은 한컴이 만든 누름틀(`hancom-field.hwpx`)과 같고, 안내문은 이름과 같다. */
-function beginXml(prefix: string, id: string, name: string): string {
-  const direction = name;
-  const part1 = `Direction:wstring:${direction.length}:${direction} `;
-  const part2 = "HelpState:wstring:0: ";
-  const command = `Clickhere:set:${(part1 + part2).length}:${part1}${part2} `;
-  const p = prefix;
-  return (
-    `<${p}ctrl><${p}fieldBegin id="${id}" type="CLICK_HERE" name="${escapeAttr(name)}" editable="1" dirty="1" zorder="-1" fieldid="${HANCOM_FIELD_ID}" metaTag="">` +
-    `<${p}parameters cnt="3" name=""><${p}integerParam name="Prop">9</${p}integerParam>` +
-    `<${p}stringParam name="Command" xml:space="preserve">${escapeText(command)}</${p}stringParam>` +
-    `<${p}stringParam name="Direction">${escapeText(direction)}</${p}stringParam></${p}parameters></${p}fieldBegin></${p}ctrl>`
-  );
-}
-
-const endXml = (prefix: string, id: string): string => `<${prefix}ctrl><${prefix}fieldEnd beginIDRef="${id}" fieldid="${HANCOM_FIELD_ID}"/></${prefix}ctrl>`;
-
-/** 조각 `index`가 같은 문단의 누름틀 시작과 끝 사이에 있는가. */
-function insideField(par: ParagraphNode, index: number): boolean {
-  return par.fieldMarks.some((begin, i) => {
+/** 조각 `index`가 같은 문단의 필드 시작과 끝 사이에 있으면 그 필드의 시작 표식(안쪽부터 아니라 문단에서 먼저 시작한 것). 아니면 undefined. */
+function insideField(par: ParagraphNode, index: number): FieldMark | undefined {
+  return par.fieldMarks.find((begin, i) => {
     if (begin.kind !== "begin") return false;
     const end = par.fieldMarks.slice(i + 1).find((m) => m.kind === "end" && m.beginIDRef === begin.id);
     return end !== undefined && begin.pieceIndex < index && index < end.pieceIndex;
@@ -56,8 +36,9 @@ function insideField(par: ParagraphNode, index: number): boolean {
  * `{{경로}}` 자리(또는 지정한 구간)를 누름틀로 바꾸는 편집 계획. 이름은 경로(지정한 구간은 `name`)이고, 글은 그대로 두며
  * 시작 요소의 `dirty`는 `"1"`이다. 시작 id는 문서의 인스턴스 id 가운데 가장 큰 값 다음부터 문서 순서대로 준다.
  * 글이 한 `hp:t` 안의 한 덩어리가 아니거나(탭·글자모양 변경으로 갈림, CDATA) 이미 누름틀 안이면 승격하지 않고 `COMPILE_SKIPPED` 경고를 남긴다.
+ * `mergeFields`를 주면 메일 머지 필드(키가 있는 것)도 바꾼다(`planMergeConversion`). 그 필드의 표시 글 안의 `{{경로}}`는 그 변환이 맡으므로 따로 승격하지 않고 경고도 내지 않는다.
  */
-export function planCompile(doc: HwpxDocument, anchors?: CompileTarget[]): EditPlan {
+export function planCompile(doc: HwpxDocument, anchors?: CompileTarget[], mergeFields?: MergeFieldsMode): EditPlan {
   const issues: Issue[] = [];
   const found: Found[] = [];
   if (anchors === undefined) {
@@ -99,8 +80,11 @@ export function planCompile(doc: HwpxDocument, anchors?: CompileTarget[]): EditP
             (c): c is XElement => "local" in c && c.local === "t" && c.start <= piece.start && piece.end <= c.closeStart,
           );
     const text = f.section.text;
-    if (piece !== undefined && insideField(f.paragraph, f.paragraph.pieces.indexOf(piece))) {
-      issues.push(makeIssue("warning", "COMPILE_SKIPPED", `${where}: 이미 누름틀 안에 있는 자리라 승격하지 않았습니다.`, where));
+    const enclosing = piece === undefined ? undefined : insideField(f.paragraph, f.paragraph.pieces.indexOf(piece));
+    if (enclosing !== undefined) {
+      if (mergeFields === undefined || enclosing.type !== "MAILMERGE" || enclosing.mergeKey === undefined) {
+        issues.push(makeIssue("warning", "COMPILE_SKIPPED", `${where}: 이미 누름틀 안에 있는 자리라 승격하지 않았습니다.`, where));
+      }
       continue;
     }
     const cdata = piece !== undefined && piece.start >= 9 && text.startsWith("<![CDATA[", piece.start - 9);
@@ -119,7 +103,17 @@ export function planCompile(doc: HwpxDocument, anchors?: CompileTarget[]): EditP
     edits.push(span(ctx, rawEnd, rawEnd, `${close}${endXml(prefix, id)}${open}`, `누름틀 승격: ${f.name}`));
     promoted++;
   }
-  return { edits, additions: [], summary: { promotedFields: promoted, skipped: issues.length }, issues };
+  const merge = mergeFields === undefined ? undefined : planMergeConversion(doc, mergeFields);
+  if (merge !== undefined) {
+    edits.push(...merge.edits);
+    issues.push(...merge.issues);
+  }
+  return {
+    edits,
+    additions: [],
+    summary: { promotedFields: promoted, skipped: issues.length, mergeConverted: merge?.converted ?? 0, mergePlaceholdersInside: merge?.placeholdersInside ?? 0 },
+    issues,
+  };
 }
 
 export type CompileResult =
@@ -130,6 +124,8 @@ export type CompileReport = {
   mode: "baseline" | "strict";
   /** 누름틀로 승격한 자리 수 */
   promoted: number;
+  /** `mergeFields`로 바꾼 메일 머지 필드 수 */
+  mergeConverted: number;
   newErrors: ValidationIssue[];
   preexisting: ValidationIssue[];
   issues: Issue[];
@@ -139,15 +135,17 @@ export type CompileReport = {
  * `planCompile`을 저장 게이트 안에서 적용한다: 적용·재파싱·검사·보존 확인·수량 대조(누름틀 +승격 수)·값 재읽기
  * (승격한 이름과 글을 가진 누름틀이 `simple`·`dirty="1"`로 있다). 실험 기능이라 호출하는 쪽(CLI)이 `--experimental`을 요구한다.
  */
-export function compileDocument(bytes: Uint8Array, options: { mode?: "baseline" | "strict"; anchors?: CompileTarget[] } = {}): CompileResult {
+export function compileDocument(bytes: Uint8Array, options: { mode?: "baseline" | "strict"; anchors?: CompileTarget[]; mergeFields?: MergeFieldsMode } = {}): CompileResult {
   const mode = options.mode ?? "baseline";
   const issues: Issue[] = [];
-  const report: CompileReport = { mode, promoted: 0, newErrors: [], preexisting: [], issues };
+  const report: CompileReport = { mode, promoted: 0, mergeConverted: 0, newErrors: [], preexisting: [], issues };
   const before = validateDocument(bytes);
   const doc = parseDocument(openPackage(bytes));
-  const plan = planCompile(doc, options.anchors);
+  const plan = planCompile(doc, options.anchors, options.mergeFields);
   issues.push(...plan.issues);
   report.promoted = plan.summary["promotedFields"] ?? 0;
+  report.mergeConverted = plan.summary["mergeConverted"] ?? 0;
+  const placeholdersInside = plan.summary["mergePlaceholdersInside"] ?? 0;
 
   let output: Uint8Array;
   let next: HwpxDocument;
@@ -160,7 +158,9 @@ export function compileDocument(bytes: Uint8Array, options: { mode?: "baseline" 
     return { ok: false, report };
   }
   issues.push(...verifyPreservation(bytes, output, plan, "compile"));
-  issues.push(...verifyCensus(censusOfDoc(doc), censusOfDoc(next), { ...zeroDelta(), fieldPairs: report.promoted }, "compile"));
+  // 필드 쌍 수: 승격한 만큼 늘고, `to-placeholder`로 바꾼 메일 머지 필드(표식을 지운다)만큼 줄며, `to-field`는 쌍 수를 바꾸지 않는다
+  const removedPairs = options.mergeFields === "to-placeholder" ? report.mergeConverted : 0;
+  issues.push(...verifyCensus(censusOfDoc(doc), censusOfDoc(next), { ...zeroDelta(), fieldPairs: report.promoted - removedPairs }, "compile"));
 
   // 값 재읽기: 승격한 자리(편집 구간 안의 이름·글)마다 같은 이름·글의 누름틀이 늘었는지
   const key = (f: { name: string; valueText: string; dirty: string; shape: string }): string => JSON.stringify([f.name, f.valueText, f.dirty, f.shape]);
@@ -168,8 +168,24 @@ export function compileDocument(bytes: Uint8Array, options: { mode?: "baseline" 
   for (const f of listFields(next)) counts.set(key(f), (counts.get(key(f)) ?? 0) + 1);
   for (const f of listFields(doc)) counts.set(key(f), (counts.get(key(f)) ?? 0) - 1);
   const grown = [...counts.values()].filter((n) => n > 0).reduce((a, b) => a + b, 0);
-  if (grown !== report.promoted) {
-    issues.push(makeIssue("error", "REREAD_FIELD", `승격한 누름틀이 simple·dirty="1"·원래 글로 ${report.promoted}개 늘어야 하는데 ${grown}개 늘었습니다.`));
+  // `to-field`로 바꾼 메일 머지 필드도 같은 꼴(이름 = 키, 글은 표시 글 그대로, dirty="1")의 누름틀로 늘어난다
+  const expectedGrown = report.promoted + (options.mergeFields === "to-field" ? report.mergeConverted : 0);
+  if (grown !== expectedGrown) {
+    issues.push(makeIssue("error", "REREAD_FIELD", `승격한 누름틀이 dirty="1"·원래 글로 ${expectedGrown}개 늘어야 하는데 ${grown}개 늘었습니다.`));
+  }
+  if (options.mergeFields !== undefined) {
+    // 바꾼 메일 머지 필드는 문서에서 그만큼 줄어든다. `to-placeholder`는 표시 글 자리가 `{{키}}` 하나씩으로 바뀐다(자리 수 = 앞 − 지운 표시 글 안의 자리 + 바꾼 필드 수)
+    const mergeCount = (d: HwpxDocument): number => listFields(d).filter((f) => f.type === "MAILMERGE" && f.mergeKey !== undefined).length;
+    if (mergeCount(doc) - mergeCount(next) !== report.mergeConverted) {
+      issues.push(makeIssue("error", "REREAD_FIELD", `바꾼 메일 머지 필드 ${report.mergeConverted}개가 줄어야 하는데 ${mergeCount(doc) - mergeCount(next)}개 줄었습니다.`));
+    }
+    if (options.mergeFields === "to-placeholder") {
+      const slots = (d: HwpxDocument): number => d.sections.reduce((n, s) => n + [...walkParagraphs(s.paragraphs)].reduce((m, p) => m + findPlaceholders(p.logicalText).length, 0), 0);
+      const want = slots(doc) - placeholdersInside + report.mergeConverted;
+      if (slots(next) !== want) {
+        issues.push(makeIssue("error", "REREAD_TEXT", `{{키}} 자리가 ${want}개여야 하는데 ${slots(next)}개입니다.`));
+      }
+    }
   }
 
   const after = validateDocument(output, { strict: mode === "strict" });

@@ -95,8 +95,9 @@ function readAnchor(v: unknown, index: number): Anchor {
   const kind = a["kind"];
   switch (kind) {
     case "field": {
-      onlyKeys(a, ["id", "kind", "name", "occurrence"], where, "TPL_ANCHOR");
-      const out: Anchor = { id, kind, name: str(a, "name", where, "TPL_ANCHOR") };
+      onlyKeys(a, ["id", "kind", "name", "mergeKey", "occurrence"], where, "TPL_ANCHOR");
+      if (a["name"] !== undefined && a["mergeKey"] !== undefined) fail("TPL_ANCHOR", "name과 mergeKey는 함께 줄 수 없습니다(하나만).", where);
+      const out: Anchor = a["mergeKey"] === undefined ? { id, kind, name: str(a, "name", where, "TPL_ANCHOR") } : { id, kind, mergeKey: str(a, "mergeKey", where, "TPL_ANCHOR") };
       if (a["occurrence"] !== undefined) out.occurrence = int(a, "occurrence", where, "TPL_ANCHOR");
       return out;
     }

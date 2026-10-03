@@ -17,7 +17,7 @@ export {
   type ValidationSummary,
 } from "./gate.ts";
 export { explainInherited, mergeInherited, noInherited, splitTolerated } from "./inherited.ts";
-export { planCompile, compileDocument, type CompileTarget, type CompileResult, type CompileReport } from "./compile.ts";
+export { planCompile, compileDocument, type CompileTarget, type CompileResult, type CompileReport, type MergeFieldsMode } from "./compile.ts";
 export { generateBatch, planBatchNames, safeFileStem, sanitizeFileStem, type BatchItem, type BatchOptions } from "./batch.ts";
 export { findCandidates, type Candidate, type CandidateKind, type AnchorDraft } from "./candidates.ts";
 export { draftAnchors, type DraftBlock, type DraftedAnchor, type DraftRequest } from "./draft.ts";
