@@ -9,7 +9,7 @@ before(ensureRhwp);
 
 test("V1: 저장소 시험 문서 전부를 rhwp와 엔진 양쪽으로 열고, 못 여는 문서는 없다", () => {
   const names = fixtureNames();
-  assert.equal(names.length, 22, "시험 문서 수가 달라졌다(이 시험의 기대 수량을 함께 확인한다)");
+  assert.equal(names.length, 23, "시험 문서 수가 달라졌다(이 시험의 기대 수량을 함께 확인한다)");
   const failures: Record<string, number> = {};
   for (const name of names) {
     const bytes = readFixture(name);
@@ -85,7 +85,7 @@ test("V2: 시험 문서 전부 — 본문·표 셀·중첩 표 100% char, 조용
   }
   assert.equal(silentTotal(total), 0);
   assert.ok(total.classes.body.runs > 100 && total.classes.cell.runs > 100 && total.classes.nested.runs >= 8, `범주별 수량이 너무 적다: ${JSON.stringify(total.classes)}`);
-  t.diagnostic(`시험 문서 22건: ${JSON.stringify(total.classes)} / 런 ${JSON.stringify(total.runs)} / 오라클 ${JSON.stringify(total.oracle)}`);
+  t.diagnostic(`시험 문서 23건: ${JSON.stringify(total.classes)} / 런 ${JSON.stringify(total.runs)} / 오라클 ${JSON.stringify(total.oracle)}`);
 });
 
 test("V2: 합성 시험 문서(탭·줄바꿈·대리쌍·글자처럼 취급 개체·누름틀·안내문·자동 번호·글상자·캡션·각주) — 모두 char, 글상자·캡션 범주 포함", (t) => {

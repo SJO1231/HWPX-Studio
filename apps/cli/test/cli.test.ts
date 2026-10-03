@@ -166,7 +166,7 @@ test("G5 fill: 생성·보고서·모의 실행·누락 정책·템플릿과 조
     anchors: [{ id: "a", kind: "field", name: "성명" }],
     rules: [{ id: "r", do: { type: "fill", anchor: "a", value: { path: "name" } } }],
   }));
-  const t = await cli("fill", p("hancom-field-states.hwpx"), "--data", write("d2.json", JSON.stringify({ name: "홍길동" })), "--template", tpl, "-o", p("tpl-out.hwpx"));
+  const t = await cli("fill", p("hancom-field-states.hwpx"), "--data", write("d2.json", JSON.stringify({ name: "홍길동" })), "--template", tpl, "--missing", "keep", "-o", p("tpl-out.hwpx")); // 규칙이 가리키지 않는 소속 누름틀은 이름을 경로로 암묵 채움 대상이라 데이터가 없으면 그대로 둔다
   assert.equal(t.code, 0, t.err);
   assert.deepEqual(listFields(doc("tpl-out.hwpx")).map((f) => f.valueText), ["홍길동", "합성기관", "홍길동"]);
 });
@@ -232,7 +232,8 @@ test("G5 compile: --experimental 없이는 거부(2), 있으면 {{}}를 누름�
 });
 
 test("G5 fill --mode repair: 보정 모듈이 있으면 연결해 쓰고(0), 없으면 안내와 함께 종료 코드 2", async () => {
-  const data = p("data.json");
+  // 문서의 이름 있는 누름틀(성명)이 암묵 채움 대상이라 그 값을 데이터에 둔다(채운 자리가 없으면 FILL_NOTHING_APPLIED로 실패한다)
+  const data = write("repair-d.json", JSON.stringify({ 성명: "홍길동" }));
   const t = write("repair-t.json", JSON.stringify({ schema: "hwpx-studio/template@1" }));
   const r = await cli("fill", p("extra-features-picture.hwpx"), "--data", data, "--template", t, "-o", p("repaired.hwpx"), "--mode", "repair", "--missing", "keep");
   if (existsSync(REPAIR_MODULE)) {
@@ -255,7 +256,7 @@ test("G5 종료 코드 1: 게이트 실패(누락 키 error·strict·값 재읽�
   assert.match(missing.err, /DATA_MISSING/);
   assert.match(missing.err, /출력 파일을 만들지 않았습니다/);
 
-  const featuresData = write("fd.json", "{}");
+  const featuresData = write("fd.json", JSON.stringify({ 성명: "홍길동" })); // 문서의 이름 있는 누름틀을 채워야 게이트까지 간다
   const tpl = write("features-t.json", JSON.stringify({ schema: "hwpx-studio/template@1" }));
   const strict = await cli("fill", p("extra-features-picture.hwpx"), "--data", featuresData, "--template", tpl, "-o", p("never2.hwpx"), "--mode", "strict");
   assert.equal(strict.code, 1);

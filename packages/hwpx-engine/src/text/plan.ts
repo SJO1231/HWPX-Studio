@@ -328,7 +328,7 @@ export function buildTextPlan(doc: TextDoc, template: Template, dataset: Dataset
     const anchor = anchorOf(action.anchor);
     if (anchor === undefined) continue;
     const label = `규칙 ${rule.id}: 채움`;
-    const value = resolveValue(dataset, action.value, policy);
+    const value = resolveValue(dataset, action.value, policy, "none");
     if ("path" in action.value) required.add(action.value.path);
     if (value.kind === "error") {
       valueError(rule.id, value.code, value.message, value.path ?? ("path" in action.value ? action.value.path : undefined));
@@ -397,7 +397,7 @@ export function buildTextPlan(doc: TextDoc, template: Template, dataset: Dataset
     let pos = 0;
     for (const h of findPlaceholders(text)) {
       required.add(h.path);
-      const value = resolvePathValue(dataset, h.path, policy);
+      const value = resolvePathValue(dataset, h.path, policy, "none");
       if (value.kind === "error") {
         valueError(ruleId, value.code, `조각 안 {{${h.path}}}: ${value.message}`, h.path);
         continue;
@@ -436,7 +436,7 @@ export function buildTextPlan(doc: TextDoc, template: Template, dataset: Dataset
     let digest: ValueDigest | undefined;
 
     if (action.type === "insertText") {
-      const value = resolveValue(dataset, action.value, policy, true);
+      const value = resolveValue(dataset, action.value, policy, "paragraphs");
       if ("path" in action.value) required.add(action.value.path);
       if (value.kind === "error") {
         valueError(rule.id, value.code, value.message, value.path ?? ("path" in action.value ? action.value.path : undefined));
@@ -528,7 +528,7 @@ export function buildTextPlan(doc: TextDoc, template: Template, dataset: Dataset
       let out = "";
       let pos = 0;
       for (const h of slots) {
-        const value = resolvePathValue(scope, h.path, policy);
+        const value = resolvePathValue(scope, h.path, policy, "none");
         if (value.kind === "error") {
           valueError(rp.ruleId, value.code, `행 반복 {{${h.path}}}: ${value.message}`, h.path);
           continue;
@@ -581,7 +581,7 @@ export function buildTextPlan(doc: TextDoc, template: Template, dataset: Dataset
       leaves.push(h.start); // 채우지 않고 그대로 두므로 남은 `{{}}` 검사에서 뺀다
       continue;
     }
-    const value = resolvePathValue(dataset, h.path, policy);
+    const value = resolvePathValue(dataset, h.path, policy, "none");
     if (value.kind === "error") {
       valueError(`{{${h.path}}}`, value.code, value.message, h.path);
       continue;

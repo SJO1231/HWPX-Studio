@@ -19,11 +19,12 @@ import {
   type Template,
   type ValueDigest,
 } from "../template/types.ts";
-import { digestValue, lookupPath, resolveValue } from "../template/value.ts";
+import { isValidPath } from "../template/placeholder.ts";
+import { digestValue, lookupPath, resolvePathValue, resolveValue } from "../template/value.ts";
 import { resolveAnchors, type ResolvedAnchor } from "./anchors.ts";
 import { addDelta, deltaOfElements, deltaRecord, scaleDelta, zeroDelta, type Delta } from "./census.ts";
 import { applyRepls, groupBy, hasSecPr, siblingsAtPath, type Repl } from "./doc.ts";
-import { planFieldFill } from "./fields.ts";
+import { collectFields, fieldFillBlock, planFieldFill } from "./fields.ts";
 import { fillFragment } from "./fragment-fill.ts";
 import { fillPlaceholders } from "./placeholders.ts";
 import { buildParagraphs, planRowDeletes, splitLines } from "./structure.ts";
@@ -101,7 +102,7 @@ type DeleteCand = {
 };
 
 /** 오류 메시지 앞에 붙일 이름: 규칙은 `규칙 r1`, 문서 안 `{{경로}}` 자리는 그 표기. */
-const labelOf = (id: string): string => (id.startsWith("{{") ? id : `규칙 ${id}`);
+const labelOf = (id: string): string => (id.startsWith("{{") ? id : id.startsWith("field:") ? `누름틀 ${id.slice("field:".length)}` : `규칙 ${id}`);
 const issueFor = (code: string, message: string, id: string): Issue => makeIssue("error", code, `${labelOf(id)}: ${message}`, id);
 
 function isOnlyObject(par: ParagraphNode, obj: ObjectNode): boolean {
@@ -629,7 +630,7 @@ export function buildFillPlan(
     };
 
     if (action.type === "insertText") {
-      const value = resolveValue(dataset, action.value, policy, true);
+      const value = resolveValue(dataset, action.value, policy, "paragraphs");
       if ("path" in action.value) required.add(action.value.path);
       if (value.kind === "error") {
         valueError(rule.id, value.code, value.message, value.path ?? ("path" in action.value ? action.value.path : undefined));
@@ -811,6 +812,67 @@ export function buildFillPlan(
   }
   for (const [path, n] of [...implicitDropped].sort(([a], [b]) => (a < b ? -1 : 1))) {
     report.dropped.push({ ruleId: "implicit", anchor: `{{${path}}}`, reason: `삭제·교체되는 범위 안의 자리 ${n}곳을 버렸습니다.` });
+  }
+
+  // ── 3c. 누름틀 암묵 채움 ────────────────────────────────────
+  // `type="CLICK_HERE"`인 필드(누름틀)만 대상이다. 책갈피·날짜·메일 머지 같은 다른 종류의 필드는 채우지 않고 보고(`skipped`·`required`·`dropped`)에도 넣지 않는다.
+  // 템플릿이 없거나 템플릿에 그 누름틀을 가리키는 규칙(조건이 거짓인 것도)이 없으면, 이름이 데이터 경로 문법에 맞는 누름틀은 "이름 = 데이터 경로"로 채운다
+  // (`{{}}`의 암묵 채움과 같은 누락 정책·보고). 같은 이름의 누름틀은 전부 같은 값이다. 규칙이 가리키는 필드는(type과 무관하게) 그 규칙이 맡는다.
+  const claimed = template.rules.flatMap((rule) => {
+    const a = template.anchors.find((x) => x.id === rule.do.anchor);
+    return a?.kind === "field" ? [a] : [];
+  });
+  const implicitFields = new Map<string, { count: number; value: ValueDigest }>();
+  const implicitFieldDropped = new Map<string, number>();
+  const bumpName = (m: Map<string, number>, name: string): void => void m.set(name, (m.get(name) ?? 0) + 1);
+  for (const target of collectFields(doc)) {
+    if (target.info.type !== "CLICK_HERE") continue;
+    const { name, occurrence } = target.info;
+    if (claimed.some((a) => a.name === name && (a.occurrence === undefined || a.occurrence === occurrence))) continue;
+    const id = `field:${name}`;
+    const where = `${target.section.entryName} [${target.paragraph.path.join(", ")}]`;
+    if (!isValidPath(name)) {
+      report.skipped.push({ ruleId: "implicit", anchor: id, code: "FIELD_NAME_NOT_PATH", message: "누름틀 이름이 데이터 경로(글자·숫자·_·-를 .으로 이은 꼴)가 아니라 채우지 않고 그대로 둡니다.", where });
+      continue;
+    }
+    const block = fieldFillBlock(target);
+    if (block !== undefined) {
+      report.skipped.push({ ruleId: "implicit", anchor: id, code: block.code, message: `${block.message} 그대로 둡니다.`, where });
+      continue;
+    }
+    const range = rangeOf(target.section, target.paragraph.element);
+    // 삭제·교체되는 문단 안이거나 반복할 원형 행 안의 누름틀은 채우지 않는다
+    if (isDeleted(range) || isReplaced(range) || repeatRows.some((x) => within(x.range, range))) {
+      bumpName(implicitFieldDropped, name);
+      continue;
+    }
+    required.add(name);
+    const value = resolvePathValue(dataset, name, policy);
+    if (value.kind === "error") {
+      valueError(id, value.code, value.message, value.path ?? name);
+      continue;
+    }
+    if (value.kind === "keep") {
+      keptPaths.set(name, (keptPaths.get(name) ?? 0) + 1);
+      missingPaths.add(name);
+      continue;
+    }
+    if (value.kind === "empty") missingPaths.add(name);
+    const text = value.kind === "text" ? value.text : "";
+    const fill = planFieldFill(ctxOf(target.section), target, text, `누름틀 ${name} 채움`);
+    if ("fail" in fill) {
+      issues.push(issueFor(fill.fail.code, fill.fail.message, id));
+      continue;
+    }
+    commit(id, target.section, fill, target.paragraph);
+    expectations.push({ kind: "field", entry: target.section.entryName, ...fill.check });
+    implicitFields.set(name, { count: (implicitFields.get(name)?.count ?? 0) + 1, value: digestValue(text) });
+  }
+  for (const [name, x] of [...implicitFields].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    report.actions.push({ ruleId: "implicit", type: "fill", anchor: `field:${name}`, targets: x.count, value: x.value });
+  }
+  for (const [name, n] of [...implicitFieldDropped].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    report.dropped.push({ ruleId: "implicit", anchor: `field:${name}`, reason: `삭제·교체되는 범위나 반복할 원형 행 안의 누름틀 ${n}곳을 채우지 않았습니다.` });
   }
 
   // ── 4. 같은 자리 충돌과 중복 정리 ───────────────────────────

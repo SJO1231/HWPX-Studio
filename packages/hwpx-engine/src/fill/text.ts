@@ -16,13 +16,35 @@ export function span(ctx: Ctx, start: number, end: number, replacement: string, 
   return { entry: ctx.entry, start, end, expected: ctx.text.slice(start, end), replacement, reason };
 }
 
-/** 값을 조각 안에 넣을 모양으로 부호화한다. CDATA 안이면 그대로(`]]>`만 쪼갬), 아니면 엔티티로 바꾼다. */
-export function encodeValue(ctx: Ctx, piece: Piece, value: string): string {
+/** 탭 요소의 속성. 한컴이 저장한 탭 요소의 `leader`·`type` 값이다(`width`는 조판이 정하는 값이라 0으로 둔다). */
+const TAB_ATTRS = 'width="0" leader="0" type="1"';
+
+/**
+ * 값(논리 글: 줄바꿈 `\n`, 탭 `\t`)을 `hp:t` 안에 넣을 내용으로 부호화한다. 글은 엔티티로 바꾸고(CDATA 안이면 그대로, `]]>`만 쪼갬),
+ * 줄바꿈과 탭은 요소(`prefix`는 문서가 쓰는 접두사 표기 `hp:`)로 바꾼다. 문단은 나누지 않는다.
+ */
+export function valueXml(value: string, prefix: string, inCdata = false): string {
+  // 홀수 번째가 줄바꿈·탭이다
+  return value
+    .split(/([\n\t])/)
+    .map((part, i) => {
+      if (i % 2 === 0) return inCdata ? part.replaceAll("]]>", "]]]]><![CDATA[>") : escapeText(part);
+      const el = part === "\n" ? `<${prefix}lineBreak/>` : `<${prefix}tab ${TAB_ATTRS}/>`;
+      return inCdata ? `]]>${el}<![CDATA[` : el;
+    })
+    .join("");
+}
+
+/** 글 조각 `piece` 안에 값을 넣을 모양으로 부호화한다(`valueXml`). `prefix`는 그 조각이 든 요소가 쓰는 접두사 표기다. */
+export function encodeValue(ctx: Ctx, piece: Piece, value: string, prefix: string): string {
   if (value === "") return "";
   const inCdata =
     piece.kind === "text" && piece.start >= 9 && ctx.text.startsWith("<![CDATA[", piece.start - 9) && ctx.text.startsWith("]]>", piece.end);
-  return inCdata ? value.replaceAll("]]>", "]]]]><![CDATA[>") : escapeText(value);
+  return valueXml(value, prefix, inCdata);
 }
+
+/** 글 조각이 든 run의 접두사 표기 */
+const piecePrefix = (par: ParagraphNode, piece: Piece): string => nsPrefixOf(par.runs[piece.runOrdinal]?.element ?? par.element);
 
 /** 위치 `at`(구역 텍스트 오프셋) 앞에 있는 마지막 조각의 논리 끝. 앞에 조각이 없으면 0. */
 export function logicalPosAt(par: ParagraphNode, at: number): number {
@@ -35,17 +57,18 @@ export function logicalPosAt(par: ParagraphNode, at: number): number {
 }
 
 /** 글 조각 하나를 값으로(또는 비워서) 바꾸는 편집과 그 논리 구간. 조각이 부분만 겹치면 겹친 만큼만 바꾼다. */
-function replacePiece(ctx: Ctx, piece: Piece, value: string, reason: string, ls = piece.logicalStart, le = piece.logicalEnd): { edit: SpanEdit; repl: Repl } {
+function replacePiece(ctx: Ctx, par: ParagraphNode, piece: Piece, value: string, reason: string, ls = piece.logicalStart, le = piece.logicalEnd): { edit: SpanEdit; repl: Repl } {
+  const prefix = piecePrefix(par, piece);
   if (piece.kind === "entity") {
     return {
-      edit: span(ctx, piece.start, piece.end, encodeValue(ctx, piece, value), reason),
+      edit: span(ctx, piece.start, piece.end, encodeValue(ctx, piece, value, prefix), reason),
       repl: { start: piece.logicalStart, end: piece.logicalEnd, text: value },
     };
   }
   const a = Math.max(ls, piece.logicalStart);
   const b = Math.min(le, piece.logicalEnd);
   return {
-    edit: span(ctx, piece.start + (a - piece.logicalStart), piece.start + (b - piece.logicalStart), encodeValue(ctx, piece, value), reason),
+    edit: span(ctx, piece.start + (a - piece.logicalStart), piece.start + (b - piece.logicalStart), encodeValue(ctx, piece, value, prefix), reason),
     repl: { start: a, end: b, text: value },
   };
 }
@@ -109,7 +132,7 @@ export function planRangeReplace(
   const texts = piecesInside(par, ls, le).filter(isTextPiece);
   const plan: TextPlan = { edits: [], repls: [] };
   texts.forEach((piece, i) => {
-    const r = replacePiece(ctx, piece, i === 0 ? value : "", reason, ls, le);
+    const r = replacePiece(ctx, par, piece, i === 0 ? value : "", reason, ls, le);
     plan.edits.push(r.edit);
     plan.repls.push(r.repl);
   });
@@ -121,8 +144,9 @@ function placeNewText(ctx: Ctx, par: ParagraphNode, value: string, reason: strin
   const run = par.runs[0];
   if (run === undefined) return { fail: { code: "FILL_NO_RUN", message: "문단에 run이 없어 글을 넣을 곳이 없습니다." } };
   const el = run.element;
-  const tag = `${nsPrefixOf(el)}t`;
-  const body = escapeText(value);
+  const prefix = nsPrefixOf(el);
+  const tag = `${prefix}t`;
+  const body = valueXml(value, prefix);
   if (el.end === el.openEnd) {
     // 자기닫힘 run은 펼친다
     return { edit: span(ctx, el.start, el.end, `${ctx.text.slice(el.start, el.end - 2)}><${tag}>${body}</${tag}></${el.qname}>`, reason), at: el.start };
@@ -146,7 +170,7 @@ export function planLineFill(ctx: Ctx, par: ParagraphNode, value: string, reason
   const plan: TextPlan = { edits: [], repls: [] };
   if (texts.length > 0) {
     texts.forEach((piece, i) => {
-      const r = replacePiece(ctx, piece, i === 0 ? value : "", reason);
+      const r = replacePiece(ctx, par, piece, i === 0 ? value : "", reason);
       plan.edits.push(r.edit);
       plan.repls.push(r.repl);
     });
@@ -165,7 +189,7 @@ export function planLineFill(ctx: Ctx, par: ParagraphNode, value: string, reason
 export function planClear(ctx: Ctx, par: ParagraphNode, reason: string): TextPlan {
   const plan: TextPlan = { edits: [], repls: [] };
   for (const piece of par.pieces.filter(isTextPiece)) {
-    const r = replacePiece(ctx, piece, "", reason);
+    const r = replacePiece(ctx, par, piece, "", reason);
     plan.edits.push(r.edit);
     plan.repls.push(r.repl);
   }

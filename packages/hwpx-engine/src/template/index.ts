@@ -1,11 +1,12 @@
 export * from "./types.ts";
-export { readTemplate, readDataset, emptyTemplate, fragmentPaths } from "./read.ts";
+export { readTemplate, readDataset, readBatchRecords, emptyTemplate, fragmentPaths, type BatchRecord } from "./read.ts";
 export { findPlaceholders, isValidPath, type Placeholder } from "./placeholder.ts";
 export {
   lookupPath,
   resolveValue,
   resolvePathValue,
   checkValueText,
+  type ControlMode,
   scalarToText,
   rowDataset,
   digestValue,

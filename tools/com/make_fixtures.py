@@ -25,7 +25,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "out"
 DOC_TIMEOUT_SEC = 60
-DOCS = ["ph-single", "ph-mixed", "ph-table", "field-states", "picture", "blocks", "header-footer", "tables-merged", "tables-inline", "tables-nested", "tables-rich"]
+DOCS = ["ph-single", "ph-mixed", "ph-table", "field-states", "picture", "blocks", "header-footer", "tables-merged", "tables-inline", "tables-nested", "tables-rich", "inline-breaks"]
 
 NS = {
     "hp": "http://www.hancom.co.kr/hwpml/2011/paragraph",
@@ -312,6 +312,44 @@ def build_tables_rich(hwp):
     ins(hwp, "끝")
 
 
+def build_inline_breaks(hwp):
+    # 한컴이 줄바꿈(Shift+Enter, BreakLine 동작)과 탭을 저장하는 모양을 얻는 문서. 본문 문단, 누름틀 안, 표 칸 안에 각각 둔다.
+    # InsertText 의 "\n" 은 한컴이 지워 버리고 "\r\n" 은 문단을 나누므로 줄바꿈은 BreakLine 으로만 만든다.
+    ins(hwp, "첫 줄")
+    hwp.HAction.Run("BreakLine")
+    ins(hwp, "둘째 줄")
+    newline(hwp)
+    ins(hwp, "가\t나")  # 한 번의 삽입에 든 탭
+    newline(hwp)
+    ins(hwp, "다")
+    ins(hwp, "\t")  # 삽입을 나눠 넣은 탭(ph-mixed 의 탭과 같은 방식)
+    ins(hwp, "라")
+    newline(hwp)
+    # CreateField 뒤 캐럿은 누름틀 안에 있으므로 그 안에서 값을 쓰고 줄 끝으로 나온다.
+    ins(hwp, "누름틀: ")
+    hwp.CreateField("안내줄", "", "줄")
+    ins(hwp, "첫 줄")
+    hwp.HAction.Run("BreakLine")
+    ins(hwp, "둘째 줄")
+    hwp.HAction.Run("MoveLineEnd")
+    newline(hwp)
+    ins(hwp, "누름틀: ")
+    hwp.CreateField("안내탭", "", "탭")
+    ins(hwp, "가")
+    ins(hwp, "\t")
+    ins(hwp, "나")
+    hwp.HAction.Run("MoveLineEnd")
+    newline(hwp)
+    table_create(hwp, 1, 2)
+    ins(hwp, "셀 첫 줄")
+    hwp.HAction.Run("BreakLine")
+    ins(hwp, "셀 둘째 줄")
+    hwp.HAction.Run("TableRightCell")
+    ins(hwp, "옆 칸")
+    hwp.HAction.Run("MoveDocEnd")
+    ins(hwp, "끝")
+
+
 BUILDERS = {
     "ph-single": build_ph_single,
     "ph-mixed": build_ph_mixed,
@@ -324,6 +362,7 @@ BUILDERS = {
     "tables-inline": build_tables_inline,
     "tables-nested": build_tables_nested,
     "tables-rich": build_tables_rich,
+    "inline-breaks": build_inline_breaks,
 }
 
 
@@ -343,6 +382,9 @@ def scrub_metadata(path):
             zi.external_attr = info.external_attr
             zout.writestr(zi, data)
     os.replace(tmp, path)
+
+
+FIELD_NAMES = {"field-states": ("성명", "소속"), "inline-breaks": ("줄", "탭")}  # 다시 열어 GetFieldText 로 읽을 누름틀
 
 
 def run_worker(name, protect):
@@ -376,9 +418,9 @@ def run_worker(name, protect):
         scrub_metadata(out)
         result["reopen_ok"] = bool(hwp.Open(str(out), "HWPX", "forceopen:true"))
         result["page_count"] = hwp.PageCount
-        if name == "field-states":
+        if name in FIELD_NAMES:
             result["reopen_field_list"] = (hwp.GetFieldList(0, 0) or "").split("\x02")
-            result["reopen_field_text"] = {n: hwp.GetFieldText(n) for n in ("성명", "소속")}
+            result["reopen_field_text"] = {n: hwp.GetFieldText(n) for n in FIELD_NAMES[name]}
         hwp.Clear(1)
         result["ok"] = result["reopen_ok"]
         if not result["reopen_ok"]:
@@ -550,6 +592,7 @@ EXPECTED = {
     "tables-inline": ["앞 문단", "항목", "내용", "비고", "a", "b", "c", "뒤 문단"],
     "tables-nested": ["중첩 표", "바깥1", "바깥3", "바깥4", "안1", "안2", "안3", "안4", "끝"],
     "tables-rich": ["풍부한 표", "번호", "이름", "내용", "1", "2", "둘째", "끝"],
+    "inline-breaks": ["첫 줄", "둘째 줄", "가", "나", "다", "라", "누름틀: ", "옆 칸", "끝"],
 }
 # 의도한 글과 정확히 같은지(공백 포함) 비교하는 기준. 한컴이 입력 중에 글을 고치는 경우를 잡으려는 것이다.
 EXPECTED_TOP = {  # 구역 바로 아래 문단들의 글(표·그림·머리말·꼬리말이 든 문단은 자기 글이 없으므로 "")
@@ -564,6 +607,7 @@ EXPECTED_TOP = {  # 구역 바로 아래 문단들의 글(표·그림·머리말
     "tables-inline": ["앞 문단", "", "뒤 문단"],
     "tables-nested": ["중첩 표", "", "끝"],
     "tables-rich": ["풍부한 표", "", "끝"],
+    "inline-breaks": ["첫 줄\n둘째 줄", "가\t나", "다\t라", "누름틀: 첫 줄\n둘째 줄", "누름틀: 가\t나", "", "끝"],
 }
 EXPECTED_CELLS = {  # (행, 열) -> 글
     "ph-table": {(0, 0): "성명", (0, 1): "{{applicant.name}}", (1, 0): "연락처", (1, 1): "", (2, 0): "비고", (2, 1): "{{note}}"},
@@ -571,6 +615,7 @@ EXPECTED_CELLS = {  # (행, 열) -> 글
     # 병합 셀은 왼쪽 위 주소 하나만 있다: (0,0)은 A1·B1, (1,2)는 C2·C3을 덮는다
     "tables-merged": {(0, 0): "신청 내역", (0, 2): "비고", (1, 0): "가", (1, 1): "A", (1, 2): "세로", (2, 0): "나", (2, 1): "B", (3, 0): "다", (3, 1): "C", (3, 2): "c"},
     "tables-inline": {(0, 0): "항목", (0, 1): "내용", (0, 2): "비고", (1, 0): "a", (1, 1): "b", (1, 2): "c"},
+    "inline-breaks": {(0, 0): "셀 첫 줄\n셀 둘째 줄", (0, 1): "옆 칸"},
 }
 EXPECTED_HF = {"header-footer": {"header": ["{{doc.title}}"], "footer": ["{{doc.owner}}"]}}
 TOKENS = {
@@ -612,6 +657,7 @@ def analyze(name, path):
                 "tables": count("tbl"),
                 "pictures": count("pic"),
                 "tabs": count("tab"),
+                "line_breaks": count("lineBreak"),
                 "headers": count("header"),
                 "footers": count("footer"),
             },
@@ -631,6 +677,14 @@ def analyze(name, path):
                 "{{manager.name}}{탭}{{manager.phone}}": "탭은 hp:t 안의 hp:tab 요소" if entry["section0"]["tabs"] else "탭 요소 없음",
             }
         if name == "field-states":
+            obs["fields"] = field_report(root, zf)
+        if name == "inline-breaks":
+            parent = {c: p for p in root.iter() for c in p}
+            obs["inline_elements"] = {
+                "tab": [dict(e.attrib) for e in root.iter(q("hp", "tab"))],
+                "lineBreak": [dict(e.attrib) for e in root.iter(q("hp", "lineBreak"))],
+                "parents": sorted({local(parent[e]) for t in ("tab", "lineBreak") for e in root.iter(q("hp", t))}),
+            }
             obs["fields"] = field_report(root, zf)
         if name in ("ph-table", "blocks") or name in EXPECTED_CELLS:
             obs["tables"] = table_report(root, bolds)

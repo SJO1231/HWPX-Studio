@@ -1,5 +1,5 @@
-import { existsSync } from "node:fs";
-import { basename, dirname, resolve } from "node:path";
+import { existsSync, rmSync, statSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { flag, intValue, need, parse, parseAddress, str, type Parsed } from "./args.ts";
 import {
@@ -14,6 +14,7 @@ import {
   findPlaceholders,
   fragmentPaths,
   generate,
+  generateBatch,
   generateText,
   listFields,
   listTables,
@@ -21,13 +22,17 @@ import {
   openPackage,
   parseDocument,
   parseText,
+  planBatchNames,
   readArchive,
+  readBatchRecords,
   readDataset,
   readEntry,
   readTemplate,
   serializeFragment,
   validateDocument,
   walkParagraphs,
+  type BatchItem,
+  type BatchRecord,
   type FillReport,
   type GateMode,
   type GenerateResult,
@@ -370,7 +375,8 @@ function finishGenerate(
 export async function fill(args: string[], out: Out): Promise<number> {
   const usage =
     "hwpx fill <파일> --data d.json [--template t.json] -o 출력 [--missing error|empty|keep] [--dry-run] [--report r.json] [--overwrite]\n" +
-    "  .hwpx 전용: [--mode baseline|strict|repair] [--reissue-internal]   .md·.txt 전용: [--fill-in-code]";
+    "  .hwpx 전용: [--mode baseline|strict|repair] [--reissue-internal]   .md·.txt 전용: [--fill-in-code]\n" +
+    "  여러 건(.hwpx, 데이터가 배열): hwpx fill <파일> --data 배열.json --batch -o 폴더 [--name \"{{경로}}\"] [위 옵션]";
   const p = parse(
     args,
     {
@@ -384,6 +390,8 @@ export async function fill(args: string[], out: Out): Promise<number> {
       overwrite: { type: "boolean" },
       "reissue-internal": { type: "boolean" },
       "fill-in-code": { type: "boolean" },
+      batch: { type: "boolean" },
+      name: { type: "string" },
     },
     { min: 1, max: 1 },
     usage,
@@ -399,9 +407,17 @@ export async function fill(args: string[], out: Out): Promise<number> {
   } else if (flag(p, "fill-in-code")) {
     throw new UsageError(`--fill-in-code는 .md·.txt에서만 쓸 수 있습니다.\n사용법: ${usage}`);
   }
+  const batch = flag(p, "batch");
+  const nameSpec = str(p, "name");
+  if (nameSpec !== undefined && !batch) throw new UsageError(`--name은 --batch와 함께 쓰는 옵션입니다.\n사용법: ${usage}`);
+  if (batch && textKind !== undefined) throw new UsageError(`--batch는 .hwpx에서만 쓸 수 있습니다(md·txt는 여러 건 생성이 없습니다).\n사용법: ${usage}`);
+  const nameFrom = nameSpec === undefined ? undefined : pathOfNameSpec(nameSpec, usage);
   const dataPath = need(p, "data", usage);
   const output = str(p, "output");
-  if (output === undefined && !dryRun) throw new UsageError(`-o 출력 경로가 필요합니다(모의 실행은 --dry-run).\n사용법: ${usage}`);
+  if (output === undefined && !dryRun) throw new UsageError(`-o ${batch ? "출력 폴더" : "출력 경로"}가 필요합니다(모의 실행은 --dry-run).\n사용법: ${usage}`);
+  if (batch && output !== undefined && !dryRun && !(existsSync(resolve(output)) && statSync(resolve(output)).isDirectory())) {
+    throw new UsageError(`출력 폴더가 없습니다(--batch의 -o는 있는 폴더여야 합니다): ${output}`);
+  }
   const mode = modeOf(p, usage);
   const missingText = str(p, "missing");
   if (missingText !== undefined && missingText !== "error" && missingText !== "empty" && missingText !== "keep") {
@@ -410,10 +426,15 @@ export async function fill(args: string[], out: Out): Promise<number> {
   const templatePath = str(p, "template");
   const reportPath = str(p, "report");
   const inputs = [file, dataPath, ...(templatePath === undefined ? [] : [templatePath])];
-  if (output !== undefined) checkOutputPath(output, inputs, overwrite);
-  if (reportPath !== undefined) checkOutputPath(reportPath, [...inputs, ...(output === undefined ? [] : [output])], overwrite);
+  if (output !== undefined && !batch) checkOutputPath(output, inputs, overwrite);
+  if (reportPath !== undefined && !batch) checkOutputPath(reportPath, [...inputs, ...(output === undefined ? [] : [output])], overwrite);
 
-  const dataset = guard(() => readDataset(readText(dataPath, "데이터 파일")), dataPath);
+  // .hwpx는 데이터가 배열(또는 data가 배열인 묶음)이면 여러 건이다: --batch가 있어야 하고, 없으면 쓰는 법을 안내한다
+  const dataText = readText(dataPath, "데이터 파일");
+  const records = textKind === undefined ? guard(() => readBatchRecords(dataText), dataPath) : undefined;
+  if (batch && records === undefined) throw new UsageError(`--batch는 데이터가 배열(또는 data가 배열인 묶음)일 때 쓰는 옵션입니다: ${dataPath}\n사용법: ${usage}`);
+  if (!batch && records !== undefined) throw new UsageError(`여러 건 데이터입니다. --batch를 쓰십시오.\n사용법: ${usage}`);
+  const data = records === undefined ? ({ dataset: guard(() => readDataset(dataText), dataPath) } as const) : ({ records } as const);
   const template = templatePath === undefined ? emptyTemplate() : guard(() => readTemplate(readText(templatePath, "템플릿 파일")), templatePath);
   // 조각 경로는 템플릿 파일이 있는 폴더 기준이다. 조각 파일도 입력이므로 출력 경로와 같으면 거부한다.
   const fragments: Record<string, string> = {};
@@ -425,6 +446,11 @@ export async function fill(args: string[], out: Out): Promise<number> {
   }
   const missing: { missing?: MissingPolicy } = missingText === undefined ? {} : { missing: missingText };
   const allInputs = [...inputs, ...fragmentFiles];
+  if ("records" in data) {
+    const options = { mode, dryRun, fragments, reissueInternal: flag(p, "reissue-internal"), ...missing };
+    return await fillBatch({ file, records: data.records, template, nameFrom, folder: output, inputs: allInputs, overwrite, reportPath, options }, out);
+  }
+  const { dataset } = data;
   if (textKind !== undefined) {
     const text = readUtf8(file, "입력 파일");
     const result = guard(() => generateText(text, textKind, template, dataset, { dryRun, fragments, fillInCode: flag(p, "fill-in-code"), ...missing }), file);
@@ -432,6 +458,95 @@ export async function fill(args: string[], out: Out): Promise<number> {
   }
   const result = await runGenerate(file, readBytes(file, "입력 파일"), template, dataset, { mode, dryRun, fragments, reissueInternal: flag(p, "reissue-internal"), ...missing });
   return finishGenerate(out, result, output, allInputs, overwrite, reportPath);
+}
+
+/** `--name "{{경로}}"`의 경로. 표기 하나가 글 전체여야 한다(앞뒤 공백은 허용). */
+function pathOfNameSpec(spec: string, usage: string): string {
+  const text = spec.trim();
+  const hit = findPlaceholders(text)[0];
+  if (hit === undefined || hit.start !== 0 || hit.end !== text.length) {
+    throw new UsageError(`--name은 "{{경로}}" 꼴 하나여야 합니다(예: --name "{{id}}"): ${spec}\n사용법: ${usage}`);
+  }
+  return hit.path;
+}
+
+/** 건별 결과 한 줄(보고서의 `items` 원소). 값 원문은 없다(`name`은 `--name` 값에서 온 파일 이름이다). */
+type BatchRow = Pick<BatchItem, "index" | "name" | "ok" | "filled" | "skipped" | "errorCodes" | "errors">;
+
+/**
+ * `fill --batch`: 데이터가 배열이면 원소마다 결과 파일 하나를 `folder`에 만든다. 건마다 `generate`를 거치고(엔진의 `generateBatch`),
+ * 한 건이 실패해도 나머지는 만든다. 하나라도 실패하면 종료 코드 1이다. 이름은 데이터만 보고 미리 정하므로 파일을 만들기 전에
+ * 같은 이름의 기존 파일을 한꺼번에 확인한다(`--overwrite` 없이는 거부, 종료 코드 2). 건마다 임시 파일에 쓴 뒤 이름을 바꾼다.
+ * `--overwrite`로 다시 돌릴 때 실패한 건의 같은 이름 옛 파일은 지운다(`--dry-run`이면 지우지 않는다).
+ */
+async function fillBatch(
+  c: {
+    file: string;
+    records: BatchRecord[];
+    template: ReturnType<typeof emptyTemplate>;
+    nameFrom: string | undefined;
+    folder: string | undefined;
+    inputs: string[];
+    overwrite: boolean;
+    reportPath: string | undefined;
+    options: { mode: GateMode; missing?: MissingPolicy; dryRun: boolean; fragments: Record<string, string>; reissueInternal: boolean };
+  },
+  out: Out,
+): Promise<number> {
+  const { file, records, folder, inputs, overwrite, reportPath, options } = c;
+  const { bytes } = openDocument(file); // 열 수 없는 입력 문서는 건의 실패가 아니라 종료 코드 2
+  const baseName = basename(file).replace(/\.hwpx$/i, "");
+  const names = planBatchNames(records, baseName, c.nameFrom);
+  const targets = folder === undefined || options.dryRun ? [] : names.map((name) => join(folder, name));
+  for (const target of targets) checkOutputPath(target, inputs, overwrite);
+  if (reportPath !== undefined) checkOutputPath(reportPath, [...inputs, ...targets], overwrite);
+
+  const call = {
+    mode: options.mode,
+    dryRun: options.dryRun,
+    fragments: options.fragments,
+    ...(options.missing === undefined ? {} : { missing: options.missing }),
+    ...(options.reissueInternal ? { reissueInternalDuplicates: true } : {}),
+    ...(options.mode === "repair" ? { repair: await loadRepair() } : {}),
+    baseName,
+    ...(c.nameFrom === undefined ? {} : { nameFrom: c.nameFrom }),
+  };
+  const rows: BatchRow[] = [];
+  for (const item of generateBatch(bytes, c.template, records, call)) {
+    // 만든 문서는 바로 쓰고 놓는다(건수가 많아도 문서를 모두 쥐지 않는다)
+    if (item.output !== undefined && folder !== undefined) writeSafely(join(folder, item.name), item.output, inputs, overwrite);
+    const { index, name, ok, filled, skipped, errorCodes, errors } = item;
+    rows.push({ index, name, ok, filled, skipped, errorCodes, errors });
+    const label = `${String(index).padStart(3, "0")} ${name}`;
+    if (ok) {
+      out.log(`성공 ${label} (채움 ${filled}, 건너뜀 ${skipped.length})`);
+      for (const s of skipped) out.log(`  건너뜀 [${s.code}] ${s.anchor}: ${s.message}`);
+    } else {
+      out.err(`실패 ${label}`);
+      for (const e of errors) out.err(`  오류 [${e.code}] ${e.message}`);
+      // 실패한 건은 파일을 만들지 않으므로, `--overwrite`일 때 전 실행의 같은 이름 파일이 남아 있으면 지운다(입력 파일과 같은 경로는 거부)
+      if (overwrite && !options.dryRun && folder !== undefined) {
+        const stale = join(folder, name);
+        if (existsSync(stale) && statSync(stale).isFile()) {
+          checkOutputPath(stale, inputs, true);
+          try {
+            rmSync(stale);
+          } catch (e) {
+            throw new InputError(`이전 결과 파일을 지울 수 없습니다: ${stale} (${e instanceof Error ? e.message : String(e)})`);
+          }
+          out.err(`  이전 결과 파일을 지웠습니다: ${name}`);
+        }
+      }
+    }
+  }
+  const failed = rows.filter((r) => !r.ok).length;
+  if (rows.length === 0) out.log("데이터가 0건이라 만든 파일이 없습니다.");
+  out.log(`여러 건 생성: 총 ${rows.length}건, 성공 ${rows.length - failed}, 실패 ${failed}${options.dryRun ? " (모의 실행: 파일을 만들지 않았습니다)" : ""}`);
+  if (reportPath !== undefined) {
+    const body = { batch: true, ok: failed === 0, dryRun: options.dryRun, total: rows.length, succeeded: rows.length - failed, failed, items: rows };
+    writeSafely(reportPath, json(body), [...inputs, ...targets], overwrite);
+  }
+  return failed > 0 ? 1 : 0;
 }
 
 /** 템플릿·데이터를 읽다가 나는 `TPL_*`·`DATA_*` 오류를 읽을 수 없는 입력(종료 코드 2)으로 바꾼다. */

@@ -12,6 +12,7 @@ export const USAGE = `사용법: hwpx <명령> [옵션]
   fill <파일> --data d.json [--template t.json] -o 출력 [--missing error|empty|keep]
        [--dry-run] [--report r.json] [--overwrite]               확장자로 형식을 고른다(.hwpx, .md, .txt)
        .hwpx 전용: [--mode baseline|strict|repair] [--reissue-internal]
+       .hwpx 여러 건(데이터가 배열): --batch -o 폴더 [--name "{{경로}}"]   원소마다 <원본 이름>-001.hwpx …
        .md·.txt 전용: [--fill-in-code]
   table list <파일> [--json]                            표마다 위치·행×열·너비·글자처럼 취급·쪽 나눔·제목 행 반복·병합 수(글 내용은 없음)
   table set <파일> --table 구역:순번 -o 출력.hwpx [--treat-as-char on|off] [--page-break cell|none|table]

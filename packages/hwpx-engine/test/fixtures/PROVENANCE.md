@@ -39,3 +39,11 @@
 - `tables-rich.hwpx`: 3행 3열 표. 셀 안에 누름틀과 그림이 든다.
 
 한컴은 표 만들기의 마지막 설정을 기억하므로 `글자처럼 취급`을 항상 명시해 만든다. 패키지 메타데이터는 `tools/fixtures/scrub-metadata.ts`로 정리했다.
+
+## `inline/` — 한컴 오피스가 저장한 줄바꿈·탭 문서 (`tools/com/make_fixtures.py --only inline-breaks`로 생성)
+
+값의 줄바꿈·탭을 엔진이 넣는 요소의 모양을 한컴이 저장한 것에서 얻으려고 만들었다. 한컴이 `hp:t` 안에 쓰는 줄바꿈 요소(속성 없음)와 탭 요소(`width`·`leader`·`type`)가 본문 문단, 누름틀 안, 표 칸 안에 있다. 기존 시험이 `""`, `hancom/`, `extra/`의 문서 수를 고정하므로 따로 이 폴더에 둔다. 해시는 이 폴더의 `SHA256SUMS`에 있다.
+
+- `inline-breaks.hwpx`: 문단 7개(`첫 줄`+줄바꿈+`둘째 줄`, 탭이 든 문단 둘, 줄바꿈이 든 누름틀 `줄`, 탭이 든 누름틀 `탭`, 표, `끝`)와 1행 2열 표(첫 칸에 줄바꿈).
+
+패키지 메타데이터는 `tools/fixtures/scrub-metadata.ts`로 정리했다(작성자·최종 저장자를 `synthetic`으로).

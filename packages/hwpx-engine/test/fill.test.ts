@@ -89,15 +89,26 @@ const paragraphTexts = (doc: HwpxDocument): string[] => doc.sections.flatMap((s)
 
 // ── E1 ─────────────────────────────────────────────────────────
 
-test("E1: 무변경 왕복 — 채울 것이 없으면 파일 전체가 바이트 동일하다", () => {
+test("E1: 채울 것이 없으면 원본 복사본을 내지 않고 FILL_NOTHING_APPLIED로 실패한다(출력 없음, 보고서·건너뜀 사유는 남는다)", () => {
   const names = [...FIXTURE_NAMES, "hancom/blocks", "hancom/picture", "hancom/field-states", "extra/features-picture", "extra/features-rhwp"];
   for (const name of names) {
     const bytes = readFixture(name);
-    const r = done(generate(bytes, emptyTemplate(), ds({})));
-    assert.ok(bytesEqual(r.output, bytes), `${name}: 출력이 입력과 다르다`);
-    assert.equal(r.ledger.output.sha256, r.ledger.input.sha256);
-    assert.deepEqual(r.report.plan.expected, {});
+    // 누름틀이 든 문서는 누락 정책 keep으로 자리를 그대로 두게 한다(이름이 경로인 누름틀은 암묵으로 채워지므로)
+    const r = generate(bytes, emptyTemplate(), ds({}), { missing: "keep" });
+    assert.deepEqual(failed(r), ["FILL_NOTHING_APPLIED"], name);
+    assert.deepEqual(r.report.plan.actions, [], name);
+    assert.ok(!("ledger" in r), `${name}: 원장이 없다`);
   }
+});
+
+test("E1: 채울 것이 없을 때 건너뜀 사유가 오류 메시지에 든다", () => {
+  const bytes = buildHwpx(['<hp:p id="1" paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0"><hp:t>가 {{x}}\u{301} 나</hp:t></hp:run></hp:p>']);
+  const r = generate(bytes, emptyTemplate(), ds({ x: "값" }));
+  assert.deepEqual(failed(r), ["FILL_NOTHING_APPLIED"]);
+  assert.match(r.report.issues[0]?.message ?? "", /FILL_SPLITS_CLUSTER 1곳/);
+  assert.deepEqual(r.report.plan.skipped.map((s) => s.code), ["FILL_SPLITS_CLUSTER"]);
+  // 모의 실행도 같다
+  assert.equal(generate(bytes, emptyTemplate(), ds({ x: "값" }), { dryRun: true }).ok, false);
 });
 
 test("E1: 모의 실행(dryRun)은 보고서만 돌려주고 출력이 없다", () => {
@@ -147,11 +158,12 @@ test("E2: 누름틀 채움 — 값 재읽기 일치, dirty=1, 안내문 run의 �
 test("E2: 순번을 주면 그 누름틀만 채운다. 이름은 정확히 일치해야 한다", () => {
   const bytes = readFixture("hancom/field-states");
   const t = tpl({ anchors: [{ id: "a", kind: "field", name: "성명", occurrence: 1 }], rules: [fillRule("r", "a", { text: "둘째" })] });
-  const out = reparse(done(generate(bytes, t, ds({}))).output);
+  // 규칙이 가리키지 않는 누름틀(첫째 성명, 소속)은 암묵 채움 대상이다: 데이터가 없으므로 keep으로 그대로 둔다
+  const out = reparse(done(generate(bytes, t, ds({}), { missing: "keep" })).output);
   assert.deepEqual(listFields(out).map((f) => [f.valueText, f.dirty]), [["이름을 입력", "0"], ["합성기관", "1"], ["둘째", "1"]]);
 
   const wrong = tpl({ anchors: [{ id: "a", kind: "field", name: "성명 " }], rules: [fillRule("r", "a", { text: "x" })] });
-  assert.deepEqual(failed(generate(bytes, wrong, ds({}))), ["ANCHOR_NOT_FOUND"]);
+  assert.deepEqual(failed(generate(bytes, wrong, ds({}), { missing: "keep" })), ["ANCHOR_NOT_FOUND"]);
 });
 
 test("E2: dirty가 이미 1인 누름틀은 글자모양을 건드리지 않고, 빈 값은 dirty·글자모양을 건드리지 않는다", () => {
@@ -159,13 +171,13 @@ test("E2: dirty가 이미 1인 누름틀은 글자모양을 건드리지 않고,
   // 첫 누름틀을 값이 든 상태(dirty=1)로 바꾼 입력: 안내문 run의 글자모양 7은 그대로 남아야 한다
   const dirty = mutateEntryText(bytes, SEC, (x) => x.replace('dirty="0"', 'dirty="1"'));
   const t = tpl({ anchors: [{ id: "a", kind: "field", name: "성명" }], rules: [fillRule("r", "a", { text: "값" })] });
-  const xml = text(done(generate(dirty, t, ds({}))).output);
+  const xml = text(done(generate(dirty, t, ds({}), { missing: "keep" })).output);
   assert.ok(xml.includes('<hp:run charPrIDRef="7"><hp:t>값</hp:t></hp:run>'), "dirty=1이던 누름틀의 값 run은 글자모양 7 그대로");
   assert.ok(xml.includes('<hp:run charPrIDRef="0"><hp:t>값</hp:t></hp:run>'), "dirty=0이던 두 번째 성명은 글자모양이 시작 run의 것으로");
 
   // 빈 값: 글만 비우고 dirty와 글자모양은 그대로(안내문 상태 유지)
   const empty = tpl({ anchors: [{ id: "a", kind: "field", name: "성명" }], rules: [fillRule("r", "a", { text: "" })] });
-  const out = done(generate(bytes, empty, ds({})));
+  const out = done(generate(bytes, empty, ds({}), { missing: "keep" }));
   const xmlEmpty = text(out.output);
   assert.equal(xmlEmpty.match(/<hp:run charPrIDRef="7"><hp:t><\/hp:t><\/hp:run>/g)?.length, 2);
   assert.deepEqual(listFields(reparse(out.output)).map((f) => [f.valueText, f.dirty]), [["", "0"], ["합성기관", "1"], ["", "0"]]);
@@ -267,9 +279,12 @@ const JAMO = "\u{1140}\u{1161}\u{11AB}"; // 옛한글 초성+중성+종성: 묶�
 
 test("E4: word 앵커의 경계가 글자 묶음 한가운데면 skipped: FILL_SPLITS_CLUSTER, 묶음 전체를 감싸거나 비껴가면 치환한다", () => {
   const logical = `AB${JAMO}CD`;
-  const bytes = clusterDoc(logical);
+  // 건너뛰기만 하면 채운 자리가 없어 FILL_NOTHING_APPLIED로 실패하므로, 둘째 문단을 채우는 규칙을 하나 더 둔다
+  const para = (id: string, inner: string): string => `<hp:p id="${id}" paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0"><hp:t>${inner}</hp:t></hp:run></hp:p>`;
+  const bytes = buildHwpx([para("1", logical) + para("2", "기타")]);
+  const other = { anchors: [lineAnchor("o", [1], "기타")], rules: [fillRule("ro", "o", { text: "기타 채움" })] };
   const run = (target: string, value = "X") => {
-    const t = tpl({ anchors: [wordAnchor("w", [0], logical, target)], rules: [fillRule("r", "w", { text: value })] });
+    const t = tpl({ anchors: [wordAnchor("w", [0], logical, target), ...other.anchors], rules: [fillRule("r", "w", { text: value }), ...other.rules] });
     return done(generate(bytes, t, ds({})));
   };
   // 시작이 묶음 가운데, 끝이 묶음 가운데
@@ -284,7 +299,7 @@ test("E4: word 앵커의 경계가 글자 묶음 한가운데면 skipped: FILL_S
   assert.deepEqual(paragraphTexts(reparse(run("AB").output))[0], `X${JAMO}CD`);
   assert.equal(run(JAMO).report.plan.skipped.length, 0);
   // mixedFormat "first"는 글자모양이 갈린 구간을 허용할 뿐 글자 묶음을 가르는 것까지 허용하지 않는다
-  const t = tpl({ anchors: [wordAnchor("w", [0], logical, "\u{1161}\u{11AB}C")], rules: [fillRule("r", "w", { text: "X" })] });
+  const t = tpl({ anchors: [wordAnchor("w", [0], logical, "\u{1161}\u{11AB}C"), ...other.anchors], rules: [fillRule("r", "w", { text: "X" }), ...other.rules] });
   assert.deepEqual(done(generate(bytes, t, ds({}), { mixedFormat: "first" })).report.plan.skipped.map((s) => s.code), ["FILL_SPLITS_CLUSTER"]);
 });
 
@@ -326,7 +341,7 @@ test("E5: 글이 든 셀도 채우고, 셀 안 문단이 여럿이면 첫 문단
     anchors: [{ id: "c", kind: "cell", table: { sectionIndex: 0, ordinal: 2 }, row: 0, col: 0 }],
     rules: [fillRule("r", "c", { text: "병합 셀" })],
   });
-  const r = done(generate(bytes, t, ds({})));
+  const r = done(generate(bytes, t, ds({}), { missing: "keep" })); // 문서의 이름 있는 누름틀은 암묵 채움 대상이라 데이터가 없으면 그대로 둔다
   const out = reparse(r.output);
   const cell = out.sections[0]?.paragraphs.flatMap((p) => p.objects).filter((o) => o.type === "tbl")[2];
   assert.ok(cell !== undefined && isTableNode(cell));
@@ -346,7 +361,7 @@ test("셀·줄 채움: 객체가 든 문단·셀은 FILL_HAS_OBJECT, 구역 설�
   // 누름틀 컨트롤이 든 문단
   const fields = readFixture("hancom/field-states");
   const withField = tpl({ anchors: [lineAnchor("l", [1], "소속: ￼합성기관￼")], rules: [fillRule("r", "l", { text: "x" })] });
-  assert.deepEqual(failed(generate(fields, withField, ds({}))), ["FILL_HAS_OBJECT"]);
+  assert.deepEqual(failed(generate(fields, withField, ds({}), { missing: "keep" })), ["FILL_HAS_OBJECT"]);
   // 구역 설정(secPr)·단 설정(colPr)만 든 첫 문단은 글을 바꿀 수 있다
   const first = tpl({ anchors: [lineAnchor("l", [0], "￼￼1. 개요")], rules: [fillRule("r", "l", { text: "새 제목" })] });
   assert.equal(paragraphTexts(reparse(done(generate(blocks, first, ds({}))).output))[0], "￼￼새 제목");
@@ -417,9 +432,11 @@ test("앵커: cell·object는 서수로 찾고 범위 밖이면 ANCHOR_NOT_FOUND
   const object = { id: "o", kind: "object", objectType: "pic", sectionIndex: 0, ordinal: 0 };
   const del = { id: "d", do: { type: "delete", anchor: "o" } };
   assert.deepEqual(failed(generate(bytes, tpl({ anchors: [object], rules: [del] }), ds({}))), ["ANCHOR_NOT_FOUND"]);
-  // 조건이 거짓이면 앵커를 찾지 않으므로 오류가 아니다
+  // 조건이 거짓이면 앵커를 찾지 않으므로 ANCHOR_NOT_FOUND가 아니다(적용된 것이 없어 FILL_NOTHING_APPLIED로 끝난다)
   const guarded = tpl({ anchors: [object], rules: [{ ...del, when: { path: "x", op: "eq", value: 1 } }] });
-  assert.ok(bytesEqual(done(generate(bytes, guarded, ds({ x: 2 }))).output, bytes));
+  const idle = generate(bytes, guarded, ds({ x: 2 }));
+  assert.deepEqual(failed(idle), ["FILL_NOTHING_APPLIED"]);
+  assert.deepEqual(idle.report.plan.inactiveRules, ["d"]);
 
   const doc = loadDoc("hancom/blocks");
   const found = resolveAnchors(doc, tpl({ anchors: [{ id: "c", kind: "cell", table: { sectionIndex: 0, ordinal: 0 }, row: 2, col: 1 }] }));
@@ -448,5 +465,5 @@ test("같은 글로 바꾸는 채움은 편집이 아니다 — 바이트가 그
   // 누름틀도 같은 값이고 이미 dirty=1이면 편집이 없다
   const fields = readFixture("hancom/field-states");
   const same = tpl({ anchors: [{ id: "a", kind: "field", name: "소속" }], rules: [fillRule("r", "a", { text: "합성기관" })] });
-  assert.ok(bytesEqual(done(generate(fields, same, ds({}))).output, fields));
+  assert.ok(bytesEqual(done(generate(fields, same, ds({}), { missing: "keep" })).output, fields));
 });

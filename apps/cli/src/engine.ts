@@ -17,19 +17,24 @@ export {
 } from "../../../packages/hwpx-engine/src/index.ts";
 export {
   generate,
+  generateBatch,
+  planBatchNames,
   findCandidates,
   compileDocument,
   makeLineAnchor,
   censusOfDoc,
+  type BatchItem,
   type GateMode,
   type GenerateResult,
 } from "../../../packages/hwpx-engine/src/fill/index.ts";
 export {
   readTemplate,
   readDataset,
+  readBatchRecords,
   emptyTemplate,
   fragmentPaths,
   findPlaceholders,
+  type BatchRecord,
   type Template,
   type MissingPolicy,
   type FillReport,

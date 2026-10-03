@@ -141,8 +141,9 @@ test("게이트: 같은 입력이면 같은 출력과 같은 보고서다(결정
 });
 
 test("게이트: 조각이 없는 문서(주입 없음)의 보고서 inherited는 비어 있다", () => {
+  // 채울 것이 없으면 FILL_NOTHING_APPLIED로 실패하지만 보고서는 남고 상속 항목은 비어 있다
   const r = generate(target().pkg.bytes, emptyTemplate(), readDataset({}));
-  assert.ok(r.ok);
+  assert.ok(!r.ok && r.report.issues.some((i) => i.code === "FILL_NOTHING_APPLIED"));
   assert.deepEqual(r.report.inherited, { duplicateIds: [], danglingRefs: [], errors: [] });
 });
 

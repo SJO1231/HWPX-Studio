@@ -88,8 +88,10 @@ test("E7: 조건에 따라 문단을 지운다 — 수량 증감이 계획과 �
   // 지운 문단 밖의 줄 배치 캐시도 모두 지웠다(글이 바뀌는 구역)
   assert.ok(!text(r.output).includes("linesegarray"));
 
-  // 조건이 거짓이면 아무것도 하지 않아 입력과 바이트 동일하다
-  assert.ok(bytesEqual(done(generate(bytes, t, ds({ optional: true }))).output, bytes));
+  // 조건이 거짓이면 적용된 액션이 없어 FILL_NOTHING_APPLIED로 실패한다(원본 복사본을 내지 않는다)
+  const idle = generate(bytes, t, ds({ optional: true }));
+  assert.deepEqual(failed(idle), ["FILL_NOTHING_APPLIED"]);
+  assert.deepEqual(idle.report.plan.inactiveRules, ["d1", "d2"]);
 });
 
 test("E7: 표 행을 지운다 — rowCnt가 줄고 뒤 행 셀의 행 주소가 1씩 준다", () => {
@@ -234,9 +236,10 @@ test("E8: 조건에 따라 조각을 주입하고 조각 안 {{}}를 같은 데�
   // 줄 배치 캐시는 조각에서도, 구역에서도 없다
   assert.ok(!text(r.output).includes("linesegarray"));
 
-  // 조건이 거짓이면 주입하지 않는다
-  const none = done(generate(blocks, t, ds({ ...data, contract: { type: "물품" } })));
-  assert.ok(bytesEqual(none.output, blocks));
+  // 조건이 거짓이면 주입하지 않는다: 적용된 액션이 없어 FILL_NOTHING_APPLIED로 실패한다(조각 안 {{}}는 규칙이 거짓이라 채우지 않는다)
+  const none = generate(blocks, t, ds({ ...data, contract: { type: "물품" } }));
+  assert.deepEqual(failed(none), ["FILL_NOTHING_APPLIED"]);
+  assert.deepEqual(none.report.plan.inactiveRules, ["r"]);
 });
 
 test("E8: 조각을 경로로 지정하면 읽는 쪽이 넘긴 조각을 쓰고, 없으면 TPL_FRAGMENT_MISSING. 조각 안 데이터가 없으면 DATA_MISSING", () => {
@@ -376,7 +379,7 @@ test("E13: insertText inherit — 삽입 문단의 서식 참조가 앵커 영�
     const anchor = before.sections[0]?.paragraphs[path[0]];
     assert.ok(anchor !== undefined);
     const t = tpl({ anchors: [lineAnchor("a", [...path], anchor.logicalText)], rules: [insertRule("r", "a", "after", { path: "memo" })] });
-    const r = done(generate(bytes, t, ds({ memo: "첫 줄\r\n둘째 줄\n\n넷째 &줄" })));
+    const r = done(generate(bytes, t, ds({ memo: "첫 줄\r\n둘째 줄\n\n넷째 &줄" }), { missing: "keep" })); // features-picture의 이름 있는 누름틀은 암묵 채움 대상이라 데이터가 없으면 그대로 둔다
     const out = reparse(r.output);
     const inserted = out.sections[0]?.paragraphs.slice(path[0] + 1, path[0] + 5) ?? [];
     assert.deepEqual(inserted.map((p) => p.logicalText), ["첫 줄", "둘째 줄", "", "넷째 &줄"], name);
@@ -469,7 +472,7 @@ test("E9: 누름틀·책갈피가 든 조각은 id와 이름이 재발급돼 짝
   const fieldFrag = asObject(extractFragment(states, { sectionIndex: 0, parentPath: [], from: 1, to: 2 }));
   const fields = readFixture("hancom/field-states");
   const t = tpl({ anchors: [lineAnchor("a", [2], "확인자 성명: \uFFFC이름을 입력\uFFFC")], rules: [injectRule("r", "a", "after", fieldFrag)] });
-  const r = done(generate(fields, t, ds({})));
+  const r = done(generate(fields, t, ds({}), { missing: "keep" })); // 원본·조각의 이름 있는 누름틀은 암묵 채움 대상이라 데이터가 없으면 그대로 둔다
   const xml = text(r.output);
   const begins = [...xml.matchAll(/<hp:fieldBegin id="(\d+)"/g)].map((m) => m[1] ?? "");
   const ends = [...xml.matchAll(/<hp:fieldEnd beginIDRef="(\d+)"/g)].map((m) => m[1] ?? "");
@@ -485,7 +488,7 @@ test("E9: 누름틀·책갈피가 든 조각은 id와 이름이 재발급돼 짝
   const bookFrag = asObject(extractFragment(fdoc, { sectionIndex: 0, parentPath: [], from: idx, to: idx }));
   const last = (fdoc.sections[0]?.paragraphs.length ?? 1) - 1;
   const tb = tpl({ anchors: [lineAnchor("a", [last], fdoc.sections[0]?.paragraphs[last]?.logicalText ?? "")], rules: [injectRule("r", "a", "after", bookFrag)] });
-  const rb = done(generate(features, tb, ds({})));
+  const rb = done(generate(features, tb, ds({}), { missing: "keep" }));
   const names = [...text(rb.output).matchAll(/<hp:bookmark name="([^"]*)"/g)].map((m) => m[1] ?? "");
   assert.equal(names.length, 2);
   assert.deepEqual(duplicates(names), []);

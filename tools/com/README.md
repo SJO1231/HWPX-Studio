@@ -31,6 +31,7 @@ python tools/com/make_fixtures.py
 | `tables-inline.hwpx` | `앞 문단` + 글자처럼 취급(`treatAsChar="1"`) 2행 3열 표 + `뒤 문단` | 3 |
 | `tables-nested.hwpx` | `중첩 표` + 2행 2열 표(둘째 칸 안에 2행 2열 표) + `끝` | 3 |
 | `tables-rich.hwpx` | `풍부한 표` + 3행 3열 표(셀 안에 누름틀 `이름`과 그림) + `끝` | 3 |
+| `inline-breaks.hwpx` | 줄바꿈(Shift+Enter)·탭: 본문 문단 3개, 줄바꿈이 든 누름틀 `줄`, 탭이 든 누름틀 `탭`, 1행 2열 표(첫 칸에 줄바꿈), `끝` | 7 (표 문단 포함) |
 | `manifest.json` | 아래 항목 | |
 
 `manifest.json` 의 문서별 항목: 파일명, 바이트 크기, sha256, `reopen`(열림 여부·쪽 수), ZIP 항목 목록, `BinData` 항목, 구역 XML 수치(`paragraphs`=`<hp:p` 전체 개수, 최상위 문단, run, `hp:t`, `fieldBegin`/`fieldEnd`, 표, 그림, 탭, 머리말, 꼬리말), 의도한 글이 구역 XML 에 있는지(`text_checks`: 원문 그대로 / 문단 안 `hp:t` 를 이어 붙였을 때), 최상위 문단별 run 목록, 문서별 `observations`.
@@ -39,6 +40,23 @@ python tools/com/make_fixtures.py
 일부만 다시 만들려면 `python tools/com/make_fixtures.py --only tables-merged,tables-inline` 처럼 이름을 준다. 다른 산출물과 `manifest.json`의 다른 항목은 그대로 두고 그 문서의 항목만 바꾼다.
 표 문서 네 개는 한컴이 "표 만들기"의 마지막 설정(글자처럼 취급)을 기억하므로 `TableProperties.TreatAsChar`를 항상 명시해서 만든다.
 표 문서 네 개를 시험에 쓰려면 `node tools/fixtures/scrub-metadata.ts`로 메타데이터를 정리한 뒤 `packages/hwpx-engine/test/fixtures/tables/`에 복사하고 그 폴더의 `SHA256SUMS`를 갱신한다.
+
+## 누름틀 값과 PDF 글 위치 읽기 (`read_text.py`)
+
+```
+python tools/com/read_text.py --spec 명세.json --out 결과.json [--timeout 60]
+```
+
+명세는 `{ "documents": [ { "name": "라벨", "file": "문서.hwpx", "fields": ["누름틀 이름"](선택), "resave": "다시 저장할.hwpx"(선택), "pdf": "저장할.pdf"(선택), "markers": ["PDF에서 위치를 찾을 글"](선택) } ] }`다. 문서마다 작업자를 따로 띄우고 60초가 지나면 그 작업자와 그것이 띄운 `Hwp.exe`만 종료한다(`read_table.py`와 같은 구조). 한 번에 하나만 실행한다.
+결과는 문서마다 열림·쪽 수, `field_text`(`GetFieldText`가 준 문자열 그대로), `resaved`(한컴이 다른 이름으로 다시 저장했는가), `pdf.markers`(각 글의 쪽과 사각형 `x0 y0 x1 y1`, PDF 포인트, 위쪽이 0. PyMuPDF가 있어야 한다)다. 엔진 시험 `inline-com.test.ts`가 쓴다(`HWPX_COM=1`).
+
+## 줄바꿈·탭 관측 (`inline-breaks`, 한컴 13.0.0.711)
+
+- **줄바꿈**: Shift+Enter(COM `HAction.Run("BreakLine")`)는 `hp:t`의 자식 `<hp:lineBreak/>`(속성 없음)로 저장된다. run·문단은 나뉘지 않는다. 문단 맨 앞·맨 뒤·연속한 줄바꿈도 같은 `hp:t` 안에 놓인다. 누름틀 안에서는 `fieldBegin` 컨트롤과 `fieldEnd` 컨트롤 사이의 `hp:t` 하나 안에, 표 칸 안에서는 칸 문단의 `hp:t` 안에 있다.
+- **탭**: `<hp:tab width="N" leader="0" type="1"/>`, `hp:t`의 자식이다. `width`는 조판이 정한 값이다(`inline-breaks`는 3028·3028·3292, 탐색 때 1092~3456). `ph-mixed`의 탭은 `width="0" leader="0" type="0"`인데, 삽입을 나눠 넣은 문단에서 조판 전에 저장된 모양으로 **추정**한다(`inline-breaks`의 같은 방식 탭은 `type="1"`).
+- **`width`·`type`은 읽을 때 쓰이지 않는다**: 엔진이 만든 문서의 탭을 `width="0" type="1"`, `width="0" type="0"`, `width="4000" type="1"`로 바꿔 한컴으로 열면 셋 다 같은 위치(다음 탭 위치)로 그려지고, 한컴이 다시 저장하면 `leader="0" type="1"`과 조판이 정한 `width`로 바뀐다. rhwp는 `type="1"`이면 한컴 PDF와 같은 위치(오차 0.1px)에 그리고 `type="0"`이나 `width="4000"`이면 어긋난다. 그래서 엔진은 `width="0" leader="0" type="1"`로 쓴다.
+- **COM으로 줄바꿈을 넣는 법**: `InsertText`의 `"\n"`은 한컴이 지워 버리고(글자도 줄바꿈도 남지 않는다) `"\r\n"`·`"\r"`은 문단을 나눈다. `PutFieldText`도 같다(`"\n"`은 지워지고 `"\r\n"`·`"\r"`은 값이 두 문단에 걸친다). 줄바꿈 요소는 `BreakLine`으로만 만들어진다.
+- **한컴이 값을 읽는 모양**: `GetFieldText`는 줄바꿈 요소를 글자로 주지 않는다(`첫 줄둘째 줄`). 탭은 `\t`로 준다. 한컴이 직접 만든 줄바꿈·탭 누름틀도 같다. `SaveAs(..., "TEXT")`도 줄바꿈 요소를 글자로 쓰지 않았다. 그래서 줄바꿈이 보존되는지는 읽기 API가 아니라 다시 저장한 HWPX의 요소와 PDF의 줄 위치로 확인한다.
 
 ## 표 속성 읽기 (`read_table.py`)
 

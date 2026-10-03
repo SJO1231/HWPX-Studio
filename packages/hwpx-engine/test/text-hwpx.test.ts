@@ -128,8 +128,8 @@ test("T6: 누락 정책 error·empty·keep이 양쪽에서 같다(실패 코드,
   assert.deepEqual(mdTexts(viaTemplate.md.output), hwpxTexts(viaTemplate.hwpx.output));
 });
 
-test("T6: 값 변환 오류도 양쪽에서 같다(객체 값 DATA_NOT_SCALAR, 줄바꿈 VALUE_CONTROL_CHAR)", () => {
-  for (const [value, code] of [[{ a: 1 }, "DATA_NOT_SCALAR"], ["두\n줄", "VALUE_CONTROL_CHAR"]] as const) {
+test("T6: 값 변환 오류도 양쪽에서 같다(객체 값 DATA_NOT_SCALAR, 제어 문자 VALUE_CONTROL_CHAR). 줄바꿈·탭은 HWPX만 받는다(md·txt는 거절)", () => {
+  for (const [value, code] of [[{ a: 1 }, "DATA_NOT_SCALAR"], ["제어\u0001", "VALUE_CONTROL_CHAR"]] as const) {
     const data = readDataset({ project: { name: "알파", start: "2026-01-01", end: value } });
     const h = generate(readFixture("hancom/ph-single"), tpl({}), data);
     const m = generateText(SINGLE_MD, "md", tpl({}), data);
@@ -180,7 +180,8 @@ test("T6: field 앵커 — hwpx 누름틀과 md {{성명}}에 같은 규칙·같
   ];
   const data = readDataset({ applicant: { name: "김철수" }, checker: { name: "이영희" } });
   const mdText = mdFixture("field-states.md");
-  const both = runBoth("hancom/field-states", mdText, { hwpx: fields, md: fields }, rules, data);
+  // 규칙이 가리키지 않는 소속 누름틀은 hwpx가 이름을 경로로 암묵 채움하므로 누락 정책 keep으로 그대로 둔다(md는 그대로)
+  const both = runBoth("hancom/field-states", mdText, { hwpx: fields, md: fields }, rules, data, { missing: "keep" });
 
   const hwpxValues = listFields(reparse(both.hwpx.output)).map((f) => f.valueText);
   assert.deepEqual(hwpxValues, ["김철수", "합성기관", "이영희"]);
@@ -189,7 +190,8 @@ test("T6: field 앵커 — hwpx 누름틀과 md {{성명}}에 같은 규칙·같
   sameActions(both);
 
   // 값이 없으면 양쪽 모두 같은 정책(empty)으로 빈 글
-  const partial = readDataset({ applicant: { name: "김철수" } });
+  // (소속은 hwpx가 이름을 경로로 암묵 채우므로 같은 값을 데이터에 둔다)
+  const partial = readDataset({ applicant: { name: "김철수" }, 소속: "합성기관" });
   const empty = runBoth("hancom/field-states", mdText, { hwpx: fields, md: fields }, rules, partial, { missing: "empty" });
   assert.deepEqual(listFields(reparse(empty.hwpx.output)).map((f) => f.valueText), ["김철수", "합성기관", ""]);
   assert.deepEqual(mdTexts(empty.md.output).map((t) => t.slice(t.indexOf(": ") + 2)), ["김철수", "합성기관", ""]);
@@ -197,7 +199,7 @@ test("T6: field 앵커 — hwpx 누름틀과 md {{성명}}에 같은 규칙·같
 
   // 조건이 거짓인 규칙은 양쪽에서 그 자리를 건드리지 않는다
   const guarded = [{ ...rules[0], when: { path: "applicant.name", op: "eq", value: "다른 사람" } }, rules[1]];
-  const skipped = runBoth("hancom/field-states", mdText, { hwpx: fields, md: fields }, guarded, data);
+  const skipped = runBoth("hancom/field-states", mdText, { hwpx: fields, md: fields }, guarded, readDataset({ applicant: { name: "김철수" }, checker: { name: "이영희" }, 소속: "합성기관" }));
   assert.deepEqual(listFields(reparse(skipped.hwpx.output)).map((f) => f.valueText), ["이름을 입력", "합성기관", "이영희"]);
   assert.equal(mdTexts(skipped.md.output)[0], "성명: {{성명}}");
   assert.deepEqual(skipped.hwpx.report.plan.inactiveRules, ["r0"]);
@@ -278,12 +280,15 @@ test("T6: insertText — 값의 줄바꿈이 hwpx에서는 문단, md에서는 �
   assert.deepEqual(both.hwpx.report.plan.expected, { paragraphs: 3 });
   assert.deepEqual(both.md.report.plan.expected, { blocks: 3 });
 
-  // 값이 없으면 조건이 거짓이라 양쪽 모두 아무것도 넣지 않는다
-  const none = runBoth("hancom/blocks", mdText, anchors, rules, readDataset({}));
-  assert.deepEqual(mdTexts(none.md.output).slice(0, 3), ["1. 개요", "개요 본문입니다.", "2. 선택 조항"]);
-  assert.deepEqual(hwpxTexts(none.hwpx.output).slice(0, 3), ["1. 개요", "개요 본문입니다.", "2. 선택 조항"]);
-  assert.deepEqual(none.hwpx.report.plan.inactiveRules, ["r"]);
-  assert.deepEqual(none.md.report.plan.inactiveRules, ["r"]);
+  // 값이 없으면 조건이 거짓이라 양쪽 모두 아무것도 넣지 않는다: md는 그대로 낸다(md·txt 동작 유지). hwpx는 적용된 액션이 없어 FILL_NOTHING_APPLIED로 실패한다
+  const forNone = tpl({ anchors: anchors.hwpx, rules });
+  const noneHwpx = generate(readFixture("hancom/blocks"), forNone, readDataset({}));
+  assert.ok(!noneHwpx.ok && noneHwpx.report.issues.some((i) => i.code === "FILL_NOTHING_APPLIED"));
+  assert.deepEqual(noneHwpx.report.plan.inactiveRules, ["r"]);
+  const noneMd = generateText(mdText, "md", tpl({ anchors: anchors.md, rules }), readDataset({}));
+  assert.ok(noneMd.ok && !noneMd.dryRun);
+  assert.deepEqual(mdTexts(noneMd.output).slice(0, 3), ["1. 개요", "개요 본문입니다.", "2. 선택 조항"]);
+  assert.deepEqual(noneMd.report.plan.inactiveRules, ["r"]);
 });
 
 test("T6: 같은 입력으로 두 번 돌리면 양쪽 출력이 같다. 두 보고서 모두 값 원문을 담지 않는다", () => {

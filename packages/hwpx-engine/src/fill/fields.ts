@@ -1,9 +1,8 @@
 import { listFields } from "../model/fields.ts";
 import type { FieldInfo, FieldMark, FieldShape, HwpxDocument, ParagraphNode, SectionModel } from "../model/types.ts";
-import { escapeText } from "../xml/chars.ts";
 import { attrNode } from "../xml/tree.ts";
 import { paragraphAtPath, isTextPiece, nsPrefixOf } from "./doc.ts";
-import { encodeValue, span, type Ctx, type Fail, type TextPlan } from "./text.ts";
+import { encodeValue, span, valueXml, type Ctx, type Fail, type TextPlan } from "./text.ts";
 
 /** 누름틀 하나: 시작·끝 표식과 그 문단. */
 export type FieldTarget = {
@@ -71,15 +70,16 @@ export function planFieldFill(ctx: Ctx, target: FieldTarget, value: string, reas
     check: { beginStart: begin.element.start, name: info.name, value, setsDirty: value !== "" },
   };
   const texts = par.pieces.slice(begin.pieceIndex + 1, end.pieceIndex).filter(isTextPiece);
+  const prefix = nsPrefixOf(begin.element);
   if (info.shape === "simple") {
     texts.forEach((piece, i) => {
       const text = i === 0 ? value : "";
-      plan.edits.push(span(ctx, piece.start, piece.end, encodeValue(ctx, piece, text), reason));
+      plan.edits.push(span(ctx, piece.start, piece.end, encodeValue(ctx, piece, text, prefix), reason));
       plan.repls.push({ start: piece.logicalStart, end: piece.logicalEnd, text });
     });
   } else if (value !== "") {
-    const tag = `${nsPrefixOf(begin.element)}t`;
-    plan.edits.push(span(ctx, beginPiece.end, beginPiece.end, `<${tag}>${escapeText(value)}</${tag}>`, reason));
+    const tag = `${prefix}t`;
+    plan.edits.push(span(ctx, beginPiece.end, beginPiece.end, `<${tag}>${valueXml(value, prefix)}</${tag}>`, reason));
     plan.repls.push({ start: beginPiece.logicalEnd, end: beginPiece.logicalEnd, text: value });
   }
 

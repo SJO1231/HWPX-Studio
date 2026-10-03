@@ -526,3 +526,31 @@ export function readDataset(input: unknown): Dataset {
   };
   return { data: part("data"), derived: part("derived") };
 }
+
+/** 여러 건 데이터의 한 건: 읽은 데이터 묶음, 또는 그 건을 데이터로 읽을 수 없는 사유 */
+export type BatchRecord = { dataset: Dataset } | { error: { code: string; message: string } };
+
+/**
+ * 여러 건 데이터를 읽는다: JSON 최상위가 배열이거나 묶음 형식(`schema`가 `hwpx-studio/dataset@1`)의 `data`가 배열이면 원소마다 한 건이다
+ * (묶음의 `derived`는 모든 건이 함께 쓴다). 그 밖이면(한 건짜리 데이터) `undefined`다. 원소가 JSON 객체가 아니면 그 건만 `DATA_SCHEMA` 오류다.
+ * JSON이 틀렸거나 묶음의 `derived`가 객체가 아니면 `readDataset`처럼 `DATA_*` 오류를 던진다.
+ */
+export function readBatchRecords(input: unknown): BatchRecord[] | undefined {
+  const raw = typeof input === "string" ? parseJson(input, "DATA_JSON", "데이터") : input;
+  let items: unknown[];
+  let derived: Obj = {};
+  if (Array.isArray(raw)) {
+    items = raw;
+  } else if (isObj(raw) && raw["schema"] === DATASET_SCHEMA && Array.isArray(raw["data"])) {
+    items = raw["data"];
+    if (raw["derived"] !== undefined) {
+      if (!isObj(raw["derived"])) fail("DATA_SCHEMA", "derived가 객체가 아닙니다.");
+      derived = raw["derived"];
+    }
+  } else {
+    return undefined;
+  }
+  return items.map((item, i): BatchRecord =>
+    isObj(item) ? { dataset: { data: item, derived } } : { error: { code: "DATA_SCHEMA", message: `${i + 1}번째 건이 JSON 객체가 아닙니다.` } },
+  );
+}

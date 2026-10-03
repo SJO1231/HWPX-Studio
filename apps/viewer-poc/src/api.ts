@@ -109,7 +109,11 @@ function fill(session: Session, store: SessionStore, body: unknown): FillRespons
     validation: validation === null ? null : { beforeErrors: validation.before.errors, afterErrors: validation.after.errors, newErrors: validation.newErrors.length },
   };
   const issues = result.report.issues.map(issueJson);
-  if (!result.ok || result.dryRun) return { ok: false, summary, issues };
+  if (!result.ok || result.dryRun) {
+    // 엔진이 "적용된 채움 0"을 직접 실패로 내므로 그 코드를 응답에 싣는다
+    const nothing = issues.some((i) => i.code === "FILL_NOTHING_APPLIED");
+    return nothing ? { ok: false, code: "FILL_NOTHING_APPLIED", summary, issues } : { ok: false, summary, issues };
+  }
   // 게이트는 통과했지만 적용된 채움이 하나도 없다(건너뜀만 있다): 바뀐 것이 없으므로 성공으로 알리지 않고 세션도 그대로 둔다
   if (summary.actions.reduce((n, a) => n + a.targets, 0) === 0) return { ok: false, code: "FILL_NOTHING_APPLIED", summary, issues };
   // 게이트를 통과한 바이트만 세션에 반영한다

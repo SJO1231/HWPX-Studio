@@ -334,6 +334,11 @@ test("누락 정책 세 가지(error·empty·keep)로 같은 repeat가 hwpx와 m
     for (const data of [{ project: "P" }, { project: "P", items: [{ name: "갑" }] }]) {
       const h = generate(repeatFixture(), tplHwpx, readDataset(data), { missing });
       const m = run(MD_SAME, tplHwpx, data, { missing });
+      if (missing === "keep" && !("items" in data)) {
+        // 그대로 두기만 하면 hwpx는 적용된 액션이 없어 FILL_NOTHING_APPLIED로 실패한다. md는 그대로 낸다(md·txt 동작 유지)
+        assert.ok(m.ok && !h.ok && h.report.issues.some((i) => i.code === "FILL_NOTHING_APPLIED"));
+        continue;
+      }
       assert.equal(m.ok, h.ok, `${missing} ${JSON.stringify(data)}: 성패가 같아야 한다`);
       if (!m.ok && !h.ok) {
         const codes = (rs: { severity: string; code: string }[]) => [...new Set(rs.filter((i) => i.severity === "error").map((i) => i.code))].sort();

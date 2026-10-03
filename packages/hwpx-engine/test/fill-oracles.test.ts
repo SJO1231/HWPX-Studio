@@ -57,6 +57,20 @@ const CASES: Case[] = [
     paraDelta: 0,
   },
   {
+    // M1-A: 줄바꿈·탭 값을 템플릿 없이 누름틀(이름 = 데이터 경로)과 {{}}에 채운다. rhwp가 값을 \n·\t로 읽는다
+    name: "m1-field-multiline",
+    source: "hancom/field-states",
+    make: () => produce("hancom/field-states", emptyTemplate(), { 성명: "첫 줄\r\n둘째 줄", 소속: "가\t나" }),
+    fieldValues: ["첫 줄\n둘째 줄", "가\t나", "첫 줄\n둘째 줄"],
+    paraDelta: 0,
+  },
+  {
+    name: "m1-placeholder-multiline",
+    source: "hancom/ph-single",
+    make: () => produce("hancom/ph-single", emptyTemplate(), { project: { name: "알파\n베타", start: "가\t나", end: "\n끝" } }),
+    paraDelta: 0,
+  },
+  {
     name: "e7-delete",
     source: "hancom/blocks",
     make: () =>

@@ -215,19 +215,22 @@ test("누락 정책: error는 DATA_MISSING, empty는 빈 글, keep은 자리 유
   for (const policy of policies) assert.equal(resolveValue(DS, { path: "name" }, policy).kind, "text");
 });
 
-test("VALUE_CONTROL_CHAR: XML 금지 문자·탭·줄바꿈은 거절하고, insertText 방식은 줄바꿈만 허용한다", () => {
-  for (const path of ["nl", "tab", "ctl"]) {
+test("VALUE_CONTROL_CHAR: XML 금지 문자는 거절하고, 줄바꿈·탭은 기본(inline)이 받고, insertText 방식은 줄바꿈만, md·txt 방식은 둘 다 거절한다", () => {
+  for (const path of ["ctl"]) {
     const r = resolveValue(DS, { path }, "error");
     assert.equal(r.kind === "error" ? r.code : r.kind, "VALUE_CONTROL_CHAR");
     // 오류 메시지에 값 원문이 없다
     assert.ok(r.kind === "error" && !r.message.includes("두") && !r.message.includes("탭") && !r.message.includes("제어"), r.kind === "error" ? r.message : "");
   }
-  assert.equal(resolveValue(DS, { path: "nl" }, "error", true).kind, "text");
-  assert.equal(resolveValue(DS, { path: "tab" }, "error", true).kind, "error");
-  assert.equal(resolveValue(DS, { path: "ctl" }, "error", true).kind, "error");
+  for (const path of ["nl", "tab"]) assert.equal(resolveValue(DS, { path }, "error").kind, "text");
+  assert.equal(resolveValue(DS, { path: "nl" }, "error", "paragraphs").kind, "text");
+  assert.equal(resolveValue(DS, { path: "tab" }, "error", "paragraphs").kind, "error");
+  assert.equal(resolveValue(DS, { path: "ctl" }, "error", "paragraphs").kind, "error");
+  for (const path of ["nl", "tab", "ctl"]) assert.equal(resolveValue(DS, { path }, "error", "none").kind, "error");
   assert.equal(resolveValue(DS, { text: "a\u0000b" }, "error").kind, "error");
   assert.equal(checkValueText("정상 &<> \"'"), undefined);
-  assert.equal(checkValueText("\r"), "U+000D");
+  assert.equal(checkValueText("\r"), undefined);
+  assert.equal(checkValueText("\r", "none"), "U+000D");
   assert.equal(checkValueText("\ud800"), "U+D800");
   assert.equal(checkValueText("￿"), "U+FFFF");
   assert.equal(checkValueText("😀"), undefined);

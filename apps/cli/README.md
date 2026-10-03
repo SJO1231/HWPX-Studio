@@ -12,7 +12,7 @@ HWPX 문서와 Markdown·텍스트 문서를 검사하고 채우는 명령줄 �
 | `candidates` | 채울 자리 후보 목록(누름틀, `{{}}`, 빈 값 셀, `라벨:` 뒤 빈 곳 등) | `.hwpx` |
 | `fragment extract` | 문단 구간을 조각 JSON으로 뜬다 | `.hwpx` |
 | `fragment import` | 조각 JSON을 다른 문서의 문단 앞·뒤나 표 셀 안에 가져온다(저장 게이트 포함) | `.hwpx` |
-| `fill` | 데이터로 `{{}}`·누름틀을 채우고 템플릿 규칙(채움·삭제·삽입·조각 주입·표 설정·표 크기·행 반복)을 적용한다 | `.hwpx` `.md` `.txt` |
+| `fill` | 데이터로 `{{}}`·누름틀을 채우고 템플릿 규칙(채움·삭제·삽입·조각 주입·표 설정·표 크기·행 반복)을 적용한다. `.hwpx`는 `--batch`로 데이터 배열의 원소마다 결과 파일을 만든다 | `.hwpx` `.md` `.txt` |
 | `table list` | 표마다 위치·행×열·너비·글자처럼 취급·쪽 나눔·제목 행 반복·병합 수를 낸다(글 내용은 없다) | `.hwpx` |
 | `table set` | 최상위 표 하나의 설정(글자처럼 취급·쪽 나눔·제목 행 반복)과 크기(너비·비율·열 너비)를 바꾼다(저장 게이트 포함) | `.hwpx` |
 | `validate` | 참조 무결성·인스턴스 중복·패키지 구조를 검사한다(`--baseline`으로 원본과 대조) | `.hwpx` |
@@ -47,7 +47,35 @@ hwpx fill form.hwpx --data data.json -o filled.hwpx --report report.json
 hwpx fill form.hwpx --data data.json -o filled.hwpx --mode strict --missing empty
 ```
 
+템플릿 없이도 **누름틀**을 채운다: 템플릿이 없거나 템플릿에 그 누름틀을 가리키는 규칙(조건이 거짓인 것도)이 없으면, 이름이 데이터 경로 문법(`이름(.이름)*`, 이름은 글자·숫자·`_`·`-`)에 맞는 누름틀은 "이름 = 데이터 경로"로 채운다(`{{}}`와 같은 자리에서 같은 누락 정책·같은 보고. 같은 이름의 누름틀은 전부 같은 값). 이름이 경로가 아닌 누름틀(공백·기호가 든 이름, 이름이 빈 것)은 `건너뜀 [FIELD_NAME_NOT_PATH]`로 보고하고 그대로 둔다. 채울 수 없는 모양의 누름틀(`FIELD_UNSUPPORTED_SHAPE`)도 암묵 채움에서는 오류가 아니라 건너뜀이다.
+
+채운 자리가 하나도 없으면(적용된 액션 0) 원본 복사본을 내지 않고 `FILL_NOTHING_APPLIED`로 종료 코드 1이다(출력 파일 없음, `--report`는 쓰고 건너뜀 사유가 오류 메시지에 든다). `--batch`에서는 그 건만 실패로 센다. md·txt는 지금처럼 채울 것이 없어도 원문 그대로 낸다.
+
 누락 키는 기본(`--missing error`)이면 종료 코드 1로 멈춘다. `--missing empty`는 빈 글로, `--missing keep`은 자리를 그대로 둔다. `--mode`는 `.hwpx` 전용이고(`baseline` 기본, `strict`, `repair`), `--report`는 게이트가 실패해도 쓴다.
+
+값에 줄바꿈·탭이 있으면 `.hwpx`는 문단을 나누지 않고 글 안에 줄바꿈 요소·탭 요소로 넣는다(`\r\n`·`\r`은 `\n`으로 맞춘다. 한컴이 저장한 줄바꿈·탭과 같은 요소다). 누름틀·`{{}}`·낱말·문단·셀·행 반복의 값에 모두 적용된다. 그 밖의 제어 문자(`U+0000`~`U+001F` 가운데 탭·줄바꿈·`\r` 말고)는 `VALUE_CONTROL_CHAR`로 거절한다. `insertText`는 줄바꿈마다 문단을 나누고 탭은 거절한다. md·txt는 줄바꿈·탭이 든 값을 지금처럼 거절한다.
+
+```
+hwpx fill form.hwpx --data data.json -o filled.hwpx        # data.json 값에 "첫 줄\n둘째 줄"이 있어도 된다
+```
+
+### 여러 건 만들기 (`--batch`)
+
+데이터 JSON의 최상위가 배열이거나(`[ {...}, {...} ]`) 묶음 형식(`hwpx-studio/dataset@1`)의 `data`가 배열이면 원소마다 결과 파일 하나를 만든다. `--batch`를 주고 `-o`에는 **이미 있는 폴더**를 준다.
+
+```
+hwpx fill form.hwpx --data list.json --batch -o results
+hwpx fill form.hwpx --data list.json --batch -o results --name "{{id}}" --report batch-report.json
+hwpx fill form.hwpx --data list.json --batch --dry-run         # 파일 없이 건별 성공·실패만 본다
+```
+
+- 데이터가 배열인데 `--batch`가 없으면 "여러 건 데이터입니다. --batch를 쓰십시오"와 함께 종료 코드 2다. 배열이 아닌데 `--batch`를 주거나 md·txt에 `--batch`를 주어도 2다. 묶음 형식이면 `derived`는 모든 건이 함께 쓴다. 원소가 JSON 객체가 아니면 그 건만 `DATA_SCHEMA`로 실패한다.
+- 파일 이름은 기본 `<원본 이름>-<번호 3자리>.hwpx`(`form-001.hwpx`부터). `--name "{{경로}}"`를 주면 그 원소의 값(문자열·숫자)을 쓴다. 표기 하나가 글 전체여야 한다. 파일 이름에 못 쓰는 문자(`< > : " / \ | ? *`와 제어 문자)와 경로 구분자는 `_`로 바꾸고, 앞뒤 공백과 뒤쪽의 `.`은 떼며, 100자까지만 쓰고, Windows 장치 이름(`CON`, `NUL`, `COM1` …)에는 `_`를 붙인다. 값이 없거나 비거나 문자열·숫자가 아니면 기본 이름을 쓴다. 같은 이름(대소문자 무시)이 또 나오면 뒤에 `-2`, `-3`을 붙인다.
+- 같은 이름의 파일이 폴더에 있으면 `--overwrite` 없이는 **아무 파일도 만들기 전에** 거부한다(종료 코드 2). 원본·데이터·템플릿 파일과 같은 경로, 보고서와 같은 경로도 거부한다. 건마다 같은 폴더의 임시 파일에 쓴 뒤 이름을 바꾼다.
+- 한 건이 실패해도(누락 키, 제어 문자, 게이트 실패) 나머지는 만든다. 실패한 건의 파일은 없고(`--overwrite`로 다시 돌릴 때 전 실행이 남긴 같은 이름의 파일이 있으면 지우고 `이전 결과 파일을 지웠습니다`라고 알린다. `--dry-run`이면 지우지 않는다), 하나라도 실패하면 종료 코드 1이다. 데이터가 0건이면 파일 없이 종료 코드 0이다. 입력 문서를 열 수 없으면 종료 코드 2다.
+- `--template`, `--missing`, `--mode`, `--reissue-internal`은 건마다 같게 적용된다. 같은 입력은 같은 바이트(파일도 보고서도)다.
+- 건마다 한 줄(`성공 001 form-001.hwpx (채움 3, 건너뜀 0)`, 실패는 오류 코드와 메시지)과 마지막에 요약을 낸다. 값 원문은 없다.
+- `--report`는 JSON 하나다: `{ batch, ok, dryRun, total, succeeded, failed, items: [{ index, name, ok, filled, skipped: [{ code, anchor, message }], errorCodes, errors: [{ code, message }] }] }`. `filled`는 채움 액션이 채운 자리 수(템플릿의 채움 규칙, 문서 안 `{{}}`, 이름이 데이터 경로인 누름틀의 암묵 채움을 모두 센다), 실패한 건은 0이다. 값 원문은 없다(`name`은 `--name` 값에서 온 파일 이름이다).
 
 Markdown·텍스트도 같은 데이터·템플릿으로 채운다. UTF-8만 받고 BOM과 줄바꿈 방식(LF·CRLF)은 그대로 둔다.
 

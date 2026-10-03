@@ -37,13 +37,19 @@ const ILLEGAL = /[\u0000-\u0008\u000B\u000C\u000E-\u001F￾￿]|[\uD800-\uDBFF](
 const hex = (cp: number | undefined): string => `U+${(cp ?? 0).toString(16).toUpperCase().padStart(4, "0")}`;
 
 /**
- * 글에 넣을 수 없는 문자(XML 금지 문자, 탭, 줄바꿈)가 있으면 사유를 돌려준다. 값 원문은 담지 않는다.
- * `allowNewlines`는 `insertText`처럼 줄바꿈으로 문단을 나누는 값에 쓴다(탭과 그 밖의 금지 문자는 그대로 거절).
+ * 값의 줄바꿈·탭을 다루는 방식.
+ * - `inline`(기본, HWPX `fill`): 줄바꿈은 줄바꿈 요소, 탭은 탭 요소로 글 안에 들어간다. 줄바꿈 `\r\n`·`\r`은 `\n`으로 맞춘다.
+ * - `paragraphs`(`insertText`): 줄바꿈마다 문단을 나눈다. 탭은 거절한다.
+ * - `none`(md·txt 어댑터): 줄바꿈·탭을 거절한다.
+ * 어느 방식이든 그 밖의 XML 금지 문자(제어 문자)는 거절한다.
  */
-export function checkValueText(text: string, allowNewlines = false): string | undefined {
+export type ControlMode = "inline" | "paragraphs" | "none";
+
+/** 글에 넣을 수 없는 문자(XML 금지 문자, 그리고 방식(`mode`)이 받지 않는 탭·줄바꿈)가 있으면 사유를 돌려준다. 값 원문은 담지 않는다. */
+export function checkValueText(text: string, mode: ControlMode = "inline"): string | undefined {
   const bad = text.search(ILLEGAL);
   if (bad >= 0) return hex(text.codePointAt(bad));
-  const control = allowNewlines ? text.indexOf("\t") : text.search(/[\t\n\r]/);
+  const control = mode === "inline" ? -1 : mode === "paragraphs" ? text.indexOf("\t") : text.search(/[\t\n\r]/);
   if (control >= 0) return hex(text.codePointAt(control));
   return undefined;
 }
@@ -83,7 +89,10 @@ export function scalarToText(value: unknown): string | undefined {
   return undefined;
 }
 
-export function resolvePathValue(dataset: Dataset, path: string, policy: MissingPolicy, allowNewlines = false): ValueOutcome {
+/** `inline` 방식이면 `\r\n`·`\r`을 `\n`으로 맞춘다. 다른 방식은 그대로 둔다(줄바꿈을 거절하거나 `splitLines`가 처리한다). */
+const normalizeNewlines = (text: string, mode: ControlMode): string => (mode === "inline" ? text.replace(/\r\n?/g, "\n") : text);
+
+export function resolvePathValue(dataset: Dataset, path: string, policy: MissingPolicy, mode: ControlMode = "inline"): ValueOutcome {
   const found = lookupPath(dataset, path);
   if (!found.found || found.value === null) {
     if (policy === "empty") return { kind: "empty", path };
@@ -94,11 +103,11 @@ export function resolvePathValue(dataset: Dataset, path: string, policy: Missing
   if (text === undefined) {
     return { kind: "error", code: "DATA_NOT_SCALAR", message: `데이터의 ${path}는 문자열·숫자·불리언이 아닙니다.`, path };
   }
-  const bad = checkValueText(text, allowNewlines);
+  const bad = checkValueText(text, mode);
   if (bad !== undefined) {
     return { kind: "error", code: "VALUE_CONTROL_CHAR", message: `데이터의 ${path} 값에 글에 넣을 수 없는 문자 ${bad}가 있습니다.`, path };
   }
-  return { kind: "text", text, path };
+  return { kind: "text", text: normalizeNewlines(text, mode), path };
 }
 
 /** 값 출처(`{path}` 또는 `{text}`)를 해석한다. 누락 정책은 `policy`를 따른다. */
@@ -106,13 +115,13 @@ export function resolveValue(
   dataset: Dataset,
   source: ValueSource,
   policy: MissingPolicy,
-  allowNewlines = false,
+  mode: ControlMode = "inline",
 ): ValueOutcome {
   if ("text" in source) {
-    const bad = checkValueText(source.text, allowNewlines);
+    const bad = checkValueText(source.text, mode);
     return bad === undefined
-      ? { kind: "text", text: source.text }
+      ? { kind: "text", text: normalizeNewlines(source.text, mode) }
       : { kind: "error", code: "VALUE_CONTROL_CHAR", message: `값에 글에 넣을 수 없는 문자 ${bad}가 있습니다.` };
   }
-  return resolvePathValue(dataset, source.path, policy, allowNewlines);
+  return resolvePathValue(dataset, source.path, policy, mode);
 }

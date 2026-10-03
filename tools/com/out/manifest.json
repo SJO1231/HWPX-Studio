@@ -2248,6 +2248,344 @@
         "ok": true,
         "page_count": 1
       }
+    },
+    {
+      "file": "inline-breaks.hwpx",
+      "bytes": 15872,
+      "sha256": "c9597f342aaa4ec99f9319beddb84a6c112747c4dde0c1d7074d5415a974b702",
+      "zip_entries": [
+        "mimetype",
+        "version.xml",
+        "Contents/header.xml",
+        "Contents/section0.xml",
+        "Preview/PrvText.txt",
+        "settings.xml",
+        "Preview/PrvImage.png",
+        "META-INF/container.rdf",
+        "Contents/content.hpf",
+        "META-INF/container.xml",
+        "META-INF/manifest.xml"
+      ],
+      "bindata_entries": [],
+      "section0": {
+        "paragraphs": 9,
+        "top_level_paragraphs": 7,
+        "runs": 10,
+        "text_nodes": 13,
+        "field_begin": 2,
+        "field_end": 2,
+        "tables": 1,
+        "pictures": 0,
+        "tabs": 3,
+        "line_breaks": 3,
+        "headers": 0,
+        "footers": 0
+      },
+      "text_checks": {
+        "첫 줄": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "둘째 줄": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "가": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "나": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "다": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "라": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "누름틀: ": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "옆 칸": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        },
+        "끝": {
+          "in_raw_section_xml": true,
+          "in_joined_paragraph_text": true
+        }
+      },
+      "top_level_paragraphs_detail": [
+        {
+          "text": "첫 줄\n둘째 줄",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": []
+            },
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "첫 줄\n둘째 줄"
+              ]
+            }
+          ]
+        },
+        {
+          "text": "가\t나",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "가\t나"
+              ]
+            }
+          ]
+        },
+        {
+          "text": "다\t라",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "다\t라"
+              ]
+            }
+          ]
+        },
+        {
+          "text": "누름틀: 첫 줄\n둘째 줄",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "누름틀: ",
+                {
+                  "el": "fieldBegin"
+                },
+                "첫 줄\n둘째 줄",
+                {
+                  "el": "fieldEnd"
+                },
+                ""
+              ]
+            }
+          ]
+        },
+        {
+          "text": "누름틀: 가\t나",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "누름틀: ",
+                {
+                  "el": "fieldBegin"
+                },
+                "가\t나",
+                {
+                  "el": "fieldEnd"
+                },
+                ""
+              ]
+            }
+          ]
+        },
+        {
+          "text": "",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                {
+                  "el": "tbl"
+                },
+                ""
+              ]
+            }
+          ]
+        },
+        {
+          "text": "끝",
+          "runs": [
+            {
+              "charPrIDRef": "0",
+              "bold": false,
+              "content": [
+                "끝"
+              ]
+            }
+          ]
+        }
+      ],
+      "privacy_clean": true,
+      "observations": {
+        "inline_elements": {
+          "tab": [
+            {
+              "width": "3028",
+              "leader": "0",
+              "type": "1"
+            },
+            {
+              "width": "3028",
+              "leader": "0",
+              "type": "1"
+            },
+            {
+              "width": "3292",
+              "leader": "0",
+              "type": "1"
+            }
+          ],
+          "lineBreak": [
+            {},
+            {},
+            {}
+          ],
+          "parents": [
+            "t"
+          ]
+        },
+        "fields": [
+          {
+            "name": "줄",
+            "type": "CLICK_HERE",
+            "dirty": "1",
+            "editable": "1",
+            "params": {
+              "Prop": "9",
+              "Command": "Clickhere:set:45:Direction:wstring:3:안내줄 HelpState:wstring:0:  ",
+              "Direction": "안내줄"
+            },
+            "t_between": [
+              {
+                "text": "첫 줄\n둘째 줄",
+                "charPrIDRef": "0",
+                "charPr": {
+                  "textColor": "#000000",
+                  "children": [
+                    "fontRef",
+                    "ratio",
+                    "spacing",
+                    "relSz",
+                    "offset",
+                    "underline",
+                    "strikeout",
+                    "outline",
+                    "shadow"
+                  ]
+                }
+              }
+            ],
+            "has_t_between": true,
+            "has_t_element_between": true
+          },
+          {
+            "name": "탭",
+            "type": "CLICK_HERE",
+            "dirty": "1",
+            "editable": "1",
+            "params": {
+              "Prop": "9",
+              "Command": "Clickhere:set:45:Direction:wstring:3:안내탭 HelpState:wstring:0:  ",
+              "Direction": "안내탭"
+            },
+            "t_between": [
+              {
+                "text": "가\t나",
+                "charPrIDRef": "0",
+                "charPr": {
+                  "textColor": "#000000",
+                  "children": [
+                    "fontRef",
+                    "ratio",
+                    "spacing",
+                    "relSz",
+                    "offset",
+                    "underline",
+                    "strikeout",
+                    "outline",
+                    "shadow"
+                  ]
+                }
+              }
+            ],
+            "has_t_between": true,
+            "has_t_element_between": true
+          }
+        ],
+        "tables": [
+          {
+            "rowCnt": "1",
+            "colCnt": "2",
+            "cells": [
+              {
+                "row": 0,
+                "col": 0,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "셀 첫 줄\n셀 둘째 줄",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "셀 첫 줄\n셀 둘째 줄"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "row": 0,
+                "col": 1,
+                "header": "0",
+                "paragraphs": [
+                  {
+                    "text": "옆 칸",
+                    "runs": [
+                      {
+                        "charPrIDRef": "0",
+                        "bold": false,
+                        "content": [
+                          "옆 칸"
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "exact_text_mismatches": [],
+      "reopen": {
+        "ok": true,
+        "page_count": 1,
+        "field_list": [
+          "줄",
+          "탭"
+        ],
+        "field_text": {
+          "줄": "첫 줄둘째 줄",
+          "탭": "가\t나"
+        }
+      }
     }
   ],
   "failures": [],

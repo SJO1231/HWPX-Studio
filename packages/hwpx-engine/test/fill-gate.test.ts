@@ -85,19 +85,21 @@ test("E10·G2: 정책은 템플릿 options.missing으로도 정하고, 호출 �
 test("E10·G2: 명시한 fill 규칙도 같은 정책을 따른다(빈 글이면 dirty·글자모양을 건드리지 않는다)", () => {
   const fields = readFixture("hancom/field-states");
   const t = tpl({ anchors: [{ id: "a", kind: "field", name: "성명" }], rules: [fillRule("r", "a", { path: "없는.경로" })] });
-  assert.deepEqual(failed(generate(fields, t, ds({}))), ["DATA_MISSING"]);
-  const empty = done(generate(fields, t, ds({}), { missing: "empty" }));
+  // 소속 누름틀은 규칙이 없어 이름(소속)을 경로로 암묵 채움 대상이다: 같은 값을 데이터에 두어 이 시험이 규칙의 누락 정책만 보게 한다
+  const data = ds({ 소속: "합성기관" });
+  assert.deepEqual(failed(generate(fields, t, data)), ["DATA_MISSING"]);
+  const empty = done(generate(fields, t, data, { missing: "empty" }));
   assert.deepEqual(listFields(reparse(empty.output)).map((f) => [f.valueText, f.dirty]), [["", "0"], ["합성기관", "1"], ["", "0"]]);
-  const keep = done(generate(fields, t, ds({}), { missing: "keep" }));
+  const keep = done(generate(fields, t, data, { missing: "keep" }));
   assert.ok(bytesEqual(keep.output, fields), "keep이면 편집이 없다");
   assert.deepEqual(keep.report.plan.kept, [{ path: "없는.경로", count: 1 }]);
 });
 
-test("E10: 객체·배열 값은 DATA_NOT_SCALAR, 줄바꿈·탭·금지 문자가 든 값은 VALUE_CONTROL_CHAR로 거절한다", () => {
+test("E10: 객체·배열 값은 DATA_NOT_SCALAR, 금지 문자(제어 문자)가 든 값은 VALUE_CONTROL_CHAR로 거절한다(줄바꿈·탭은 요소로 넣는다: fill-linebreak.test.ts)", () => {
   const base = { project: { name: "알파", start: "S", end: "E" } };
   assert.deepEqual(failed(generate(SINGLE, emptyTemplate(), ds({ project: { ...base.project, end: { a: 1 } } }))), ["DATA_NOT_SCALAR"]);
   assert.deepEqual(failed(generate(SINGLE, emptyTemplate(), ds({ project: { ...base.project, end: ["x"] } }))), ["DATA_NOT_SCALAR"]);
-  for (const bad of ["두\n줄", "탭\t", "제어\u0001", "\ud800"]) {
+  for (const bad of ["제어\u0001", "\ud800"]) {
     assert.deepEqual(failed(generate(SINGLE, emptyTemplate(), ds({ project: { ...base.project, end: bad } }))), ["VALUE_CONTROL_CHAR"]);
   }
 });
@@ -126,7 +128,7 @@ function dedupeParagraphIds(bytes: Uint8Array): { output: Uint8Array; repaired: 
 
 test("E11: baseline — 원래 있던 오류는 경고로 보고하고 통과한다", () => {
   assert.deepEqual(validateDocument(FEATURES).errors.map((e) => e.code), ["INST_DUP_ID"]);
-  const r = done(generate(FEATURES, featuresTemplate(), ds({})));
+  const r = done(generate(FEATURES, featuresTemplate(), ds({}), { missing: "keep" })); // 문서의 이름 있는 누름틀은 암묵 채움 대상이라 데이터가 없으면 그대로 둔다
   assert.deepEqual(r.report.validation?.newErrors, []);
   assert.deepEqual(r.report.validation?.preexisting.map((e) => e.code), ["INST_DUP_ID"]);
   assert.ok(r.report.issues.some((i) => i.severity === "warning" && i.code === "INST_DUP_ID" && i.message.startsWith("원래 있던 오류")));
@@ -136,7 +138,7 @@ test("E11: baseline — 원래 있던 오류는 경고로 보고하고 통과한
 });
 
 test("E11: strict — 원래 오류까지 포함해 오류가 하나라도 있으면 차단하고 출력이 없다", () => {
-  const r = generate(FEATURES, featuresTemplate(), ds({}), { mode: "strict" });
+  const r = generate(FEATURES, featuresTemplate(), ds({}), { mode: "strict", missing: "keep" });
   const codes = failed(r);
   assert.ok(codes.includes("INST_DUP_ID") && codes.includes("GATE_ERRORS"), codes.join());
   assert.ok(codes.includes("RES_DANGLING"), "엄격 방식은 한컴이 받아 주는 위반도 오류로 올린다");
@@ -146,7 +148,7 @@ test("E11: strict — 원래 오류까지 포함해 오류가 하나라도 있�
 });
 
 test("E11: repair — 주입된 보정 함수로 먼저 고친 결과를 원본으로 삼아 통과하고, 원장에 보정 결과를 남긴다", () => {
-  const r = done(generate(FEATURES, featuresTemplate(), ds({}), { mode: "repair", repair: dedupeParagraphIds }));
+  const r = done(generate(FEATURES, featuresTemplate(), ds({}), { mode: "repair", repair: dedupeParagraphIds, missing: "keep" }));
   assert.equal(r.report.repaired, 1);
   assert.equal(validateDocument(r.output).errors.length, 0, "재발급 뒤 오류가 없다");
   assert.deepEqual(r.report.validation?.preexisting, []);
@@ -161,7 +163,7 @@ test("E11: repair — 주입된 보정 함수로 먼저 고친 결과를 원본�
     output: mutateEntryText(bytes, SEC, (x) => x.replace('<hp:tbl id="1001"', '<hp:tbl id="1002"')),
     repaired: [],
   });
-  assert.ok(failed(generate(FEATURES, featuresTemplate(), ds({}), { mode: "repair", repair: breaking })).includes("GATE_REPAIR_REGRESSED"));
+  assert.ok(failed(generate(FEATURES, featuresTemplate(), ds({}), { mode: "repair", repair: breaking, missing: "keep" })).includes("GATE_REPAIR_REGRESSED"));
 });
 
 test("E11: baseline이라도 편집이 새 오류를 만들면 GATE_NEW_ERRORS로 막는다(짝 없는 누름틀이 든 조각)", () => {
@@ -301,7 +303,7 @@ test("G4: 값이 다른 출력은 값 재읽기(REREAD_TEXT)와 계획 대조로
   // 누름틀: 값이 다르거나 dirty가 꺼진 출력
   const fields = readFixture("hancom/field-states");
   const t = tpl({ anchors: [{ id: "a", kind: "field", name: "소속" }], rules: [fillRule("r", "a", { text: "값" })] });
-  const wrong = generate(fields, t, ds({}), hook((b) => mutateEntryText(b, SEC, (x) => x.replace("<hp:t>값</hp:t>", "<hp:t>갑</hp:t>"))));
+  const wrong = generate(fields, t, ds({}), { ...hook((b) => mutateEntryText(b, SEC, (x) => x.replace("<hp:t>값</hp:t>", "<hp:t>갑</hp:t>"))), missing: "keep" });
   assert.ok(failed(wrong).includes("REREAD_FIELD"));
 });
 

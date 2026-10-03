@@ -145,6 +145,14 @@ export function generate(bytes: Uint8Array, template: Template, dataset: Dataset
   report.plan = built.report;
   issues.push(...built.report.issues);
   if (errorsOf(built.report.issues).length > 0) return failed();
+  // 채운 자리·적용한 액션이 하나도 없으면 사용자가 바라던 결과가 아니다: 원본 복사본을 내지 않고 건너뜀 사유와 함께 실패로 알린다
+  if (built.report.actions.length === 0) {
+    const byCode = new Map<string, number>();
+    for (const s of built.report.skipped) byCode.set(s.code, (byCode.get(s.code) ?? 0) + 1);
+    const why = byCode.size === 0 ? "" : ` 건너뜀: ${[...byCode].map(([code, n]) => `${code} ${n}곳`).join(", ")}.`;
+    issues.push(makeIssue("error", "FILL_NOTHING_APPLIED", `채워 넣은 자리가 없습니다(적용된 액션 0).${why}`));
+    return failed();
+  }
   if (dryRun) return { ok: true, dryRun: true, report };
 
   // 3. 적용·재파싱(단계마다 보존·수량·값 재읽기 확인)

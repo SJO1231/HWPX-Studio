@@ -324,20 +324,19 @@ test("repeat 오류: 배열이 아니면 DATA_NOT_ARRAY, 값이 없으면 정책
   const empty = done(run(bytes, repeatTemplate(), { project: "x" }, { missing: "empty" }));
   assert.deepEqual(rowsText(empty.output), ["번호|이름|내용", "합계"]);
   assert.deepEqual(empty.report.plan.missingPaths, ["items"]);
-  // keep: 원형 행을 그대로 두고 그 안의 {{}}도 그대로 둔다
-  const keep = done(run(bytes, repeatTemplate(), { project: "x" }, { missing: "keep" }));
-  // 원형 행은 통째로 그대로다(그 안의 문서 전체 `{{project}}`도 채우지 않는다)
-  assert.deepEqual(rowsText(keep.output), ["번호|이름|내용", "{{no}}|{{item.name}}|{{item.note}} / {{project}}", "합계"]);
+  // keep: 원형 행을 그대로 두고 그 안의 {{}}도 그대로 둔다 — 적용된 액션이 없어 FILL_NOTHING_APPLIED로 실패하고(출력 없음) 그대로 둔 자리는 보고서에 남는다
+  const keep = run(bytes, repeatTemplate(), { project: "x" }, { missing: "keep" });
+  assert.deepEqual(failedCodes(keep), ["FILL_NOTHING_APPLIED"]);
   assert.ok(keep.report.plan.kept.some((k) => k.path === "items"));
 });
 
-test("repeat 오류: 원소에 필요한 값이 없으면 누락 정책을 따르고 값에 줄바꿈이 있으면 VALUE_CONTROL_CHAR", () => {
+test("repeat 오류: 원소에 필요한 값이 없으면 누락 정책을 따르고 값에 금지 문자(제어 문자)가 있으면 VALUE_CONTROL_CHAR(줄바꿈·탭은 요소로 넣는다: fill-linebreak.test.ts)", () => {
   const bytes = listDoc();
   assert.deepEqual(failedCodes(run(bytes, repeatTemplate(), { items: [{ name: "a" }], project: "p" })), ["DATA_MISSING"]);
   const empty = done(run(bytes, repeatTemplate(), { items: [{ name: "a" }], project: "p" }, { missing: "empty" }));
   assert.deepEqual(rowsText(empty.output).slice(1, 2), ["1|a| / p"]);
   assert.ok(empty.report.plan.missingPaths.includes("item.note"));
-  assert.deepEqual(failedCodes(run(bytes, repeatTemplate(), { items: [{ name: "a\nb", note: "n" }], project: "p" })), ["VALUE_CONTROL_CHAR"]);
+  assert.deepEqual(failedCodes(run(bytes, repeatTemplate(), { items: [{ name: "a\u0001b", note: "n" }], project: "p" })), ["VALUE_CONTROL_CHAR"]);
   assert.deepEqual(failedCodes(run(bytes, repeatTemplate(), { items: [{ name: { x: 1 }, note: "n" }], project: "p" })), ["DATA_NOT_SCALAR"]);
 });
 
