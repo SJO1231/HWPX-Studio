@@ -5,7 +5,7 @@ import type { HwpxDocument, ParagraphNode, TableNode } from "../model/types.ts";
 import { linePrintOf, wordPrintAt } from "./anchors.ts";
 import type { AnchorDraft } from "./candidates.ts";
 import { paragraphAtPath, topLevelObjects } from "./doc.ts";
-import { collectFields, fieldFillBlock } from "./fields.ts";
+import { collectFields, fieldFillBlock, fieldRangeIn } from "./fields.ts";
 import { cellFillBlock, lineFillBlock, rangeReplaceBlock } from "./text.ts";
 
 /** 앵커 초안을 요청하는 자리. `start`·`end`는 문단 논리 텍스트의 UTF-16 오프셋이다. */
@@ -91,7 +91,8 @@ function wordRange(paragraph: ParagraphNode, start: number | undefined, end: num
 /**
  * 문단의 한 자리(또는 한 범위)를 가리키는 앵커 초안을 후보 순서대로 돌려준다. 템플릿의 `anchors`에 `id`만 더해 그대로 넣을 수 있다.
  *
- * 1. 그 자리가 누름틀 안이면 `field`(이름과 같은 이름 안 순번). 값을 채울 수 있는 모양(`simple`·`empty`)만, 안쪽 누름틀부터.
+ * 1. 그 자리가 누름틀 안이면 `field`(이름과 같은 이름 안 순번). 값을 채울 수 있는 모양(`simple`·`empty`·`inline`·`crossParagraph`)만, 안쪽 누름틀부터.
+ *    여러 문단에 걸친 누름틀은 시작 문단의 표식 뒤, 사이 문단, 끝 문단의 끝 표식 앞이 모두 그 안이다.
  * 2. `start`·`end`가 있으면 그 범위의 `word`, `start`만 있으면 그 글자를 포함한 낱말(공백으로 나뉜 덩어리)의 `word`. `print`(대상 글, 앞뒤 문맥)를 채운다.
  *    범위가 글자 묶음(grapheme cluster)을 가르면 묶음 경계로 넓힌다. 객체 자리·탭·줄바꿈 같은 경계 조각을 포함하는 `word`는 만들지 않는다.
  * 3. 문단의 `line`(글 앞 40자와 글 전체 해시).
@@ -99,7 +100,7 @@ function wordRange(paragraph: ParagraphNode, start: number | undefined, end: num
  *
  * `word`·`line`·`cell` 초안은 채움이 건너뛰거나 거절할 모양이면 `blocked`에 그 코드(`FILL_MIXED_FORMAT`, `FILL_CROSSES_MARKUP`, `FILL_SPLITS_CLUSTER`, `FILL_HAS_OBJECT`)를 단다.
  * 채움의 판단 함수(`rangeReplaceBlock`·`lineFillBlock`·`cellFillBlock`)를 그대로 쓰며, 글자모양 혼합은 기본 정책(`mixedFormat: "skip"`)으로 판단한다.
- * `field` 초안은 `blocked`를 달지 않는다: 채울 수 없는 모양의 누름틀(`fieldFillBlock`)은 초안 자체를 만들지 않는다(채움의 거절 사유가 모양 하나뿐이다).
+ * `field` 초안은 `blocked`를 달지 않는다: 채울 수 없는 모양의 누름틀(`fieldFillBlock`)은 초안 자체를 만들지 않는다(채움의 거절 사유는 모양·지워질 구간의 구역 설정·끊기는 필드 짝이고 `fieldFillBlock`이 모두 판단한다).
  *
  * 주소(구역·문단)가 없거나 `start`·`end`가 문단 글 밖이면 `FILL_DRAFT_ADDRESS`, `end`만 있거나 `end < start`이면 `FILL_DRAFT_RANGE` 오류다.
  */
@@ -126,8 +127,10 @@ export function draftAnchors(doc: HwpxDocument, request: DraftRequest): DraftedA
   if (start !== undefined) {
     const to = end ?? start;
     const inside = collectFields(doc)
-      .filter((t) => t.paragraph === paragraph && fieldFillBlock(t) === undefined)
-      .map((t) => ({ t, from: paragraph.pieces[t.begin.pieceIndex]?.logicalEnd ?? 0, until: paragraph.pieces[t.end?.pieceIndex ?? 0]?.logicalStart ?? 0 }))
+      .flatMap((t) => {
+        const r = fieldRangeIn(t, paragraph);
+        return r === undefined || fieldFillBlock(t) !== undefined ? [] : [{ t, from: r.from, until: r.until }];
+      })
       .filter((f) => f.from <= start && to <= f.until)
       .sort((a, b) => b.from - a.from || a.until - b.until);
     for (const f of inside) out.push({ kind: "field", name: f.t.info.name, occurrence: f.t.info.occurrence });

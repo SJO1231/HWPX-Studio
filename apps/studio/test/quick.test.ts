@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   checkValueText,
+  collectFields,
   emptyTemplate,
+  fieldFillBlock,
   findCandidates,
   findPlaceholders,
   generate,
@@ -17,16 +19,21 @@ import {
   readDataset,
   scalarToText,
   walkParagraphs,
+  type FieldTarget,
 } from "../../../packages/hwpx-engine/src/index.ts";
 import { HostError } from "../../../packages/viewer/src/host/index.ts";
 import type { PlacesView } from "../src/api-types.ts";
 import { MAX_RECORDS, analyzePlaces, countInvalidRecords, generateAll, listKeys, matchPlaces, parseQuickData } from "../src/quick.ts";
-import { FIELD_BEGIN, FIELD_END, P, R, T, synth } from "../../../packages/viewer/test/helpers.ts";
-import { fixtureNames, mixedDoc, mutateSection, readFixture } from "./helpers.ts";
+import { plainOf } from "../src/messages.ts";
+import { FIELD_BEGIN, FIELD_END, P, PIC, R, T, TBL, synth } from "../../../packages/viewer/test/helpers.ts";
+import { blockMessages, crossed, fixtureNames, mixedDoc, mutateSection, openCross, readFixture, secBetween } from "./helpers.ts";
 
 const enc = (v: unknown): Uint8Array => new TextEncoder().encode(typeof v === "string" ? v : JSON.stringify(v));
 
 // ── Q4: 자리 목록 = 엔진의 누름틀 목록·{{}} 탐지·후보 탐지 ─────────────
+
+/** 엔진이 막는 곳의 분류(시험 쪽 기준): 여러 문단 곳은 crossBlocked, 그림·표가 든 곳은 object, 다른 칸·구역은 crossContainer, 나머지(끝 표식 없음 등)는 unpaired */
+const blockedShape = (t: FieldTarget): string => (t.info.shape === "crossParagraph" ? "crossBlocked" : t.info.shape === "object" || t.info.shape === "crossContainer" ? t.info.shape : "unpaired");
 
 test("Q4: 모든 시험 문서에서 자리 목록이 listFields(CLICK_HERE만)·findCandidates와 같다", () => {
   const names = fixtureNames();
@@ -38,15 +45,24 @@ test("Q4: 모든 시험 문서에서 자리 목록이 listFields(CLICK_HERE만)�
     const doc = parseDocument(openPackage(bytes));
     const places = analyzePlaces(bytes);
 
+    // 곳마다 채울 수 있는지는 엔진의 fieldFillBlock이 정한다(데이터와 무관하다). 모양만 보면 여러 문단 곳이 막히는 경우를 놓친다
     const infos = listFields(doc).filter((f) => f.type === "CLICK_HERE");
+    const targets = collectFields(doc).filter((t) => t.info.type === "CLICK_HERE");
+    assert.equal(targets.length, infos.length, `${name}: collectFields가 누름틀을 빠뜨리지 않는다`);
     const fieldNames = [...new Set(infos.map((f) => f.name))];
     const expected = fieldNames.map((n) => {
-      const here = infos.filter((f) => f.name === n);
-      const unfillable = (["crossParagraph", "inline", "unpaired"] as const).flatMap((shape) => {
-        const count = here.filter((f) => f.shape === shape).length;
-        return count === 0 ? [] : [{ shape, count }];
+      const here = targets.filter((t) => t.info.name === n);
+      const open = here.filter((t) => fieldFillBlock(t) === undefined);
+      const shut = here.filter((t) => fieldFillBlock(t) !== undefined);
+      const unfillable = (["object", "crossContainer", "unpaired", "crossBlocked"] as const).flatMap((shape): PlacesView["fields"][number]["unfillable"] => {
+        const mine = shut.filter((t) => blockedShape(t) === shape);
+        if (mine.length === 0) return [];
+        return shape === "crossBlocked"
+          ? [{ shape, count: mine.length, reasons: [...new Set(mine.flatMap((t) => fieldFillBlock(t)?.message ?? []))] }]
+          : [{ shape, count: mine.length }];
       });
-      return { name: n, count: here.length, usable: isValidPath(n), fillable: here.filter((f) => f.shape === "simple" || f.shape === "empty").length, unfillable };
+      assert.equal(open.length + unfillable.reduce((sum, u) => sum + u.count, 0), here.length, `${name}: ${n}: 곳 수`);
+      return { name: n, count: here.length, usable: isValidPath(n), fillable: open.length, merging: open.filter((t) => t.info.shape === "crossParagraph").length, unfillable };
     });
     assert.deepEqual(places.fields, expected, `${name}: 누름틀`);
 
@@ -80,12 +96,12 @@ test("Q4: 알려진 문서의 자리 — ph-single은 {{}} 셋, field-states는 
     { key: "project.end", count: 1 },
   ]);
   assert.deepEqual(analyzePlaces(readFixture("hancom/field-states")).fields, [
-    { name: "성명", count: 2, usable: true, fillable: 2, unfillable: [] },
-    { name: "소속", count: 1, usable: true, fillable: 1, unfillable: [] },
+    { name: "성명", count: 2, usable: true, fillable: 2, merging: 0, unfillable: [] },
+    { name: "소속", count: 1, usable: true, fillable: 1, merging: 0, unfillable: [] },
   ]);
   assert.deepEqual(analyzePlaces(mixedDoc()).fields, [
-    { name: "성명", count: 1, usable: true, fillable: 1, unfillable: [] },
-    { name: "이 름", count: 1, usable: false, fillable: 1, unfillable: [] },
+    { name: "성명", count: 1, usable: true, fillable: 1, merging: 0, unfillable: [] },
+    { name: "이 름", count: 1, usable: false, fillable: 1, merging: 0, unfillable: [] },
   ]);
 });
 
@@ -93,8 +109,8 @@ test("Q4: 알려진 문서의 자리 — ph-single은 {{}} 셋, field-states는 
 test("Q4: 시험 문서의 자리 목록 — 글자 그대로의 기대값(field-states·header-footer·tables-rich)", () => {
   const fieldStates = analyzePlaces(readFixture("hancom/field-states"));
   assert.deepEqual(fieldStates.fields, [
-    { name: "성명", count: 2, usable: true, fillable: 2, unfillable: [] },
-    { name: "소속", count: 1, usable: true, fillable: 1, unfillable: [] },
+    { name: "성명", count: 2, usable: true, fillable: 2, merging: 0, unfillable: [] },
+    { name: "소속", count: 1, usable: true, fillable: 1, merging: 0, unfillable: [] },
   ]);
   assert.deepEqual(fieldStates.placeholders, []);
 
@@ -106,26 +122,27 @@ test("Q4: 시험 문서의 자리 목록 — 글자 그대로의 기대값(field
   ]);
 
   const rich = analyzePlaces(readFixture("tables/tables-rich"));
-  assert.deepEqual(rich.fields, [{ name: "이름", count: 1, usable: true, fillable: 1, unfillable: [] }]);
+  assert.deepEqual(rich.fields, [{ name: "이름", count: 1, usable: true, fillable: 1, merging: 0, unfillable: [] }]);
 });
 
-test("Q4: 줄바꿈·탭이 든 누름틀(inline-breaks)은 채울 수 없는 모양(inline)으로 세고, 대조표는 데이터가 있어도 unfillable이다", () => {
+test("Q4: 줄바꿈·탭이 든 누름틀(inline-breaks)은 이제 채울 수 있는 모양(inline)이라 fillable로 세고, 대조표는 데이터로 판정한다", () => {
   const bytes = readFixture("inline/inline-breaks");
+  assert.deepEqual(listFields(parseDocument(openPackage(bytes))).map((f) => [f.name, f.shape]), [["줄", "inline"], ["탭", "inline"]]);
   const places = analyzePlaces(bytes);
   assert.deepEqual(places.fields, [
-    { name: "줄", count: 1, usable: true, fillable: 0, unfillable: [{ shape: "inline", count: 1 }] },
-    { name: "탭", count: 1, usable: true, fillable: 0, unfillable: [{ shape: "inline", count: 1 }] },
+    { name: "줄", count: 1, usable: true, fillable: 1, merging: 0, unfillable: [] },
+    { name: "탭", count: 1, usable: true, fillable: 1, merging: 0, unfillable: [] },
   ]);
-  const matches = matchPlaces(places, parseQuickData(enc({ 줄: "x", 탭: "y" })).records);
+  const matches = matchPlaces(places, parseQuickData(enc({ 줄: "x", 탭: "y\tz" })).records);
   assert.deepEqual(
     matches.map((m) => [m.kind, m.key, m.state, m.counts, m.multiline]),
     [
-      ["field", "줄", "unfillable", { ok: 0, missing: 0, notScalar: 0, rejected: 0 }, 0],
-      ["field", "탭", "unfillable", { ok: 0, missing: 0, notScalar: 0, rejected: 0 }, 0],
+      ["field", "줄", "ok", { ok: 1, missing: 0, notScalar: 0, rejected: 0 }, 0],
+      ["field", "탭", "ok", { ok: 1, missing: 0, notScalar: 0, rejected: 0 }, 1],
     ],
   );
-  // 데이터가 없어도(건수 판정을 하지 않으므로) 같다
-  assert.deepEqual(matchPlaces(places, parseQuickData(enc({ 다른: "것" })).records).map((m) => m.state), ["unfillable", "unfillable"]);
+  // 데이터가 없으면 다른 누름틀처럼 없음이다
+  assert.deepEqual(matchPlaces(places, parseQuickData(enc({ 다른: "것" })).records).map((m) => m.state), ["missing", "missing"]);
 });
 
 test("Q4: CLICK_HERE가 아닌 필드(책갈피 등)는 자리 목록에 넣지 않는다 — 이름이 같은 CLICK_HERE가 따로 있으면 그것만 센다", () => {
@@ -134,14 +151,14 @@ test("Q4: CLICK_HERE가 아닌 필드(책갈피 등)는 자리 목록에 넣지 
   // 엔진의 목록에는 있고(type만 다르다), 자리 목록에는 없다
   assert.deepEqual(listFields(parseDocument(openPackage(bookmark))).map((f) => [f.name, f.type]), [["성명", "CLICK_HERE"], ["소속", "BOOKMARK"], ["성명", "CLICK_HERE"]]);
   const places = analyzePlaces(bookmark);
-  assert.deepEqual(places.fields, [{ name: "성명", count: 2, usable: true, fillable: 2, unfillable: [] }]);
+  assert.deepEqual(places.fields, [{ name: "성명", count: 2, usable: true, fillable: 2, merging: 0, unfillable: [] }]);
   assert.deepEqual(matchPlaces(places, parseQuickData(enc({ 성명: "가", 소속: "나" })).records).map((m) => m.key), ["성명"]);
 
   // 종류가 다른 필드와 이름이 같은 누름틀: 누름틀의 곳만 센다
   const mixed = mutateSection(bytes, (xml) => xml.replace('type="CLICK_HERE" name="성명"', 'type="MAILMERGE" name="성명"'));
   assert.deepEqual(analyzePlaces(mixed).fields, [
-    { name: "소속", count: 1, usable: true, fillable: 1, unfillable: [] },
-    { name: "성명", count: 1, usable: true, fillable: 1, unfillable: [] },
+    { name: "소속", count: 1, usable: true, fillable: 1, merging: 0, unfillable: [] },
+    { name: "성명", count: 1, usable: true, fillable: 1, merging: 0, unfillable: [] },
   ]);
 
   // 종류가 CLICK_HERE가 아닌 필드만 있는 문서
@@ -149,23 +166,24 @@ test("Q4: CLICK_HERE가 아닌 필드(책갈피 등)는 자리 목록에 넣지 
   assert.deepEqual(analyzePlaces(none).fields, []);
 });
 
-test("Q4: 채울 수 없는 모양을 모양별로 센다 — 여러 문단에 걸침(crossParagraph)·끝 표식 없음(unpaired)·안에 줄바꿈·탭(inline). 곳 수 = 채울 수 있는 수 + 못 채우는 수", () => {
+test("Q4: 모양별로 센다 — 채울 수 있는 곳(simple·empty·inline·crossParagraph)과 채울 수 없는 곳(object·crossContainer·unpaired), 여러 문단에 걸친 곳은 merging에도 센다. 곳 수 = 채울 수 있는 수 + 못 채우는 수", () => {
   const bytes = readFixture("hancom/field-states");
-  // 첫 `성명`의 끝 표식을 다음 문단으로 옮긴다
+  // 첫 `성명`의 끝 표식을 다음 문단으로 옮긴다: 여러 문단에 걸친 곳이지만 채울 수 있다(채우면 문단이 합쳐진다)
   const cross = mutateSection(bytes, (xml) => xml.replace(/<hp:ctrl><hp:fieldEnd/, '</hp:run></hp:p><hp:p id="2" paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0"><hp:ctrl><hp:fieldEnd'));
   assert.deepEqual(listFields(parseDocument(openPackage(cross))).map((f) => f.shape), ["crossParagraph", "simple", "simple"]);
   assert.deepEqual(analyzePlaces(cross).fields, [
-    { name: "성명", count: 2, usable: true, fillable: 1, unfillable: [{ shape: "crossParagraph", count: 1 }] },
-    { name: "소속", count: 1, usable: true, fillable: 1, unfillable: [] },
+    { name: "성명", count: 2, usable: true, fillable: 2, merging: 1, unfillable: [] },
+    { name: "소속", count: 1, usable: true, fillable: 1, merging: 0, unfillable: [] },
   ]);
   // 첫 `성명`의 끝 표식을 없앤다
   const unpaired = mutateSection(bytes, (xml) => xml.replace(/<hp:ctrl><hp:fieldEnd[^>]*\/><\/hp:ctrl>/, ""));
   assert.deepEqual(analyzePlaces(unpaired).fields, [
-    { name: "성명", count: 2, usable: true, fillable: 1, unfillable: [{ shape: "unpaired", count: 1 }] },
-    { name: "소속", count: 1, usable: true, fillable: 1, unfillable: [] },
+    { name: "성명", count: 2, usable: true, fillable: 1, merging: 0, unfillable: [{ shape: "unpaired", count: 1 }] },
+    { name: "소속", count: 1, usable: true, fillable: 1, merging: 0, unfillable: [] },
   ]);
 
-  // 한 이름에 모양이 다 섞인 문서: simple 1·empty 1(채울 수 있음), 줄바꿈·탭 inline 2, 여러 문단 1, 끝 표식 없음 1, 이름이 빈 누름틀 1
+  // 한 이름에 모양이 다 섞인 문서: simple 1·empty 1, 줄바꿈·탭 inline 2, 여러 문단 1(채울 수 있음 5곳, 그중 합침 1곳),
+  // 안에 그림 1(object), 표 칸에서 시작해 표 밖에서 끝남 1(crossContainer), 끝 표식 없음 1(unpaired), 이름이 빈 누름틀 1
   const doc = synth([
     P(R(T("a") + FIELD_BEGIN("31", "가", "1", "x") + T("값") + FIELD_END("31"))),
     P(R(FIELD_BEGIN("32", "가", "1", "x") + "<hp:t>줄<hp:lineBreak/>바꿈</hp:t>" + FIELD_END("32"))),
@@ -175,26 +193,229 @@ test("Q4: 채울 수 없는 모양을 모양별로 센다 — 여러 문단에 �
     P(R(FIELD_BEGIN("35", "가", "1", "x") + T("끝 없음"))),
     P(R(FIELD_BEGIN("36", "가", "1", "x") + FIELD_END("36"))),
     P(R(FIELD_BEGIN("37", "", "1", "x") + T("이름 없음") + FIELD_END("37"))),
+    P(R(FIELD_BEGIN("38", "가", "1", "x") + T("앞") + PIC("1") + T("뒤") + FIELD_END("38"))),
+    P(R(TBL([[P(R(FIELD_BEGIN("39", "가", "1", "x") + T("칸 안")))]], "0"))),
+    P(R(T("밖") + FIELD_END("39"))),
   ]);
+  const shapes = listFields(parseDocument(openPackage(doc))).map((f) => f.shape);
+  assert.deepEqual(shapes, ["simple", "inline", "inline", "crossParagraph", "unpaired", "empty", "simple", "object", "crossContainer"]);
   const places = analyzePlaces(doc);
   assert.deepEqual(places.fields, [
     {
       name: "가",
-      count: 6,
+      count: 8,
       usable: true,
-      fillable: 2,
+      fillable: 5,
+      merging: 1,
       unfillable: [
-        { shape: "crossParagraph", count: 1 },
-        { shape: "inline", count: 2 },
+        { shape: "object", count: 1 },
+        { shape: "crossContainer", count: 1 },
         { shape: "unpaired", count: 1 },
       ],
     },
-    { name: "", count: 1, usable: false, fillable: 1, unfillable: [] },
+    { name: "", count: 1, usable: false, fillable: 1, merging: 0, unfillable: [] },
   ]);
   // 일부 곳만 채울 수 없는 누름틀은 데이터로 판정한다(건수 판정을 막지 않는다)
   const matches = matchPlaces(places, parseQuickData(enc([{ 가: "x" }, { 다른: 1 }])).records);
   assert.deepEqual(matches.map((m) => [m.key, m.state]), [["가", "missing"], ["", "badKey"]]);
   assert.deepEqual(matches[0]?.counts, { ok: 1, missing: 1, notScalar: 0, rejected: 0 });
+});
+
+test("Q4: 곳이 전부 채울 수 없는 모양(안에 그림·표가 든 object, 표 칸 경계를 넘는 crossContainer, 끝 표식 없는 unpaired)인 이름은 unfillable이고, 엔진이 건너뛰며 쉬운 말과 자리 이름을 단다. 여러 문단에 걸친 이름은 데이터로 판정한다", () => {
+  const doc = synth([
+    P(R(FIELD_BEGIN("51", "그림", "1", "x") + T("앞") + PIC("1") + T("뒤") + FIELD_END("51"))),
+    P(R(TBL([[P(R(FIELD_BEGIN("52", "칸밖", "1", "x") + T("칸 안")))]], "0"))),
+    P(R(T("밖") + FIELD_END("52"))),
+    P(R(FIELD_BEGIN("53", "끝없음", "1", "x") + T("본문"))),
+    P(R(FIELD_BEGIN("54", "여럿", "1", "x") + T("앞"))),
+    P(R(T("뒤") + FIELD_END("54"))),
+    P(R(T("성명 ") + FIELD_BEGIN("55", "성명", "1", "x") + T("값") + FIELD_END("55"))),
+  ]);
+  const places = analyzePlaces(doc);
+  assert.deepEqual(places.fields, [
+    { name: "그림", count: 1, usable: true, fillable: 0, merging: 0, unfillable: [{ shape: "object", count: 1 }] },
+    { name: "칸밖", count: 1, usable: true, fillable: 0, merging: 0, unfillable: [{ shape: "crossContainer", count: 1 }] },
+    { name: "끝없음", count: 1, usable: true, fillable: 0, merging: 0, unfillable: [{ shape: "unpaired", count: 1 }] },
+    { name: "여럿", count: 1, usable: true, fillable: 1, merging: 1, unfillable: [] },
+    { name: "성명", count: 1, usable: true, fillable: 1, merging: 0, unfillable: [] },
+  ]);
+  const data = { 그림: "a", 칸밖: "b", 끝없음: "c", 여럿: "d", 성명: "e" };
+  const none = { 다른: "것" };
+  assert.deepEqual(matchPlaces(places, parseQuickData(enc(data)).records).map((m) => [m.key, m.state]), [["그림", "unfillable"], ["칸밖", "unfillable"], ["끝없음", "unfillable"], ["여럿", "ok"], ["성명", "ok"]]);
+  // 데이터가 없어도 채울 수 없는 모양이 먼저다. 여러 문단에 걸친 이름은 데이터로 판정한다
+  assert.deepEqual(matchPlaces(places, parseQuickData(enc(none)).records).map((m) => m.state), ["unfillable", "unfillable", "unfillable", "missing", "missing"]);
+
+  const [g] = generateAll(doc, places, parseQuickData(enc(data)), "f.hwpx", "error");
+  assert.deepEqual([g?.view.ok, g?.view.filled, g?.view.errors], [true, 2, []]);
+  assert.deepEqual(g?.view.skipped.map((s) => [s.code, s.place]), [
+    ["FIELD_UNSUPPORTED_SHAPE", '누름틀 "그림"'],
+    ["FIELD_UNSUPPORTED_SHAPE", '누름틀 "칸밖"'],
+    ["FIELD_UNSUPPORTED_SHAPE", '누름틀 "끝없음"'],
+  ]);
+  for (const s of g?.view.skipped ?? []) for (const cause of ["그림·표", "표 칸", "끝 표식", "구역 설정", "한컴에서"]) assert.ok(s.plain.includes(cause), cause);
+  assert.deepEqual(g?.view.notes.map((n) => [n.code, n.place]), [["FIELD_PARAGRAPHS_MERGED", '누름틀 "여럿"']]);
+});
+
+// ── 엔진이 건너뛰는 여러 문단 누름틀(crossBlocked) ────────────────
+// 모양(crossParagraph)만 보면 채울 수 있는 것 같지만 엔진의 fieldFillBlock이 막는 곳. 막는 일은 데이터와 무관하게 문서만으로 정해진다.
+
+const simpleAt = (id: string, name: string): string => P(R(T("a ") + FIELD_BEGIN(id, name, "1", "x") + T("값") + FIELD_END(id)));
+const objectAt = (id: string, name: string): string => P(R(FIELD_BEGIN(id, name, "1", "x") + T("앞") + PIC("1") + T("뒤") + FIELD_END(id)));
+const cellAt = (id: string, name: string): string => P(R(TBL([[P(R(FIELD_BEGIN(id, name, "1", "x") + T("칸 안")))]], "0"))) + P(R(T("밖") + FIELD_END(id)));
+const unpairedAt = (id: string, name: string): string => P(R(FIELD_BEGIN(id, name, "1", "x") + T("끝 없음")));
+
+test("Q4: 모양은 여러 문단이지만 엔진이 건너뛰는 곳(사이 문단의 구역 설정, 엇갈린 누름틀)은 crossBlocked로 세고 merging에 넣지 않는다 — 데이터가 있어도 대조표는 unfillable이고, 생성은 미리 알린 그 곳들을 건너뛰며 FILL_NOTHING_APPLIED로 실패한다", () => {
+  const cases: [string, Uint8Array, string[], RegExp][] = [
+    ["사이 문단의 구역 설정", synth([secBetween("101", "구역")]), ["구역"], /구역 설정/],
+    ["엇갈린 누름틀", synth([crossed("102", "바깥", "103", "안쪽")]), ["바깥", "안쪽"], /짝/],
+  ];
+  for (const [label, bytes, names, cause] of cases) {
+    const messages = blockMessages(bytes);
+    assert.equal(messages.length, names.length, label);
+    for (const m of messages) assert.match(m ?? "", cause, label);
+    // 모양만 보면 채울 수 있는 곳(crossParagraph)이다
+    assert.ok(listFields(parseDocument(openPackage(bytes))).every((f) => f.shape === "crossParagraph"), label);
+
+    const places = analyzePlaces(bytes);
+    assert.deepEqual(
+      places.fields,
+      names.map((name, i) => ({ name, count: 1, usable: true, fillable: 0, merging: 0, unfillable: [{ shape: "crossBlocked", count: 1, reasons: [messages[i]] }] })),
+      label,
+    );
+
+    const data = Object.fromEntries(names.map((n) => [n, "값"]));
+    for (const d of [data, { 다른: "것" }]) {
+      assert.deepEqual(matchPlaces(places, parseQuickData(enc(d)).records).map((m) => [m.key, m.state]), names.map((n) => [n, "unfillable"]), label);
+    }
+    const [g] = generateAll(bytes, places, parseQuickData(enc(data)), "f.hwpx", "error");
+    assert.deepEqual([g?.view.ok, g?.output, g?.view.filled, g?.view.errors.map((e) => e.code)], [false, undefined, 0, ["FILL_NOTHING_APPLIED"]], label);
+    // 미리 알린 곳이 그대로 건너뜀에 나온다: 이름·곳 수가 같고 엔진의 사유가 detail에 실린다
+    assert.deepEqual(g?.view.skipped.map((s) => [s.code, s.place]), names.map((n) => ["FIELD_UNSUPPORTED_SHAPE", `누름틀 "${n}"`]), label);
+    g?.view.skipped.forEach((s, i) => assert.ok(s.detail?.startsWith(messages[i] ?? "?"), `${label}: ${s.detail}`));
+  }
+});
+
+test("Q4: 한 이름에 막힌 곳과 채울 수 있는 곳이 섞이면 채울 수 있는 곳만 fillable·merging에 세고, 사유는 서로 다른 것만 처음 나온 순서로 한 번씩 담는다. 생성은 채울 수 있는 곳만 채운다", () => {
+  const doc = synth([
+    simpleAt("111", "혼합"), // 채울 수 있음
+    objectAt("112", "혼합"), // object
+    secBetween("113", "혼합"), // crossBlocked(구역 설정)
+    secBetween("114", "혼합"), // crossBlocked(같은 사유)
+    crossed("115", "혼합", "116", "혼합"), // crossBlocked 둘(다른 사유)
+    openCross("117", "혼합"), // 채울 수 있음(문단이 합쳐진다)
+    secBetween("118", "구역"),
+  ]);
+  const messages = blockMessages(doc);
+  const [, , sec, sec2, crossA, crossB] = messages;
+  assert.deepEqual(messages.map((m) => m !== undefined), [false, true, true, true, true, true, false, true]);
+  assert.ok(sec !== undefined && sec === sec2 && crossA !== undefined && crossA === crossB && sec !== crossA, "구역 설정 사유와 엇갈림 사유는 서로 다르고 같은 사유는 같은 문구다");
+
+  const places = analyzePlaces(doc);
+  assert.deepEqual(places.fields, [
+    {
+      name: "혼합",
+      count: 7,
+      usable: true,
+      fillable: 2,
+      merging: 1,
+      unfillable: [
+        { shape: "object", count: 1 },
+        { shape: "crossBlocked", count: 4, reasons: [sec, crossA] },
+      ],
+    },
+    { name: "구역", count: 1, usable: true, fillable: 0, merging: 0, unfillable: [{ shape: "crossBlocked", count: 1, reasons: [sec] }] },
+  ]);
+  const data = { 혼합: "값", 구역: "z" };
+  // 일부 곳만 막힌 이름은 데이터로 판정하고, 전부 막힌 이름만 unfillable이다
+  assert.deepEqual(matchPlaces(places, parseQuickData(enc(data)).records).map((m) => [m.key, m.state]), [["혼합", "ok"], ["구역", "unfillable"]]);
+
+  const [g] = generateAll(doc, places, parseQuickData(enc(data)), "f.hwpx", "error");
+  assert.deepEqual([g?.view.ok, g?.view.filled, g?.view.errors], [true, 2, []]);
+  const skippedPlaces = g?.view.skipped.map((s) => s.place).sort();
+  assert.deepEqual(skippedPlaces, ['누름틀 "구역"', ...Array<string>(5).fill('누름틀 "혼합"')].sort(), "건너뛴 곳 = 막힌 곳(object 1 + crossBlocked 4 + 구역 1)");
+  assert.ok(g?.view.skipped.every((s) => s.code === "FIELD_UNSUPPORTED_SHAPE"));
+  assert.deepEqual(g?.view.notes.map((n) => [n.code, n.place]), [["FIELD_PARAGRAPHS_MERGED", '누름틀 "혼합"']]);
+  assert.deepEqual(g?.output, direct(doc, data));
+  const after = listFields(parseDocument(openPackage(g?.output ?? new Uint8Array(0))));
+  assert.equal(after.filter((f) => f.name === "혼합" && f.valueText === "값").length, 2, "채운 곳만 값이 들어갔다");
+  assert.equal(after.filter((f) => f.name === "혼합").length, 7, "누름틀은 하나도 지워지지 않는다");
+  const paragraphs = (b: Uint8Array): number => parseDocument(openPackage(b)).sections.reduce((n, sec) => n + [...walkParagraphs(sec.paragraphs)].length, 0);
+  assert.equal(paragraphs(g?.output ?? new Uint8Array(0)), paragraphs(doc) - 1, "합친 곳(openCross) 하나만 문단이 하나 줄었다");
+});
+
+test("Q4: 모든 시험 문서와 합성 문서에서 곳 수 = 채울 수 있는 수 + 채울 수 없는 수이고, 채울 수 있다고 센 곳은 생성에서 실제로 채워지고 못 채운다고 센 곳은 건너뜀으로 나온다", () => {
+  const docs: [string, Uint8Array][] = [
+    ...fixtureNames().map((n): [string, Uint8Array] => [n, readFixture(n)]),
+    ["합성: 혼합", mixedDoc()],
+    ["합성: 구역 설정", synth([secBetween("121", "구역"), openCross("122", "열림"), simpleAt("123", "성명")])],
+    ["합성: 엇갈림", synth([crossed("124", "바깥", "125", "안쪽"), simpleAt("126", "성명")])],
+    ["합성: 엇갈림만", synth([crossed("127", "바깥", "128", "안쪽")])],
+    ["합성: 모양", synth([simpleAt("131", "성명"), objectAt("132", "그림"), cellAt("133", "칸밖"), unpairedAt("134", "끝없음"), openCross("135", "열림"), secBetween("136", "구역")])],
+  ];
+  assert.ok(docs.length >= 25);
+  const VALUE = "채움-7391";
+  const seen = { fields: 0, fillable: 0, blocked: 0, crossBlocked: 0, merging: 0, failedAll: 0 };
+  for (const [label, bytes] of docs) {
+    const places = analyzePlaces(bytes);
+    const infos = listFields(parseDocument(openPackage(bytes))).filter((f) => f.type === "CLICK_HERE");
+    assert.equal(places.fields.reduce((n, f) => n + f.count, 0), infos.length, `${label}: 곳 수`);
+    for (const f of places.fields) {
+      assert.equal(f.fillable + f.unfillable.reduce((n, u) => n + u.count, 0), f.count, `${label}: ${f.name}: 곳 수 = 채울 수 있는 수 + 채울 수 없는 수`);
+      assert.ok(f.merging <= f.fillable, `${label}: ${f.name}: merging은 fillable의 일부다`);
+      for (const u of f.unfillable) assert.equal(u.reasons !== undefined && u.reasons.length > 0, u.shape === "crossBlocked", `${label}: reasons는 crossBlocked에만 있다`);
+    }
+    seen.fields += places.fields.length;
+    // 데이터가 있는 이름(키로 쓸 수 있고 점이 없는 것)만 센다. 누락 정책은 그대로 둠이라 {{키}}는 건드리지 않는다
+    const named = places.fields.filter((f) => f.usable && !f.name.includes("."));
+    if (named.length === 0) continue;
+    const fillable = named.reduce((n, f) => n + f.fillable, 0);
+    const blocked = named.reduce((n, f) => n + f.unfillable.reduce((m, u) => m + u.count, 0), 0);
+    seen.fillable += fillable;
+    seen.blocked += blocked;
+    seen.merging += named.reduce((n, f) => n + f.merging, 0);
+    seen.crossBlocked += named.reduce((n, f) => n + (f.unfillable.find((u) => u.shape === "crossBlocked")?.count ?? 0), 0);
+
+    const [g] = generateAll(bytes, places, parseQuickData(enc(Object.fromEntries(named.map((f) => [f.name, VALUE])))), "f.hwpx", "keep");
+    assert.equal(g?.view.skipped.filter((s) => s.code === "FIELD_UNSUPPORTED_SHAPE").length, blocked, `${label}: 건너뛴 곳 = 못 채운다고 센 곳`);
+    if (fillable === 0) {
+      seen.failedAll++;
+      assert.deepEqual([g?.view.ok, g?.output, g?.view.errors.map((e) => e.code)], [false, undefined, ["FILL_NOTHING_APPLIED"]], `${label}: 채울 곳이 없으면 아무것도 채우지 못해 실패한다`);
+      continue;
+    }
+    assert.deepEqual([g?.view.ok, g?.view.filled, g?.view.errors], [true, fillable, []], `${label}: 채울 수 있다고 센 곳은 모두 채워진다`);
+    const after = listFields(parseDocument(openPackage(g?.output ?? new Uint8Array(0))));
+    assert.equal(after.filter((f) => f.type === "CLICK_HERE" && f.valueText === VALUE).length, fillable, `${label}: 결과에서 다시 읽은 값`);
+  }
+  // 시험이 비어 있지 않다: 채울 수 있는 곳, 모양이 다른 막힌 곳, 막힌 여러 문단 곳, 합쳐지는 곳, 아무것도 못 채우는 문서가 모두 있다
+  assert.ok(seen.fields >= 15 && seen.fillable >= 12 && seen.blocked >= 8 && seen.crossBlocked >= 6 && seen.merging >= 4 && seen.failedAll >= 1, JSON.stringify(seen));
+});
+
+test("여러 문단에 걸친 누름틀(span 시험 문서): 자리 목록은 merging으로 알리고, 대조표는 데이터로 판정하며, 만들면 한컴이 채운 정답과 같은 문단 수가 되고 알림에 FIELD_PARAGRAPHS_MERGED가 한 건 나온다", () => {
+  const count = (b: Uint8Array): number => parseDocument(openPackage(b)).sections.reduce((n, s) => n + [...walkParagraphs(s.paragraphs)].length, 0);
+  // [시험 문서, 한컴이 채운 정답, 누름틀 이름]
+  for (const [name, answer, key] of [
+    ["span/field-span", "span/field-span-filled", "성명"],
+    ["span/field-span-table", "span/field-span-table-filled", "성명"],
+    ["span/field-span-cell", "span/field-span-cell-filled", "칸"],
+  ] as const) {
+    const bytes = readFixture(name);
+    const places = analyzePlaces(bytes);
+    assert.deepEqual(places.fields, [{ name: key, count: 1, usable: true, fillable: 1, merging: 1, unfillable: [] }], name);
+    const data = { [key]: "새 값" };
+    const records = parseQuickData(enc(data)).records;
+    assert.deepEqual(matchPlaces(places, records).map((m) => [m.key, m.state, m.counts.ok]), [[key, "ok", 1]], name);
+
+    const [g] = generateAll(bytes, places, parseQuickData(enc(data)), "f.hwpx", "error");
+    assert.deepEqual([g?.view.ok, g?.view.filled, g?.view.skipped, g?.view.errors], [true, 1, [], []], name);
+    assert.deepEqual(g?.view.notes.map((n) => [n.code, n.place]), [["FIELD_PARAGRAPHS_MERGED", `누름틀 "${key}"`]], name);
+    assert.equal(g?.view.notes[0]?.plain, plainOf("FIELD_PARAGRAPHS_MERGED"));
+    assert.match(g?.view.notes[0]?.detail ?? "", /합쳤/, "엔진의 메시지가 detail에 실린다");
+    assert.deepEqual(g?.output, direct(bytes, data), `${name}: 엔진을 직접 부른 결과와 같다`);
+    const after = g?.output ?? new Uint8Array(0);
+    assert.equal(count(after), count(readFixture(answer)), `${name}: 문단 수가 한컴이 채운 정답과 같다`);
+    assert.ok(count(after) < count(bytes), `${name}: 문단이 합쳐졌다`);
+    assert.deepEqual(listFields(parseDocument(openPackage(after))).map((f) => [f.name, f.valueText, f.shape]), [[key, "새 값", "simple"]], name);
+  }
 });
 
 test("문서를 열 수 없으면 엔진의 코드로 거절한다", () => {
@@ -251,7 +472,7 @@ test("Q4: 키로 쓸 수 없는 누름틀 이름은 badKey, 여러 건이면 건
   const bad = ["이 름", "a b", "", "a..b", "a(b)", "a.", ".a"];
   for (const name of bad) assert.equal(isValidPath(name), false, JSON.stringify(name));
   const places: PlacesView = {
-    fields: [...bad.map((name) => ({ name, count: 1, usable: false, fillable: 1, unfillable: [] })), { name: "성명", count: 1, usable: true, fillable: 1, unfillable: [] }],
+    fields: [...bad.map((name) => ({ name, count: 1, usable: false, fillable: 1, merging: 0, unfillable: [] })), { name: "성명", count: 1, usable: true, fillable: 1, merging: 0, unfillable: [] }],
     placeholders: [{ key: "project.name", count: 1 }, { key: "extra", count: 2 }],
     candidates: [],
     candidatesTruncated: false,
@@ -269,7 +490,7 @@ test("Q4: 키로 쓸 수 없는 누름틀 이름은 badKey, 여러 건이면 건
 
 test("객체가 아닌 건(invalidRecords)은 데이터에 없음으로 세지 않고 대조표의 건수에서 뺀다. 건이 전부 객체가 아니면 판정할 건이 없어 missing이다", () => {
   const places: PlacesView = {
-    fields: [{ name: "성명", count: 1, usable: true, fillable: 1, unfillable: [] }],
+    fields: [{ name: "성명", count: 1, usable: true, fillable: 1, merging: 0, unfillable: [] }],
     placeholders: [{ key: "project.name", count: 1 }],
     candidates: [],
     candidatesTruncated: false,
@@ -510,18 +731,28 @@ test("줄바꿈이 든 값은 엔진이 줄바꿈 요소로 넣고(문단 수가
   assert.deepEqual([failed?.view.ok, failed?.view.notes], [false, []]);
 });
 
-test("줄바꿈 알림은 값이 실제로 들어간 자리에만 붙는다 — 채울 수 없는 모양의 누름틀(엔진이 건너뜀)에는 붙지 않는다", () => {
+test("줄바꿈 알림은 값이 실제로 들어간 자리에만 붙는다 — 줄바꿈·탭이 든 누름틀(inline)은 이제 채워져 알림이 붙고, 엔진이 건너뛴 자리(안에 그림이 든 object)에는 붙지 않는다", () => {
+  // inline-breaks의 `줄`·`탭`: 한 문단 안, 사이에 줄바꿈·탭 요소가 있는 누름틀. 엔진이 채운다
+  const inline = readFixture("inline/inline-breaks");
+  const inlineData = { 줄: "가\n나", 탭: "다\t라" };
+  const [a] = generateAll(inline, analyzePlaces(inline), parseQuickData(enc(inlineData)), "f.hwpx", "error");
+  assert.deepEqual([a?.view.ok, a?.view.filled, a?.view.skipped, a?.view.errors], [true, 2, [], []]);
+  assert.deepEqual(a?.view.notes.map((n) => [n.code, n.place]), [["QUICK_MULTILINE", "키 줄"], ["QUICK_MULTILINE", "키 탭"]]);
+  assert.deepEqual(a?.output, direct(inline, inlineData));
+  assert.deepEqual(listFields(parseDocument(openPackage(a?.output ?? new Uint8Array(0)))).map((f) => [f.name, f.valueText]), [["줄", "가\n나"], ["탭", "다\t라"]]);
+
+  // 안에 그림이 든 누름틀(object)은 엔진이 건너뛰므로 값에 줄바꿈이 있어도 알림이 붙지 않는다
   const bytes = synth([
     P(R(T("성명: ") + FIELD_BEGIN("41", "성명", "1", "x") + T("값") + FIELD_END("41"))),
-    P(R(FIELD_BEGIN("42", "줄", "1", "x") + "<hp:t>첫<hp:lineBreak/>둘째</hp:t>" + FIELD_END("42"))),
+    P(R(FIELD_BEGIN("42", "그림", "1", "x") + T("앞") + PIC("1") + T("뒤") + FIELD_END("42"))),
   ]);
   const places = analyzePlaces(bytes);
-  assert.deepEqual(places.fields.map((f) => [f.name, f.fillable]), [["성명", 1], ["줄", 0]]);
-  const [g] = generateAll(bytes, places, parseQuickData(enc({ 성명: "홍\n길동", 줄: "가\n나" })), "f.hwpx", "error");
+  assert.deepEqual(places.fields.map((f) => [f.name, f.fillable, f.unfillable]), [["성명", 1, []], ["그림", 0, [{ shape: "object", count: 1 }]]]);
+  const [g] = generateAll(bytes, places, parseQuickData(enc({ 성명: "홍\n길동", 그림: "가\n나" })), "f.hwpx", "error");
   assert.equal(g?.view.ok, true);
-  assert.deepEqual(g?.view.skipped.map((s) => [s.code, s.place]), [["FIELD_UNSUPPORTED_SHAPE", '누름틀 "줄"']]);
+  assert.deepEqual(g?.view.skipped.map((s) => [s.code, s.place]), [["FIELD_UNSUPPORTED_SHAPE", '누름틀 "그림"']]);
   assert.deepEqual(g?.view.notes.map((n) => n.place), ["키 성명"]);
-  assert.match(g?.view.skipped[0]?.plain ?? "", /줄바꿈·탭/, "쉬운 말이 줄바꿈이 든 누름틀도 해당함을 밝힌다");
+  assert.match(g?.view.skipped[0]?.plain ?? "", /그림·표/, "쉬운 말이 안에 그림·표가 든 누름틀도 해당함을 밝힌다");
 });
 
 test("대조표의 badKey(usable:false)는 엔진이 FIELD_NAME_NOT_PATH로 건너뛰는 누름틀과 같은 기준이다", () => {

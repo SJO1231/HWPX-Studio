@@ -93,19 +93,28 @@ function fillTable(table: HTMLTableElement, head: string[], rows: (string | Node
 
 const CANDIDATE: Record<CandidateKind, string> = { emptyCell: "라벨 옆 빈 칸", labelColon: "라벨: 뒤 빈 곳", blankMark: "빈칸 표시" };
 
-/** 채울 수 없는 누름틀 모양의 쉬운 말: 자리 목록(건수와 함께)과 대조표(모양 이름만)에서 쓴다 */
-const SHAPE_COUNTED: Record<UnfillableShape, string> = { crossParagraph: "여러 문단에 걸침", inline: "안에 줄바꿈·탭·그림", unpaired: "끝 표식 없음" };
-const SHAPE_PLAIN: Record<UnfillableShape, string> = { crossParagraph: "여러 문단에 걸침", inline: "안에 줄바꿈·탭·그림이 있음", unpaired: "끝 표식 없음" };
+/** 채울 수 없는 곳의 쉬운 말: 자리 목록(건수와 함께)과 대조표에서 쓴다 */
+const SHAPE_PLAIN: Record<UnfillableShape, string> = {
+  object: "안에 그림·표가 있음",
+  crossContainer: "표 칸 경계를 넘음",
+  unpaired: "끝 표식 없음",
+  crossBlocked: "여러 문단에 걸쳐 있는데 사이 문단의 구역 설정, 엇갈린 누름틀, 경계에 걸친 강조 표식 때문에 채울 수 없음",
+};
 
 const NO_NAME = "(이름 없음)";
 
 type FieldPlace = PlacesView["fields"][number];
 
+/** 엔진이 준 사유 문구가 있으면 괄호 안에 덧붙인다(앞에 공백 하나). 사유는 `crossBlocked`에만 있다 */
+const reasonText = (u: FieldPlace["unfillable"][number]): string => (u.reasons === undefined || u.reasons.length === 0 ? "" : ` (${u.reasons.join(" ")})`);
+
 function fieldText(f: FieldPlace): string {
   const bad = f.unfillable.reduce((sum, u) => sum + u.count, 0);
-  const shapes = f.unfillable.map((u) => `${SHAPE_COUNTED[u.shape]} ${u.count}`).join(", ");
+  const shapes = f.unfillable.map((u) => `${SHAPE_PLAIN[u.shape]} ${u.count}${reasonText(u)}`).join(", ");
   const unusable = f.usable ? "" : f.name === "" ? " — 이름이 없어 키로 쓸 수 없음" : " — 이름에 공백·점 등이 있어 키로 쓸 수 없음";
-  return `${f.name === "" ? NO_NAME : f.name} (${f.count}곳)${unusable}${bad === 0 ? "" : ` — 그중 ${bad}곳은 채울 수 없는 모양(${shapes})`}`;
+  const unfillable = bad === 0 ? "" : ` — 그중 ${bad}곳은 채울 수 없음(${shapes})`;
+  const merging = f.merging === 0 ? "" : ` — 그중 ${f.merging}곳은 여러 문단에 걸쳐 있어 채우면 그 사이 문단이 합쳐짐`;
+  return `${f.name === "" ? NO_NAME : f.name} (${f.count}곳)${unusable}${unfillable}${merging}`;
 }
 
 function renderPlaces(t: TemplateResponse): void {
@@ -138,13 +147,15 @@ function stateText(m: Match, records: number, places: PlacesView | undefined): {
   if (m.state === "ok") {
     // 줄바꿈·탭은 거절이 아니다: 엔진이 같은 문단 안의 줄바꿈·탭으로 넣는다(정보 표시)
     const info = m.multiline === 0 ? "" : ` — 값에 줄바꿈·탭이 있음(그대로 들어감${records > 1 ? `, ${m.multiline}건` : ""})`;
-    return { text: `데이터 있음${info}`, className: "ok" };
+    // 엔진이 건너뛰지 않는 여러 문단 곳(`merging`)은 채울 때 문단이 합쳐진다
+    const merging = m.kind === "field" && (places?.fields.find((f) => f.name === m.key)?.merging ?? 0) > 0 ? " — 여러 문단에 걸쳐 있어 채우면 사이 문단이 합쳐짐" : "";
+    return { text: `데이터 있음${info}${merging}`, className: "ok" };
   }
   if (m.state === "badKey") return { text: "이름이 데이터 키로 쓸 수 없는 꼴(공백·점 등)이라 채우지 않음", className: "bad" };
   if (m.state === "unfillable") {
     const field = places?.fields.find((f) => f.name === m.key);
-    const shapes = (field?.unfillable ?? []).map((u) => SHAPE_PLAIN[u.shape]).join("/");
-    return { text: `채울 수 없는 모양이라 채우지 않음${shapes === "" ? "" : `(${shapes})`} — 한컴에서 한 문단 안의 글만 담는 누름틀로 다시 만들어 주세요`, className: "bad" };
+    const shapes = (field?.unfillable ?? []).map((u) => `${SHAPE_PLAIN[u.shape]}${reasonText(u)}`).join("/");
+    return { text: `채울 수 없어 채우지 않음${shapes === "" ? "" : `(${shapes})`} — 한컴에서 한 문단 안의 글만 담는 누름틀로 다시 만들어 주세요`, className: "bad" };
   }
   const base: Record<"missing" | "notScalar" | "rejected", string> = {
     missing: "데이터에 없음",

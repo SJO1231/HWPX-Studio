@@ -442,7 +442,7 @@ function fieldDoc(change: (t: string) => string): FieldInfo[] {
   return listFields(loadMutated("hancom-field", SECTION, change));
 }
 
-test("5.3 listFields: shape 다섯 종류", () => {
+test("5.3 listFields: shape 종류(simple·empty·inline·object·crossParagraph·unpaired)", () => {
   // empty: 사이에 hp:t가 없다
   const empty = fieldDoc((t) => t.replace("<hp:t>홍길동</hp:t>", ""));
   assert.deepEqual(empty.map((f) => [f.shape, f.valueText]), [["empty", ""]]);
@@ -463,9 +463,9 @@ test("5.3 listFields: shape 다섯 종류", () => {
     ),
   );
   assert.deepEqual(cross.map((f) => [f.shape, f.path]), [["crossParagraph", [0]]]);
-  // 사이에 다른 객체(ctrl)가 끼어도 simple이 아니다
+  // 사이에 다른 객체(ctrl)가 끼면 object다(탭·줄바꿈 같은 인라인 조각만 있는 inline과 다르다)
   const objectBetween = fieldDoc((t) => t.replace("<hp:t>홍길동</hp:t>", '<hp:t>홍</hp:t><hp:ctrl><hp:pageNum pos="BOTTOM_CENTER" formatType="DIGIT" sideChar="-"/></hp:ctrl><hp:t>길동</hp:t>'));
-  assert.deepEqual(objectBetween.map((f) => f.shape), ["inline"]);
+  assert.deepEqual(objectBetween.map((f) => f.shape), ["object"]);
 });
 
 test("5.3 listFields: HYPERLINK는 빼고 알 수 없는 type은 넣는다", () => {

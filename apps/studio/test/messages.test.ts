@@ -74,9 +74,18 @@ test("Q5: 쉬운 말은 값 원문을 모른다 — 같은 코드는 언제나 �
   assert.match(plainOf("PKG_NOT_ZIP"), /\.hwpx/);
 });
 
-test("Q5: 채울 수 없는 모양의 누름틀과 {{키}} 충돌의 설명은 원인(줄바꿈·탭·끝 표식 없음·누름틀 안의 {{키}})과 할 일을 말한다", () => {
+test("Q5: 채울 수 없는 모양의 누름틀과 {{키}} 충돌의 설명은 원인(그림·표, 표 칸 경계, 끝 표식 없음, 사이 문단의 구역 설정, 다른 누름틀과 엇갈림, 누름틀 안의 {{키}})과 할 일을 말한다", () => {
   const shape = plainOf("FIELD_UNSUPPORTED_SHAPE");
-  for (const cause of ["여러 문단", "줄바꿈·탭·그림·표", "끝 표식", "한컴에서"]) assert.ok(shape.includes(cause), cause);
+  for (const cause of ["그림·표", "표 칸", "구역", "끝 표식", "구역 설정", "다른 누름틀과 엇갈려", "문단을 합칠 수 없어", "한컴에서"]) assert.ok(shape.includes(cause), cause);
+  // 이제 채우는 모양(줄바꿈·탭만 낀 것)은 원인으로 들지 않는다
+  assert.ok(!shape.includes("줄바꿈·탭"));
   const conflict = plainOf("TPL_CONFLICT");
   for (const cause of ["누름틀 안에 적힌 {{키}}", "충돌", "한컴에서"]) assert.ok(conflict.includes(cause), cause);
+});
+
+test("Q5: 여러 문단에 걸친 누름틀을 채운 경고(FIELD_PARAGRAPHS_MERGED)의 설명은 무슨 일이 있었는지(첫 문단에 값, 사이 문단·표 삭제)와 확인할 일을 말한다", () => {
+  assert.equal(
+    plainOf("FIELD_PARAGRAPHS_MERGED"),
+    "이 누름틀은 여러 문단에 걸쳐 있어서 한컴과 같은 방식으로 첫 문단에 값을 넣고 그 사이 문단(표가 있으면 표도)을 지웠습니다. 결과를 한컴에서 열어 사라진 문단이 없는지 확인해 주세요.",
+  );
 });

@@ -158,13 +158,13 @@ DataNode     = { part: "data" | "derived", depth, key, path: string | null, type
 **화면에서 사용자가 하는 일**
 
 1. 문서(.hwpx)를 올린다. 문서에서 찾은 자리 목록이 보인다: 누름틀 이름, `{{키}}`, 후보 자리(라벨 옆 빈 칸 등. 표시만, 채우지 않음).
-2. 데이터(.json)를 올린다: 객체 하나, 객체 배열(여러 건), 또는 묶음 형식. 자리와 데이터 키의 대조표가 보인다(자리별: 데이터 있음 / 없음 / 값에 줄바꿈·탭 / 객체·배열이라 못 넣음 / 넣을 수 없는 문자 / 이름이 키 꼴이 아님 / 채울 수 없는 모양). 자리 목록의 누름틀은 `type`이 `CLICK_HERE`인 것만이고, 엔진이 채우지 못하는 모양(여러 문단에 걸침·안에 줄바꿈·탭·그림·끝 표식 없음)은 곳 수와 함께 표시한다(2026-10-03 독립 검증 M1·M2 반영).
+2. 데이터(.json)를 올린다: 객체 하나, 객체 배열(여러 건), 또는 묶음 형식. 자리와 데이터 키의 대조표가 보인다(자리별: 데이터 있음 / 없음 / 값에 줄바꿈·탭 / 객체·배열이라 못 넣음 / 넣을 수 없는 문자 / 이름이 키 꼴이 아님 / 채울 수 없는 모양). 자리 목록의 누름틀은 `type`이 `CLICK_HERE`인 것만이고, 엔진이 채우지 못하는 모양(안에 그림·표가 있음·표 칸 경계를 넘음·끝 표식 없음)은 곳 수와 함께 표시하고, 여러 문단에 걸친 누름틀은 "채우면 사이 문단이 합쳐짐"으로 미리 알리며 생성 뒤 알림(`FIELD_PARAGRAPHS_MERGED`)을 보인다(2026-10-03 독립 검증 M1·M2, 2026-10-04 엔진 보강 반영).
 3. 누락 정책을 고른다(오류로 멈춤 / 빈칸 / 그대로 둠).
 4. [생성]. 건별 결과(성공·실패, 채운 자리 수, 건너뜀과 사유)를 쉬운 말로 보인다.
 5. 결과를 내려받는다(건별). 호스트는 결과를 작업 공간의 `out/<날짜-시각>/`에도 저장하고 "폴더 열기"(Windows 탐색기) 버튼을 둔다.
 6. (선택) 결과를 뷰어로 미리 본다(기존 뷰어 재사용).
 
-**호스트 API**: `POST /api/quick/template`(.hwpx → 세션, 자리 목록), `POST /api/quick/data`(.json → 키 목록과 대조표), `POST /api/quick/generate`(`{ missing }` → 건별 결과), `GET /api/quick/result/:id/:index`(내려받기), `POST /api/quick/open-folder`. 세션은 메모리, 개수·바이트 상한. 오류는 `{ error: { code, message, plain } }`. 자리 목록의 누름틀 항목은 `{ name, count, usable, fillable, unfillable: [{ shape, count }] }`이다(`fillable`은 엔진이 채울 수 있는 모양 `simple`·`empty`의 곳 수, `unfillable`은 `crossParagraph`·`inline`·`unpaired`별 곳 수. `type`이 `CLICK_HERE`인 필드만 센다). 대조표 상태는 `ok | missing | notScalar | rejected | badKey | unfillable`이고, 데이터 응답에는 객체가 아닌 건의 수 `invalidRecords`가 있다(그 건은 건수 판정에서 뺀다). 서버 껍데기의 거절(Host·Origin·크기)도 `plain`을 갖는다(2026-10-03 독립 검증 반영).
+**호스트 API**: `POST /api/quick/template`(.hwpx → 세션, 자리 목록), `POST /api/quick/data`(.json → 키 목록과 대조표), `POST /api/quick/generate`(`{ missing }` → 건별 결과), `GET /api/quick/result/:id/:index`(내려받기), `POST /api/quick/open-folder`. 세션은 메모리, 개수·바이트 상한. 오류는 `{ error: { code, message, plain } }`. 자리 목록의 누름틀 항목은 `{ name, count, usable, fillable, merging, unfillable: [{ shape, count, reasons? }] }`이다(`fillable`은 엔진이 채울 수 있는 곳 수(`simple`·`empty`·`inline`·건너뛰지 않는 `crossParagraph`), `unfillable`은 `object`·`crossContainer`·`unpaired`·`crossBlocked`(모양은 `crossParagraph`지만 엔진이 건너뛰는 곳. 사유 문구 `reasons`)별 곳 수, `merging`은 채울 수 있는 곳 가운데 `crossParagraph`인 수(채우면 사이 문단이 합쳐짐). 채울 수 있는지는 엔진의 `fieldFillBlock`으로 판정해 생성 결과와 어긋나지 않게 한다. 2026-10-04부터 `inline`·`crossParagraph`는 채울 수 있다. `type`이 `CLICK_HERE`인 필드만 센다). 대조표 상태는 `ok | missing | notScalar | rejected | badKey | unfillable`이고, 데이터 응답에는 객체가 아닌 건의 수 `invalidRecords`가 있다(그 건은 건수 판정에서 뺀다). 서버 껍데기의 거절(Host·Origin·크기)도 `plain`을 갖는다(2026-10-03 독립 검증 반영).
 
 **수용 조건**
 

@@ -11,7 +11,8 @@ import { HostError } from "../../../packages/viewer/src/host/index.ts";
 import { HOST, PORT } from "../src/app.ts";
 import { analyzePlaces } from "../src/quick.ts";
 import { openFolder } from "../src/workspace.ts";
-import { mixedDoc, readFixture, sandbox } from "./helpers.ts";
+import { FIELD_BEGIN, FIELD_END, P, PIC, R, T, synth } from "../../../packages/viewer/test/helpers.ts";
+import { blockMessages, crossed, mixedDoc, readFixture, sandbox, secBetween } from "./helpers.ts";
 import { STAMP, download, enc, generateRun, listFiles, post, postJson, rawGet, rawGetBody, uploadData, uploadTemplate, withApp } from "./server-helpers.ts";
 
 const here = (relative: string): URL => new URL(relative, import.meta.url);
@@ -216,7 +217,7 @@ test("Q4: 데이터를 올리면 형식·건수·키 목록·대조표가 오고
   });
 });
 
-test("Q4: 객체가 아닌 건은 invalidRecords로 알리고 대조표의 건수에서 뺀다 — 채울 수 없는 모양의 누름틀은 unfillable이다", async () => {
+test("Q4: 객체가 아닌 건은 invalidRecords로 알리고 대조표의 건수에서 뺀다 — 줄바꿈·탭이 든 누름틀(inline)은 채울 수 있고, 안에 그림이 든 누름틀(object)은 unfillable이다", async () => {
   await withApp(async (c) => {
     const t = await uploadTemplate(c, readFixture("hancom/ph-single"));
     const d = await uploadData(c, t.session, [{ project: { name: "a", start: "b", end: "c" } }, 42, { project: { name: "d" } }]);
@@ -225,9 +226,60 @@ test("Q4: 객체가 아닌 건은 invalidRecords로 알리고 대조표의 건�
     assert.equal((await uploadData(c, t.session, { project: { name: "a" } })).invalidRecords, 0);
 
     const inline = await uploadTemplate(c, readFixture("inline/inline-breaks"), "줄.hwpx");
-    assert.deepEqual(inline.places.fields.map((f) => [f.name, f.fillable, f.unfillable]), [["줄", 0, [{ shape: "inline", count: 1 }]], ["탭", 0, [{ shape: "inline", count: 1 }]]]);
+    assert.deepEqual(inline.places.fields.map((f) => [f.name, f.fillable, f.merging, f.unfillable]), [["줄", 1, 0, []], ["탭", 1, 0, []]]);
     const matched = await uploadData(c, inline.session, { 줄: "x", 탭: "y" });
-    assert.deepEqual(matched.matches.map((m) => [m.kind, m.key, m.state]), [["field", "줄", "unfillable"], ["field", "탭", "unfillable"]]);
+    assert.deepEqual(matched.matches.map((m) => [m.kind, m.key, m.state]), [["field", "줄", "ok"], ["field", "탭", "ok"]]);
+
+    const object = await uploadTemplate(c, synth([P(R(FIELD_BEGIN("71", "그림", "1", "x") + T("앞") + PIC("1") + T("뒤") + FIELD_END("71")))]), "그림.hwpx");
+    assert.deepEqual(object.places.fields, [{ name: "그림", count: 1, usable: true, fillable: 0, merging: 0, unfillable: [{ shape: "object", count: 1 }] }]);
+    assert.deepEqual((await uploadData(c, object.session, { 그림: "x" })).matches.map((m) => [m.kind, m.key, m.state]), [["field", "그림", "unfillable"]]);
+  });
+});
+
+test("여러 문단에 걸친 누름틀: 자리 목록은 merging으로 알리고 대조표는 데이터로 판정하며, 만들면 notes에 FIELD_PARAGRAPHS_MERGED가 한 건 나오고 바이트는 엔진 직접 호출과 같다 — 표 칸 안 문서도 성공", async () => {
+  await withApp(async (c) => {
+    for (const [name, key] of [["span/field-span", "성명"], ["span/field-span-table", "성명"], ["span/field-span-cell", "칸"]] as const) {
+      const bytes = readFixture(name);
+      const t = await uploadTemplate(c, bytes, `${name.split("/")[1]}.hwpx`);
+      assert.deepEqual(t.places.fields, [{ name: key, count: 1, usable: true, fillable: 1, merging: 1, unfillable: [] }], name);
+      const data = { [key]: "새 값" };
+      const d = await uploadData(c, t.session, data);
+      assert.deepEqual(d.matches.map((m) => [m.kind, m.key, m.state]), [["field", key, "ok"]], name);
+      const run = await generateRun(c, t.session);
+      const r = run.results[0];
+      assert.deepEqual([run.results.length, r?.ok, r?.filled, r?.skipped, r?.errors], [1, true, 1, [], []], name);
+      assert.deepEqual(r?.notes.map((n) => [n.code, n.place]), [["FIELD_PARAGRAPHS_MERGED", `누름틀 "${key}"`]], name);
+      assert.match(r?.notes[0]?.plain ?? "", /여러 문단에 걸쳐 있어서/);
+      assert.deepEqual((await download(c, t.session, 0)).bytes, direct(bytes, data), name);
+    }
+  });
+});
+
+test("엔진이 건너뛰는 여러 문단 누름틀(사이 문단의 구역 설정, 엇갈린 누름틀): 자리 목록이 crossBlocked와 엔진의 사유로 미리 알리고 대조표는 unfillable이며, 만들면 알린 그 곳들이 건너뜀에 나오고 FILL_NOTHING_APPLIED로 실패한다(결과 파일 없음)", async () => {
+  await withApp(async (c) => {
+    const cases: [string, Uint8Array, string[]][] = [
+      ["구역 설정", synth([secBetween("151", "구역")]), ["구역"]],
+      ["엇갈림", synth([crossed("152", "바깥", "153", "안쪽")]), ["바깥", "안쪽"]],
+    ];
+    for (const [label, bytes, names] of cases) {
+      const messages = blockMessages(bytes);
+      assert.ok(messages.length === names.length && messages.every((m) => m !== undefined), label);
+      const t = await uploadTemplate(c, bytes, `${label}.hwpx`);
+      assert.deepEqual(
+        t.places.fields,
+        names.map((name, i) => ({ name, count: 1, usable: true, fillable: 0, merging: 0, unfillable: [{ shape: "crossBlocked", count: 1, reasons: [messages[i]] }] })),
+        label,
+      );
+      const d = await uploadData(c, t.session, Object.fromEntries(names.map((n) => [n, "값"])));
+      assert.deepEqual(d.matches.map((m) => [m.kind, m.key, m.state]), names.map((n) => ["field", n, "unfillable"]), label);
+
+      const run = await generateRun(c, t.session);
+      const r = run.results[0];
+      assert.deepEqual([run.results.length, r?.ok, r?.filled, r?.errors.map((e) => e.code), run.folder], [1, false, 0, ["FILL_NOTHING_APPLIED"], null], label);
+      assert.deepEqual(r?.skipped.map((s) => [s.code, s.place]), names.map((n) => ["FIELD_UNSUPPORTED_SHAPE", `누름틀 "${n}"`]), label);
+      r?.skipped.forEach((s, i) => assert.ok(s.detail?.startsWith(messages[i] ?? "?"), `${label}: ${s.detail}`));
+      assert.equal((await download(c, t.session, 0)).status, 404, `${label}: 실패한 건은 내려받을 파일이 없다`);
+    }
   });
 });
 
@@ -477,8 +529,8 @@ test("HTTP로 보는 보고서: 데이터 경로가 아닌 이름의 누름틀�
   await withApp(async (c) => {
     const t = await uploadTemplate(c, bytes, "혼합.hwpx");
     assert.deepEqual(t.places.fields, [
-      { name: "성명", count: 1, usable: true, fillable: 1, unfillable: [] },
-      { name: "이 름", count: 1, usable: false, fillable: 1, unfillable: [] },
+      { name: "성명", count: 1, usable: true, fillable: 1, merging: 0, unfillable: [] },
+      { name: "이 름", count: 1, usable: false, fillable: 1, merging: 0, unfillable: [] },
     ]);
     const d = await uploadData(c, t.session, [
       { 성명: secret, project: { name: "알파", start: "1" } },

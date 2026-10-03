@@ -4,12 +4,13 @@
 import {
   DATASET_SCHEMA,
   checkValueText,
+  collectFields,
   emptyTemplate,
+  fieldFillBlock,
   findCandidates,
   findPlaceholders,
   generateBatch,
   isValidPath,
-  listFields,
   lookupPath,
   openPackage,
   parseDocument,
@@ -38,29 +39,42 @@ const MAX_KEY_DEPTH = 8;
 
 const CANDIDATE_KINDS = new Set(["emptyCell", "labelColon", "blankMark"]);
 /** `unfillable`에 담는 모양의 순서 */
-const UNFILLABLE_SHAPES: readonly UnfillableShape[] = ["crossParagraph", "inline", "unpaired"];
+const UNFILLABLE_SHAPES: readonly UnfillableShape[] = ["object", "crossContainer", "unpaired", "crossBlocked"];
 
-type FieldTally = { count: number; fillable: number; unfillable: Map<UnfillableShape, number> };
+type FieldTally = { count: number; fillable: number; merging: number; unfillable: Map<UnfillableShape, { count: number; reasons: string[] }> };
 
 /**
  * 문서 바이트를 열어 자리 목록을 만든다. 열 수 없으면 엔진의 `HwpxError`(`PKG_`·`XML_`·`MODEL_`)가 올라온다.
  * 누름틀은 type이 `CLICK_HERE`인 필드만 센다(엔진이 이름 = 데이터 경로로 채우는 것도 그것뿐이다. 책갈피·메일머지 같은 필드는 목록에 없다).
- * 이름의 `usable`은 엔진이 채우는 기준(`isValidPath`)과 같고, 곳마다의 모양(`FieldInfo.shape`)이 `simple`·`empty`이면 `fillable`, 아니면 `unfillable`에 모양별로 센다.
+ * 이름의 `usable`은 엔진이 채우는 기준(`isValidPath`)과 같다. 곳마다 채울 수 있는지는 엔진의 `fieldFillBlock`(`collectFields`의 곳별 판정, 데이터와 무관하다)만 따른다:
+ * 막는 사유가 없으면 `fillable`(그 가운데 여러 문단에 걸친 모양 `crossParagraph`는 `merging`에도 센다), 있으면 `unfillable`에 센다. 여러 문단에 걸친 모양인데 막힌 곳은
+ * `crossBlocked`이고 엔진이 준 사유 문구를 `reasons`에 담는다. 나머지는 모양(`object`·`crossContainer`·`unpaired`)별로 센다.
  */
 export function analyzePlaces(bytes: Uint8Array): PlacesView {
   const doc = parseDocument(openPackage(bytes));
 
   const tallies = new Map<string, FieldTally>();
-  for (const f of listFields(doc)) {
+  for (const target of collectFields(doc)) {
+    const f = target.info;
     if (f.type !== "CLICK_HERE") continue;
     let tally = tallies.get(f.name);
     if (tally === undefined) {
-      tally = { count: 0, fillable: 0, unfillable: new Map() };
+      tally = { count: 0, fillable: 0, merging: 0, unfillable: new Map() };
       tallies.set(f.name, tally);
     }
     tally.count++;
-    if (f.shape === "simple" || f.shape === "empty") tally.fillable++;
-    else tally.unfillable.set(f.shape, (tally.unfillable.get(f.shape) ?? 0) + 1);
+    const block = fieldFillBlock(target);
+    if (block === undefined) {
+      tally.fillable++;
+      if (f.shape === "crossParagraph") tally.merging++;
+      continue;
+    }
+    // 모양이 simple·empty·inline인데 막힌 곳(시작과 끝 표식이 한 조각에 붙어 있음)은 끝 표식을 따로 찾을 수 없는 `unpaired`로 센다
+    const shape: UnfillableShape = f.shape === "crossParagraph" ? "crossBlocked" : f.shape === "object" || f.shape === "crossContainer" ? f.shape : "unpaired";
+    const slot = tally.unfillable.get(shape) ?? { count: 0, reasons: [] };
+    slot.count++;
+    if (shape === "crossBlocked" && !slot.reasons.includes(block.message)) slot.reasons.push(block.message);
+    tally.unfillable.set(shape, slot);
   }
 
   const placeholderCounts = new Map<string, number>();
@@ -77,7 +91,11 @@ export function analyzePlaces(bytes: Uint8Array): PlacesView {
       count: t.count,
       usable: isValidPath(name),
       fillable: t.fillable,
-      unfillable: UNFILLABLE_SHAPES.flatMap((shape) => (t.unfillable.has(shape) ? [{ shape, count: t.unfillable.get(shape) as number }] : [])),
+      merging: t.merging,
+      unfillable: UNFILLABLE_SHAPES.flatMap((shape) => {
+        const slot = t.unfillable.get(shape);
+        return slot === undefined ? [] : [shape === "crossBlocked" ? { shape, count: slot.count, reasons: slot.reasons } : { shape, count: slot.count }];
+      }),
     })),
     placeholders: [...placeholderCounts].map(([key, count]) => ({ key, count })),
     candidates: candidates.slice(0, MAX_CANDIDATES).map((c) => ({ kind: c.kind as "emptyCell" | "labelColon" | "blankMark", evidence: c.evidence })),
@@ -177,7 +195,7 @@ export const countInvalidRecords = (records: readonly BatchRecord[]): number => 
 
 /**
  * 자리(누름틀 이름·`{{키}}`)마다 모든 건에서 데이터와 맞는지 센다. 키로 쓸 수 없는 누름틀 이름(엔진이 채우지 않는 것)은 `badKey`,
- * 그 이름의 곳이 전부 채울 수 없는 모양인 누름틀은 `unfillable`이다(둘 다 건수 판정을 하지 않는다. 일부 곳만 채울 수 없는 누름틀은 데이터로 판정한다).
+ * 그 이름의 곳이 전부 엔진이 채울 수 없는 누름틀은 `unfillable`이다(둘 다 건수 판정을 하지 않는다. 일부 곳만 채울 수 없는 누름틀은 데이터로 판정한다).
  * 객체가 아닌 건은 판정하지 않고 건수에서 뺀다. 판정할 건이 하나도 없으면 `missing`이다.
  */
 export function matchPlaces(places: PlacesView, records: readonly BatchRecord[]): Match[] {
@@ -245,7 +263,7 @@ function toGenerated(item: BatchItem, places: PlacesView, record: BatchRecord): 
     filled: item.filled,
     skipped: item.skipped.map((s) => entry(s.code, s.message, placeOf(s.anchor))),
     errors: item.errors.map((e) => entry(e.code, e.message)),
-    notes: item.ok ? multilineNotes(places, record, item) : [],
+    notes: item.ok ? [...multilineNotes(places, record, item), ...item.warnings.map((w) => entry(w.code, w.message, w.anchor === undefined ? undefined : placeOf(w.anchor)))] : [],
   };
   if (!item.ok && view.errors.length === 0) view.errors.push(entry("QUICK_GENERATE_FAILED"));
   return item.ok && item.output !== undefined ? { view, output: item.output } : { view: { ...view, ok: false } };

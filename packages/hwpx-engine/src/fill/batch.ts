@@ -78,6 +78,11 @@ export type BatchItem = {
   filled: number;
   /** 건너뛴 자리 */
   skipped: { code: string; anchor: string; message: string }[];
+  /**
+   * 계획 단계의 경고(`generate` 보고 `plan.issues` 가운데 severity가 `warning`인 것): 예를 들어 여러 문단에 걸친 누름틀을 채우며 문단을 합친 `FIELD_PARAGRAPHS_MERGED`.
+   * `anchor`는 경고가 가리키는 규칙 id나 자리(`Issue.where`)다. 없으면 빈 배열. 단건 `generate`의 보고는 같은 경고를 `report.issues`에 severity와 함께 싣는다.
+   */
+  warnings: { code: string; message: string; anchor?: string }[];
   /** 실패한 건의 오류 코드(중복 없이, 처음 나온 순서) */
   errorCodes: string[];
   /** 실패한 건의 오류(코드와 메시지) */
@@ -93,7 +98,7 @@ export function* generateBatch(bytes: Uint8Array, template: Parameters<typeof ge
   const { baseName, nameFrom, ...generateOptions } = options;
   const names = planBatchNames(records, baseName, nameFrom);
   for (const [i, record] of records.entries()) {
-    const base = { index: i + 1, name: names[i] ?? "", filled: 0, skipped: [] };
+    const base = { index: i + 1, name: names[i] ?? "", filled: 0, skipped: [], warnings: [] };
     if ("error" in record) {
       yield { ...base, ok: false, errorCodes: [record.error.code], errors: [record.error] };
       continue;
@@ -108,12 +113,13 @@ export function* generateBatch(bytes: Uint8Array, template: Parameters<typeof ge
     }
     const plan = result.report.plan;
     const skipped = plan.skipped.map((s) => ({ code: s.code, anchor: s.anchor, message: s.message }));
+    const warnings = plan.issues.filter((x) => x.severity === "warning").map((x) => ({ code: x.code, message: x.message, ...(x.where === undefined ? {} : { anchor: x.where }) }));
     if (result.ok) {
       const filled = plan.actions.filter((a) => a.type === "fill").reduce((n, a) => n + a.targets, 0);
-      yield { ...base, ok: true, ...(result.dryRun ? {} : { output: result.output }), filled, skipped, errorCodes: [], errors: [] };
+      yield { ...base, ok: true, ...(result.dryRun ? {} : { output: result.output }), filled, skipped, warnings, errorCodes: [], errors: [] };
     } else {
       const errors = result.report.issues.filter((x) => x.severity === "error").map((x) => ({ code: x.code, message: x.message }));
-      yield { ...base, ok: false, skipped, errorCodes: [...new Set(errors.map((x) => x.code))], errors };
+      yield { ...base, ok: false, skipped, warnings, errorCodes: [...new Set(errors.map((x) => x.code))], errors };
     }
   }
 }

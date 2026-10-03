@@ -24,7 +24,7 @@ import { digestValue, lookupPath, resolvePathValue, resolveValue } from "../temp
 import { resolveAnchors, type ResolvedAnchor } from "./anchors.ts";
 import { addDelta, deltaOfElements, deltaRecord, scaleDelta, zeroDelta, type Delta } from "./census.ts";
 import { applyRepls, groupBy, hasSecPr, siblingsAtPath, type Repl } from "./doc.ts";
-import { collectFields, fieldFillBlock, planFieldFill } from "./fields.ts";
+import { collectFields, fieldFillBlock, planFieldFill, type FieldFill, type FieldTarget } from "./fields.ts";
 import { fillFragment } from "./fragment-fill.ts";
 import { fillPlaceholders } from "./placeholders.ts";
 import { buildParagraphs, planRowDeletes, splitLines } from "./structure.ts";
@@ -126,6 +126,9 @@ export function loadFragment(
  *
  * 1. 규칙을 순서대로 평가해 참인 것만 남긴다.
  * 2. 삭제 범위 안의 채움·삽입은 버리고 `report.dropped`에 적는다. 같은 자리에 값이 다른 채움이 둘이면 `TPL_CONFLICT`.
+ *    누름틀의 구간 치환(`inline`·`crossParagraph`)이 지우는 구간은 규칙을 평가하기 전에 모두 정한다(규칙 순서에 기대지 않는다). 그 안의 암묵 채움(`{{}}`·암묵 누름틀)은
+ *    버리고(`dropped`), 그 안을 가리키는 명시 규칙(채움·삽입·주입·표 설정·삭제·행 반복)은 규칙 순서와 상관없이 `TPL_CONFLICT`다.
+ *    문단을 합치는 구간 치환의 시작·끝·사이 문단을 앵커로 하는 삽입·주입도 앞뒤 어디든 `TPL_CONFLICT`다.
  * 3. 글이 바뀌는 구역의 줄 배치 캐시 요소를 전부 지우는 편집을 더한다(삭제 범위와 겹치는 것은 뺀다).
  * 4. 보고서: 적용할 액션, 건너뛴 자리와 사유, 필요한 데이터 경로, 다시 찾은 앵커, 예상 수량 증감.
  *
@@ -449,7 +452,35 @@ export function buildFillPlan(
   }
   const deletes = kept.filter((c) => !refused.has(c));
   const deleteRanges: Range[] = deletes.flatMap((c) => c.parts);
-  const isDeleted = (r: Range): boolean => deleteRanges.some((d) => within(d, r));
+  // 누름틀의 구간 치환(`inline`·`crossParagraph`)이 바꾸는 구간: 시작 표식 뒤부터 끝 표식 앞까지. 이 안은 삭제되는 범위처럼 다룬다.
+  // 구간은 규칙을 평가하기 전에 모두 정해 둔다(3-0: 규칙의 누름틀 채움과 암묵 채움). 그래서 규칙 순서와 상관없이 같은 판정이 나온다.
+  type FieldSpanReg = { range: Range; fill: FieldFill; target: FieldTarget; label: string; counted: boolean };
+  const fieldSpans: FieldSpanReg[] = [];
+  /** 이 범위가 삭제 규칙이 지우는 범위 안인가 */
+  const deletedByRule = (r: Range): boolean => deleteRanges.some((d) => within(d, r));
+  /** 이 범위가 구간 치환이 지우는 구간 안이면 그 구간 */
+  const spanOver = (r: Range): FieldSpanReg | undefined => fieldSpans.find((x) => within(x.range, r));
+  /** 문단 `par`의 논리 구간 `[start, end)`이 구간 치환이 지우는 문단 일부(시작 문단의 표식 뒤, 끝 문단의 표식 앞)에 걸치면 그 구간 */
+  const goneOver = (par: ParagraphNode, start: number, end: number): FieldSpanReg | undefined =>
+    fieldSpans.find((x) => x.fill.span?.gone.some((g) => g.paragraph === par && start < g.until && end > g.from) === true);
+  /** 문단 `par`가 문단을 합치는 구간 치환의 시작·끝 문단이거나 그 사이 문단(같은 목록의 형제)이면 그 구간 */
+  const blockOver = (section: SectionModel, par: ParagraphNode): FieldSpanReg | undefined =>
+    fieldSpans.find((x) => {
+      const merge = x.fill.span?.merge;
+      if (merge === undefined || x.target.section !== section) return false;
+      const first = x.target.paragraph.path;
+      const last = merge.endParagraph.path;
+      const n = par.path[par.path.length - 1] ?? -1;
+      return par.path.length === first.length && par.path.every((v, i) => i === par.path.length - 1 || v === first[i]) && n >= (first[first.length - 1] ?? 0) && n <= (last[last.length - 1] ?? 0);
+    });
+  const isDeleted = (r: Range): boolean => deletedByRule(r) || spanOver(r) !== undefined;
+  /** 명시 규칙 `who`(규칙 id)가 구간 치환 `reg`가 지우는 구간을 건드린다 */
+  const clashSpan = (reg: FieldSpanReg, who: string): void => {
+    const key = `conflict\u0000${reg.label}\u0000${who}`;
+    if (reportedErrors.has(key)) return;
+    reportedErrors.add(key);
+    issues.push(issueFor("TPL_CONFLICT", `${labelOf(reg.label)}이(가) 지우는 구간(여러 문단에 걸친 누름틀의 사이·끝 문단 등)을 건드립니다.`, who));
+  };
 
   // ── 3. 채움·삽입·주입 ───────────────────────────────────────
   const tagged: Tagged[] = [];
@@ -466,6 +497,85 @@ export function buildFillPlan(
     for (const edit of plan.edits) tagged.push({ edit, label });
     if (plan.edits.length > 0 || plan.repls.length > 0) noteRepls(section, par, plan.repls);
   };
+
+  // 누름틀 채움을 계획에 싣는다. 구간 치환이면 그 구간을 등록하고(이미 정해 둔 구간이면 그대로) 수량 증감과 경고를 한 번만 더한다.
+  // 같은 누름틀을 같은 값으로 채우는 규칙이 둘이어도 편집은 같아서 하나로 합쳐지므로, 수량도 경고도 한 번이다.
+  let spanDelta = zeroDelta();
+  const fieldSpanRange = (target: FieldTarget, fill: FieldFill): Range | undefined =>
+    fill.span === undefined ? undefined : { entry: target.section.entryName, start: fill.span.start, end: fill.span.end };
+  const registerSpan = (target: FieldTarget, fill: FieldFill, label: string): FieldSpanReg | undefined => {
+    const range = fieldSpanRange(target, fill);
+    if (range === undefined) return undefined;
+    let reg = fieldSpans.find((x) => same(x.range, range));
+    if (reg === undefined) fieldSpans.push((reg = { range, fill, target, label, counted: false }));
+    return reg;
+  };
+  const commitField = (label: string, target: FieldTarget, fill: FieldFill): void => {
+    commit(label, target.section, fill, target.paragraph);
+    expectations.push({ kind: "field", entry: target.section.entryName, ...fill.check });
+    const reg = registerSpan(target, fill, label);
+    const sp = fill.span;
+    if (reg === undefined || sp === undefined || reg.counted) return;
+    reg.counted = true;
+    spanDelta = addDelta(spanDelta, sp.delta);
+    if (sp.merge !== undefined) {
+      const { between, tables } = sp.merge;
+      issues.push(
+        makeIssue("warning", "FIELD_PARAGRAPHS_MERGED", `누름틀 ${target.info.name}이 걸친 문단 ${between + 2}개를 합쳤고 사이의 문단 ${between}개를 지웠습니다(그 안의 표 ${tables}개 포함).`, label),
+      );
+    }
+    // 구간 안에 통째로 들어 함께 지워지는 다른 종류의 필드(하이퍼링크·날짜 등)와 책갈피
+    const removed = new Map<string, number>();
+    for (const x of sp.removed) removed.set(`${x.kind}:${x.name}`, (removed.get(`${x.kind}:${x.name}`) ?? 0) + 1);
+    for (const [anchor, n] of removed) {
+      report.dropped.push({ ruleId: "implicit", anchor, reason: `누름틀 ${target.info.name}이 지우는 구간 안에 있어 함께 지웠습니다${n > 1 ? `(${n}곳)` : ""}.` });
+    }
+  };
+  /** 이 누름틀이 삭제·교체되는 문단 안인가 */
+  const fieldDeleted = (target: FieldTarget): boolean => {
+    const r = rangeOf(target.section, target.paragraph.element);
+    return deletedByRule(r) || isReplaced(r);
+  };
+  /** 이 누름틀의 시작 표식이 다른 누름틀의 구간 치환이 지우는 구간 안이면 그 구간 */
+  const fieldSpanOver = (target: FieldTarget): FieldSpanReg | undefined => spanOver(rangeOf(target.section, target.begin.element));
+  const hasSpan = (target: FieldTarget): boolean => target.info.shape === "inline" || target.info.shape === "crossParagraph";
+
+  // ── 3-0. 구간 치환이 지우는 구간을 규칙보다 먼저 모두 정한다 ──────────────────
+  // 규칙 순서에 따라 같은 자리가 어떤 때는 버려지고 어떤 때는 충돌이 되지 않도록, 값이 정해지고 채울 수 있는 누름틀의 구간을 모두 등록해 둔다.
+  // 규칙이 가리키는 누름틀(명시)이 먼저이고, 그다음에 이름이 데이터 경로인 누름틀의 암묵 채움이다(문서 순서로 바깥 누름틀이 먼저다).
+  // 채움은 규칙 평가(3)와 암묵 채움(3c)이 이 계획을 그대로 쓴다.
+  for (const rule of active) {
+    const action = rule.do;
+    const anchor = action.type === "fill" ? anchorOf(action.anchor) : undefined;
+    if (action.type !== "fill" || anchor?.kind !== "field") continue;
+    const value = resolveValue(dataset, action.value, policy);
+    if (value.kind === "error" || value.kind === "keep") continue;
+    for (const target of anchor.targets) {
+      if (!hasSpan(target) || fieldDeleted(target)) continue;
+      const plan = planFieldFill(ctxOf(target.section), target, value.kind === "text" ? value.text : "", `규칙 ${rule.id}: 채움`);
+      if (!("fail" in plan)) registerSpan(target, plan, rule.id);
+    }
+  }
+  const claimed = template.rules.flatMap((rule) => {
+    const a = template.anchors.find((x) => x.id === rule.do.anchor);
+    return a?.kind === "field" ? [a] : [];
+  });
+  /** 삭제·교체되는 문단 안이거나 반복할 원형 행 안이거나 다른 누름틀의 구간 치환으로 지워지는 누름틀 */
+  const implicitGone = (target: FieldTarget): boolean =>
+    fieldDeleted(target) || fieldSpanOver(target) !== undefined || repeatRows.some((x) => within(x.range, rangeOf(target.section, target.paragraph.element)));
+  const isClaimed = (target: FieldTarget): boolean => claimed.some((a) => a.name === target.info.name && (a.occurrence === undefined || a.occurrence === target.info.occurrence));
+  const implicitTargets = collectFields(doc).filter((t) => t.info.type === "CLICK_HERE" && !isClaimed(t));
+  const implicitPlans = new Map<FieldTarget, FieldFill>();
+  for (const target of implicitTargets) {
+    const { name } = target.info;
+    if (!hasSpan(target) || !isValidPath(name) || fieldFillBlock(target) !== undefined || implicitGone(target)) continue;
+    const value = resolvePathValue(dataset, name, policy);
+    if (value.kind === "error" || value.kind === "keep") continue;
+    const fill = planFieldFill(ctxOf(target.section), target, value.kind === "text" ? value.text : "", `누름틀 ${name} 채움`);
+    if ("fail" in fill) continue;
+    implicitPlans.set(target, fill);
+    registerSpan(target, fill, `field:${name}`);
+  }
 
   const insertEdits: SpanEdit[] = [];
   let insertDelta = zeroDelta();
@@ -490,6 +600,11 @@ export function buildFillPlan(
         continue;
       }
       const tableRange = rangeOf(target.section, target.element);
+      const tableOver = spanOver(tableRange);
+      if (tableOver !== undefined) {
+        clashSpan(tableOver, rule.id);
+        continue;
+      }
       if (isDeleted(tableRange) || isReplaced(tableRange)) {
         report.dropped.push({ ruleId: rule.id, anchor: action.anchor, reason: "표가 삭제·교체되는 범위 안이라 버렸습니다." });
         continue;
@@ -539,9 +654,15 @@ export function buildFillPlan(
       const digest = digestValue(text);
       let targets = 0;
       let droppedCount = 0;
-      const dropIf = (section: SectionModel, par: ParagraphNode): boolean => {
+      /** 이 문단(`part`가 있으면 그 논리 구간)은 채우지 않는다: 구간 치환이 지우는 자리면 충돌, 삭제·교체되는 범위면 버린다. */
+      const dropIf = (section: SectionModel, par: ParagraphNode, part?: { start: number; end: number }): boolean => {
         const r = rangeOf(section, par.element);
-        if (isDeleted(r) || isReplaced(r)) {
+        const over = spanOver(r) ?? (part === undefined ? undefined : goneOver(par, part.start, part.end));
+        if (over !== undefined) {
+          clashSpan(over, rule.id);
+          return true;
+        }
+        if (deletedByRule(r) || isReplaced(r)) {
           droppedCount++;
           return true;
         }
@@ -551,18 +672,25 @@ export function buildFillPlan(
 
       if (anchor.kind === "field") {
         for (const target of anchor.targets) {
-          if (dropIf(target.section, target.paragraph)) continue;
+          if (fieldDeleted(target)) {
+            droppedCount++;
+            continue;
+          }
+          const over = fieldSpanOver(target);
+          if (over !== undefined) {
+            clashSpan(over, rule.id);
+            continue;
+          }
           const plan = planFieldFill(ctxOf(target.section), target, text, reason);
           if ("fail" in plan) {
             issues.push(issueFor(plan.fail.code, plan.fail.message, rule.id));
             continue;
           }
-          commit(rule.id, target.section, plan, target.paragraph);
-          expectations.push({ kind: "field", entry: target.section.entryName, ...plan.check });
+          commitField(rule.id, target, plan);
           targets++;
         }
       } else if (anchor.kind === "word") {
-        if (!dropIf(anchor.section, anchor.paragraph)) {
+        if (!dropIf(anchor.section, anchor.paragraph, anchor)) {
           const plan = planRangeReplace(ctxOf(anchor.section), anchor.paragraph, anchor.start, anchor.end, text, mixed, reason);
           if ("skip" in plan) {
             report.skipped.push({ ruleId: rule.id, anchor: action.anchor, code: plan.skip.code, message: plan.skip.message });
@@ -613,6 +741,12 @@ export function buildFillPlan(
     // insertText·inject: 앵커는 line
     if (anchor.kind !== "line") continue;
     const anchorRange = rangeOf(anchor.section, anchor.paragraph.element);
+    // 구간 치환이 지우는 구간 안이거나, 문단을 합치는 구간 치환의 시작·끝·사이 문단이면(앞뒤 어디든) 충돌이다
+    const anchorOver = spanOver(anchorRange) ?? blockOver(anchor.section, anchor.paragraph);
+    if (anchorOver !== undefined) {
+      clashSpan(anchorOver, rule.id);
+      continue;
+    }
     // 앵커 문단이 지워지거나, 다른 문단의 교체 범위 안(자기 자신을 교체하는 것은 제외)이면 버린다
     if (isDeleted(anchorRange) || replaceRanges.some((x) => within(x.range, anchorRange) && !same(x.range, anchorRange))) {
       report.dropped.push({ ruleId: rule.id, anchor: action.anchor, reason: "앵커 문단이 삭제·교체되는 범위 안이라 버렸습니다." });
@@ -777,9 +911,10 @@ export function buildFillPlan(
       dataset,
       policy,
       mixed,
-      (par) => {
+      (par, start, end) => {
         const r = rangeOf(section, par.element);
-        return isDeleted(r) || isReplaced(r);
+        // 문단 전체가 삭제·교체·구간 치환의 구간 안이거나, 구간 치환이 지우는 문단 일부(시작 문단의 표식 뒤, 끝 문단의 표식 앞)에 자리가 걸친다
+        return isDeleted(r) || isReplaced(r) || goneOver(par, start, end) !== undefined;
       },
       (par, path) => {
         const r = rangeOf(section, par.element);
@@ -818,19 +953,18 @@ export function buildFillPlan(
   // `type="CLICK_HERE"`인 필드(누름틀)만 대상이다. 책갈피·날짜·메일 머지 같은 다른 종류의 필드는 채우지 않고 보고(`skipped`·`required`·`dropped`)에도 넣지 않는다.
   // 템플릿이 없거나 템플릿에 그 누름틀을 가리키는 규칙(조건이 거짓인 것도)이 없으면, 이름이 데이터 경로 문법에 맞는 누름틀은 "이름 = 데이터 경로"로 채운다
   // (`{{}}`의 암묵 채움과 같은 누락 정책·보고). 같은 이름의 누름틀은 전부 같은 값이다. 규칙이 가리키는 필드는(type과 무관하게) 그 규칙이 맡는다.
-  const claimed = template.rules.flatMap((rule) => {
-    const a = template.anchors.find((x) => x.id === rule.do.anchor);
-    return a?.kind === "field" ? [a] : [];
-  });
   const implicitFields = new Map<string, { count: number; value: ValueDigest }>();
   const implicitFieldDropped = new Map<string, number>();
   const bumpName = (m: Map<string, number>, name: string): void => void m.set(name, (m.get(name) ?? 0) + 1);
-  for (const target of collectFields(doc)) {
-    if (target.info.type !== "CLICK_HERE") continue;
-    const { name, occurrence } = target.info;
-    if (claimed.some((a) => a.name === name && (a.occurrence === undefined || a.occurrence === occurrence))) continue;
+  for (const target of implicitTargets) {
+    const { name } = target.info;
     const id = `field:${name}`;
     const where = `${target.section.entryName} [${target.paragraph.path.join(", ")}]`;
+    // 다른 누름틀의 구간 치환이 지우는 구간 안의 누름틀은 이름·모양과 상관없이 함께 사라진다
+    if (fieldSpanOver(target) !== undefined) {
+      bumpName(implicitFieldDropped, name);
+      continue;
+    }
     if (!isValidPath(name)) {
       report.skipped.push({ ruleId: "implicit", anchor: id, code: "FIELD_NAME_NOT_PATH", message: "누름틀 이름이 데이터 경로(글자·숫자·_·-를 .으로 이은 꼴)가 아니라 채우지 않고 그대로 둡니다.", where });
       continue;
@@ -840,9 +974,8 @@ export function buildFillPlan(
       report.skipped.push({ ruleId: "implicit", anchor: id, code: block.code, message: `${block.message} 그대로 둡니다.`, where });
       continue;
     }
-    const range = rangeOf(target.section, target.paragraph.element);
-    // 삭제·교체되는 문단 안이거나 반복할 원형 행 안의 누름틀은 채우지 않는다
-    if (isDeleted(range) || isReplaced(range) || repeatRows.some((x) => within(x.range, range))) {
+    // 삭제·교체되는 문단 안이거나 반복할 원형 행 안의 누름틀, 다른 누름틀의 구간 치환으로 지워지는 누름틀은 채우지 않는다
+    if (implicitGone(target)) {
       bumpName(implicitFieldDropped, name);
       continue;
     }
@@ -859,13 +992,12 @@ export function buildFillPlan(
     }
     if (value.kind === "empty") missingPaths.add(name);
     const text = value.kind === "text" ? value.text : "";
-    const fill = planFieldFill(ctxOf(target.section), target, text, `누름틀 ${name} 채움`);
+    const fill = implicitPlans.get(target) ?? planFieldFill(ctxOf(target.section), target, text, `누름틀 ${name} 채움`);
     if ("fail" in fill) {
       issues.push(issueFor(fill.fail.code, fill.fail.message, id));
       continue;
     }
-    commit(id, target.section, fill, target.paragraph);
-    expectations.push({ kind: "field", entry: target.section.entryName, ...fill.check });
+    commitField(id, target, fill);
     implicitFields.set(name, { count: (implicitFields.get(name)?.count ?? 0) + 1, value: digestValue(text) });
   }
   for (const [name, x] of [...implicitFields].sort(([a], [b]) => (a < b ? -1 : 1))) {
@@ -905,6 +1037,18 @@ export function buildFillPlan(
   for (const d of deletes) edits.push(...d.edits);
   edits.push(...insertEdits);
 
+  // ── 4b. 구간 치환과 삭제·행 반복의 겹침 ────────────────────────
+  // 값을 바꾸는 편집끼리의 겹침은 4가 잡았고, 구간 안의 채움·삽입·주입·표 설정은 규칙을 평가할 때 `clashSpan`이 잡았다.
+  // 여기서는 구간 치환이 지우는 구간 안(또는 구간 경계를 가로질러)을 건드리는 삭제·행 반복을 잡는다(그대로 두면 적용 단계의 `EDIT_OVERLAP`이나 앵커 유실로 나온다).
+  for (const reg of fieldSpans.filter((x) => x.counted)) {
+    const { start, end, entry } = reg.range;
+    const hits = (e: { start: number; end: number }): boolean => e.start < end && e.end > start;
+    for (const d of deletes) {
+      if (d.parts.some((part) => part.entry === entry && hits(part))) clashSpan(reg, d.rules[0]?.ruleId ?? "삭제");
+    }
+    for (const row of repeatRows) if (row.active && row.range.entry === entry && hits(row.range)) clashSpan(reg, row.ruleId);
+  }
+
   // ── 5. 줄 배치 캐시 ─────────────────────────────────────────
   const changed = new Set<string>(touchedEntries);
   for (const e of edits) changed.add(e.entry);
@@ -918,9 +1062,24 @@ export function buildFillPlan(
   }
 
   // ── 6. 기대값 ───────────────────────────────────────────────
+  // 여러 문단에 걸친 누름틀을 채우면 끝 문단이 시작 문단에 합쳐진다: 합친 문단의 글 = 시작 문단의 글(값으로 바뀐 뒤) + 끝 문단 글의 끝 표식부터 뒤.
+  // 끝 문단은 따로 기대하지 않는다(사라진다). 끝 문단이 또 다른 구간 치환의 시작 문단이면 그 합침도 이어서 센다.
+  const mergeEnd = new Map<ParagraphNode, { endParagraph: ParagraphNode; endFrom: number }>();
+  for (const reg of fieldSpans) {
+    const merge = reg.counted ? reg.fill.span?.merge : undefined;
+    if (merge !== undefined) mergeEnd.set(reg.target.paragraph, merge);
+  }
+  const absorbed = new Set([...mergeEnd.values()].map((m) => m.endParagraph));
+  const finalText = (par: ParagraphNode): string => {
+    const slot = touched.get(par);
+    const own = slot === undefined ? par.logicalText : applyRepls(par.logicalText, slot.repls);
+    const merge = mergeEnd.get(par);
+    return merge === undefined ? own : own + finalText(merge.endParagraph).slice(merge.endFrom);
+  };
   for (const [par, slot] of touched) {
+    if (absorbed.has(par)) continue;
     if (!isDeleted({ entry: slot.entry, start: par.element.start, end: par.element.end })) {
-      expectations.push({ kind: "text", entry: slot.entry, paragraphStart: par.element.start, text: applyRepls(par.logicalText, slot.repls) });
+      expectations.push({ kind: "text", entry: slot.entry, paragraphStart: par.element.start, text: finalText(par) });
     }
   }
 
@@ -943,6 +1102,7 @@ export function buildFillPlan(
   let delta = zeroDelta();
   for (const d of deletes) delta = addDelta(delta, d.delta);
   delta = addDelta(delta, insertDelta);
+  delta = addDelta(delta, spanDelta);
   let expected = delta;
   for (const step of repeatSteps) expected = addDelta(expected, step.delta);
   for (const step of injects) expected = addDelta(expected, step.delta);

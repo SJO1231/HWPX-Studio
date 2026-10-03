@@ -3,7 +3,7 @@
 //   HWPX_CORPUS_DIR=<폴더> node --test packages/hwpx-engine/test/inline-corpus.test.ts
 //   HWPX_CORPUS_DIR=<폴더> HWPX_COM=1 node --test packages/hwpx-engine/test/inline-corpus.test.ts   (한컴 표본 10건 열림도)
 // 표본 문서마다 누름틀·{{}}·낱말·문단·셀에 줄바꿈·탭이 든 값을 배열 데이터(3건)로 채운다: 게이트 통과, 다시 읽은 글이 값과 같음,
-// 문단 수 불변, 검사기 새 오류 0, 결정성. 한컴 표본은 결과를 한컴으로 열어 열림과 쪽 수를 본다.
+// 문단 수 = 원본 + 계획의 수량 예상(여러 문단에 걸친 누름틀은 문단을 합쳐 줄인다), 검사기 새 오류 0, 결정성. 한컴 표본은 결과를 한컴으로 열어 열림과 쪽 수를 본다.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -13,7 +13,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { scanCorpus, sameSnapshot, snapshotOf } from "../../../tools/stress/corpus.ts";
 import { draftAnchors, generate, generateBatch, listFields, openPackage, parseDocument, validateDocument, walkParagraphs, type BatchRecord, type HwpxDocument, type ParagraphNode } from "../src/index.ts";
-import { collectFields, fieldFillBlock, censusOfDoc } from "../src/fill/index.ts";
+import { collectFields, fieldFillBlock, censusOfDoc, type FieldTarget } from "../src/fill/index.ts";
 import { lineFillBlock } from "../src/fill/text.ts";
 import { paragraphAtPath, siblingsAtPath } from "../src/fill/doc.ts";
 import { readTemplate } from "../src/template/index.ts";
@@ -53,7 +53,12 @@ type Place =
 function findPlaces(doc: HwpxDocument): Place[] {
   const used = new Set<unknown>();
   const places: Place[] = [];
-  const target = collectFields(doc).find((t) => fieldFillBlock(t) === undefined && t.info.name !== "");
+  const fields = collectFields(doc);
+  const target = fields.find((t) => fieldFillBlock(t) === undefined && t.info.name !== "");
+  // 채울 수 있는 여러 문단 누름틀의 시작 문단~끝 문단 범위(그 안 표의 칸 문단 포함): 이 안의 자리를 가리키는 규칙은 TPL_CONFLICT라 다른 자리로 고르지 않는다
+  const merging = fields.filter((t) => t.info.shape === "crossParagraph" && t.endParagraph !== null && fieldFillBlock(t) === undefined);
+  const inMergedSpan = (sectionIndex: number, par: ParagraphNode): boolean =>
+    merging.some((t) => t.section.index === sectionIndex && par.element.start >= t.paragraph.element.start && par.element.end <= (t.endParagraph?.element.end ?? -1));
   if (target !== undefined) {
     used.add(target.paragraph);
     places.push({ kind: "field", anchor: { id: "f", kind: "field", name: target.info.name, occurrence: target.info.occurrence }, name: target.info.name, occurrence: target.info.occurrence });
@@ -62,7 +67,7 @@ function findPlaces(doc: HwpxDocument): Place[] {
     for (const section of doc.sections) {
       for (const par of walkParagraphs(section.paragraphs)) {
         // 글 조각만 든 문단만 고른다(탭·객체가 든 문단은 채움이 그 요소를 남겨 기대 글이 값만이 아니다)
-        if (used.has(par) || par.fieldMarks.length > 0 || par.logicalText.length < 4 || !par.pieces.every((x) => x.kind === "text" || x.kind === "entity")) continue;
+        if (used.has(par) || inMergedSpan(section.index, par) || par.fieldMarks.length > 0 || par.logicalText.length < 4 || !par.pieces.every((x) => x.kind === "text" || x.kind === "entity")) continue;
         const place = want(section.index, par.path, par.logicalText, par);
         if (place !== undefined) {
           used.add(par);
@@ -100,15 +105,37 @@ function findPlaces(doc: HwpxDocument): Place[] {
 
 const count = (xml: string, re: RegExp): number => xml.match(re)?.length ?? 0;
 const occurrences = (text: string, ch: string): number => text.split(ch).length - 1;
+/** 구역 원문 조각 안의 줄바꿈·탭 요소 수 */
+const inlineIn = (xml: string): { breaks: number; tabs: number } => ({ breaks: count(xml, /<(?:\w+:)?lineBreak\s*\/>/g), tabs: count(xml, /<(?:\w+:)?tab\s[^>]*\/>/g) });
 function inlineCounts(doc: HwpxDocument): { breaks: number; tabs: number } {
   let breaks = 0;
   let tabs = 0;
   for (const s of doc.sections) {
-    breaks += count(s.text, /<(?:\w+:)?lineBreak\s*\/>/g);
-    tabs += count(s.text, /<(?:\w+:)?tab\s[^>]*\/>/g);
+    const n = inlineIn(s.text);
+    breaks += n.breaks;
+    tabs += n.tabs;
   }
   return { breaks, tabs };
 }
+/** 고른 누름틀의 구간 치환(`inline`·`crossParagraph`)이 지우는 구간 안의 줄바꿈·탭 요소 수(채우면 새 값의 요소로 바뀐다) */
+function removedInline(t: FieldTarget | undefined): { breaks: number; tabs: number } {
+  const from = t?.paragraph.pieces[t.begin.pieceIndex]?.end;
+  const to = t?.endParagraph?.pieces[t.end?.pieceIndex ?? -1]?.start;
+  if (t === undefined || from === undefined || to === undefined || (t.info.shape !== "inline" && t.info.shape !== "crossParagraph")) return { breaks: 0, tabs: 0 };
+  return inlineIn(t.section.text.slice(from, to));
+}
+/** 문단을 합치는 구간: 같은 목록(`prefix`)의 `i`번 문단부터 `j`번 문단까지가 `i`번 하나로 합쳐진다(`j - i`개가 줄어든다) */
+type Merge = { sectionIndex: number; prefix: number[]; i: number; j: number };
+function mergeOf(t: FieldTarget | undefined): Merge | undefined {
+  const j = t?.endParagraph?.path.at(-1);
+  if (t === undefined || t.info.shape !== "crossParagraph" || j === undefined) return undefined;
+  return { sectionIndex: t.section.index, prefix: t.paragraph.path.slice(0, -1), i: t.paragraph.path.at(-1) ?? 0, j };
+}
+/** 원본의 문단 주소가 합친 뒤 문서에서 가지는 주소(합쳐진 구간 뒤의 형제 문단은 줄어든 만큼 앞당겨진다) */
+const shiftedPath = (sectionIndex: number, path: number[], merge: Merge | undefined): number[] =>
+  merge === undefined || merge.sectionIndex !== sectionIndex
+    ? path
+    : path.map((v, k) => (k % 2 === 0 && k === merge.prefix.length && merge.j < v && merge.prefix.every((x, n) => x === path[n]) ? v - (merge.j - merge.i) : v));
 const bump = (m: Record<string, number>, key: string, n = 1): void => void (m[key] = (m[key] ?? 0) + n);
 
 type DocResult = { id: string; places: string[]; records: number; ok: number; codes: string[]; skipped: string[]; problems: string[]; first?: { original: Uint8Array; output: Uint8Array } };
@@ -126,6 +153,10 @@ function processDocument(id: string, bytes: Uint8Array): DocResult | "unreadable
   const original = validateDocument(bytes);
   const originalParagraphs = censusOfDoc(doc).paragraphs;
   const base = inlineCounts(doc);
+  const chosen = places.find((p): p is Extract<Place, { kind: "field" }> => p.kind === "field");
+  const chosenTarget = chosen === undefined ? undefined : collectFields(doc).find((x) => x.info.name === chosen.name && x.info.occurrence === chosen.occurrence);
+  const removed = removedInline(chosenTarget);
+  const merge = mergeOf(chosenTarget);
 
   // 준비 단계: 문단 하나를 `앞 {{note}} 뒤`로 바꿔 문서 안 {{}} 자리를 만든다
   let source = bytes;
@@ -146,8 +177,12 @@ function processDocument(id: string, bytes: Uint8Array): DocResult | "unreadable
     anchors: active.map((p, i) => ({ ...("anchor" in p ? p.anchor : {}), id: `a${i}` })),
     rules: active.map((_, i) => ({ id: `r${i}`, do: { type: "fill", anchor: `a${i}`, value: { path: "v" } } })),
   });
-  const records: BatchRecord[] = VALUES.map((v) => ({ dataset: { data: { v, note: v }, derived: {} } }));
+  const datasetOf = (v: string) => ({ data: { v, note: v }, derived: {} });
+  const records: BatchRecord[] = VALUES.map((v) => ({ dataset: datasetOf(v) }));
   const slots = active.length + (placeholderActive ? 1 : 0);
+  // 여러 문단에 걸친 누름틀을 채우면 문단이 합쳐져 줄어든다: 줄어드는 수는 값과 무관하게 계획의 수량 예상이 알려 준다
+  const probe = generate(source, template, datasetOf(VALUES[0] ?? ""), { missing: "keep" });
+  const expectedParagraphs = probe.ok ? (probe.report.plan.expected["paragraphs"] ?? 0) : 0;
 
   for (const item of generateBatch(source, template, records, { baseName: "x", missing: "keep" })) {
     result.records++;
@@ -172,14 +207,14 @@ function processDocument(id: string, bytes: Uint8Array): DocResult | "unreadable
         if (f?.valueText !== v) result.problems.push(`${item.index}번 건 누름틀 값이 다르다`);
       } else {
         const want = p.kind === "word" ? p.before + v + p.after : p.kind === "placeholder" ? `앞 ${v} 뒤` : v;
-        if (textAt(p.sectionIndex, p.path) !== want) result.problems.push(`${item.index}번 건 ${p.kind} 글이 다르다`);
+        if (textAt(p.sectionIndex, shiftedPath(p.sectionIndex, p.path, merge)) !== want) result.problems.push(`${item.index}번 건 ${p.kind} 글이 다르다`);
       }
     }
-    if (censusOfDoc(out).paragraphs !== originalParagraphs) result.problems.push(`${item.index}번 건 문단 수가 달라졌다`);
+    if (censusOfDoc(out).paragraphs !== originalParagraphs + expectedParagraphs) result.problems.push(`${item.index}번 건 문단 수가 예상(원본 + 수량 예상)과 다르다`);
     if (newErrorsAfter(original, validateDocument(item.output)).length > 0) result.problems.push(`${item.index}번 건 검사기 새 오류`);
     const now = inlineCounts(out);
-    if (now.breaks - base.breaks !== occurrences(v, "\n") * slots) result.problems.push(`${item.index}번 건 줄바꿈 요소 수`);
-    if (now.tabs - base.tabs !== occurrences(v, "\t") * slots) result.problems.push(`${item.index}번 건 탭 요소 수`);
+    if (now.breaks - base.breaks !== occurrences(v, "\n") * slots - removed.breaks) result.problems.push(`${item.index}번 건 줄바꿈 요소 수`);
+    if (now.tabs - base.tabs !== occurrences(v, "\t") * slots - removed.tabs) result.problems.push(`${item.index}번 건 탭 요소 수`);
     if (item.index === 1) {
       result.first = { original: bytes, output: item.output };
       const again = [...generateBatch(source, template, records.slice(0, 1), { baseName: "x", missing: "keep" })][0];
@@ -189,7 +224,7 @@ function processDocument(id: string, bytes: Uint8Array): DocResult | "unreadable
   return result;
 }
 
-test("M1 실제 문서 표본: 누름틀·{{}}·낱말·문단·셀에 줄바꿈·탭 값을 배열 데이터로 채운다 — 게이트 통과, 글 일치, 문단 수 불변, 검사기 새 오류 0, 결정성", { skip: SKIP }, (t) => {
+test("M1 실제 문서 표본: 누름틀·{{}}·낱말·문단·셀에 줄바꿈·탭 값을 배열 데이터로 채운다 — 게이트 통과, 글 일치, 문단 수 = 원본 + 수량 예상, 검사기 새 오류 0, 결정성", { skip: SKIP }, (t) => {
   assert.ok(typeof DIR === "string");
   const files = scanCorpus(DIR);
   const before = snapshotOf(files);
@@ -255,7 +290,7 @@ test("M1 실제 문서 표본: 누름틀·{{}}·낱말·문단·셀에 줄바꿈
   assert.ok(ids.length >= 30, `표본 문서가 30건 이상이어야 한다(${ids.length})`);
   assert.ok(report.corpus.unchangedAfterRun, "읽기 전용: 문서 모음이 바뀌지 않았다");
   assert.deepEqual(failures, {}, "게이트 실패 코드");
-  assert.deepEqual(problems, {}, "다시 읽은 글·문단 수·검사기·결정성 문제");
+  assert.deepEqual(problems, {}, "다시 읽은 글·문단 수(수량 예상)·검사기·결정성 문제");
   assert.equal(ok, records, "모든 건이 게이트를 통과했다");
 
   // 한컴 표본: 결과를 한컴으로 열어 열림과 쪽 수를 본다(원본도 같이 열어 쪽 수를 견준다. 문서는 임시 폴더에 복사해 연다)

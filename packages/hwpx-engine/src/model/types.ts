@@ -147,7 +147,16 @@ export type HwpxDocument = {
 
 // ── 누름틀 ──────────────────────────────────────────────────────
 
-export type FieldShape = "simple" | "empty" | "inline" | "crossParagraph" | "unpaired";
+/**
+ * 누름틀의 모양(시작·끝 표식의 위치와 그 사이에 든 것).
+ * - `simple`: 한 문단 안, 사이에 글이 있다. `empty`: 한 문단 안, 사이에 아무것도 없다.
+ * - `inline`: 한 문단 안, 사이에 탭·줄바꿈 같은 인라인 조각이 있다(객체는 없다).
+ * - `object`: 한 문단 안, 사이에 그림·표·중첩 컨트롤 같은 객체가 하나라도 있다.
+ * - `crossParagraph`: 끝 표식이 다른 문단에 있고, 두 문단이 같은 컨테이너(같은 구역 최상위, 같은 칸, 같은 머리말 등)의 형제다.
+ * - `crossContainer`: 끝 표식이 다른 컨테이너(예: 시작은 표 칸 안, 끝은 표 밖)나 다른 구역에 있다.
+ * - `unpaired`: 끝 표식이 없다.
+ */
+export type FieldShape = "simple" | "empty" | "inline" | "object" | "crossParagraph" | "crossContainer" | "unpaired";
 
 export type FieldInfo = {
   name: string;
@@ -158,4 +167,6 @@ export type FieldInfo = {
   valueText: string;
   dirty: string;
   shape: FieldShape;
+  /** 끝 표식을 담은 문단의 경로. 끝 표식이 시작과 다른 문단에 있을 때(`crossParagraph`·`crossContainer`)만 있다(다른 구역에 있으면 그 구역 안의 경로다). */
+  endPath?: number[];
 };

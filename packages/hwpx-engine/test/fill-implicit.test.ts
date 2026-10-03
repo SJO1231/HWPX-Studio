@@ -97,18 +97,21 @@ test("암묵 채움: 이름이 데이터 경로가 아닌 누름틀은 FIELD_NAM
   assert.match(none.report.issues[0]?.message ?? "", /FIELD_NAME_NOT_PATH 1곳/);
 });
 
-test("암묵 채움: 채울 수 없는 모양(inline)의 누름틀은 FIELD_UNSUPPORTED_SHAPE로 건너뛴다(오류가 아니다). 줄바꿈 값으로 채운 누름틀도 다시 채우지 않고 그대로 둔다", () => {
-  const inline = mutateEntryText(readFixture("hancom-field"), SEC, (x) => x.replace("<hp:t>홍길동</hp:t>", '<hp:t>홍<hp:tab width="0" leader="0" type="0"/>길동</hp:t>'));
-  const r = generate(inline, emptyTemplate(), ds({ 성명: "x" }));
+test("암묵 채움: 채울 수 없는 모양(object)의 누름틀은 FIELD_UNSUPPORTED_SHAPE로 건너뛴다(오류가 아니다). 줄바꿈 값으로 채운 누름틀(inline)은 다시 채운다", () => {
+  const object = mutateEntryText(readFixture("hancom-field"), SEC, (x) =>
+    x.replace("<hp:t>홍길동</hp:t>", '<hp:t>홍</hp:t><hp:ctrl><hp:pageNum pos="BOTTOM_CENTER" formatType="DIGIT" sideChar="-"/></hp:ctrl><hp:t>길동</hp:t>'),
+  );
+  const r = generate(object, emptyTemplate(), ds({ 성명: "x" }));
   assert.deepEqual(failed(r), ["FILL_NOTHING_APPLIED"]);
   assert.deepEqual(r.report.plan.skipped.map((s) => s.code), ["FIELD_UNSUPPORTED_SHAPE"]);
   // 데이터에 키가 없어도 채울 수 없는 누름틀은 DATA_MISSING을 만들지 않는다
-  assert.deepEqual(generate(inline, emptyTemplate(), ds({})).report.plan.missingPaths, []);
-  // 줄바꿈이 든 값으로 채운 누름틀은 모양이 inline이 된다: 다시 채우지 않고 그대로 둔다
+  assert.deepEqual(generate(object, emptyTemplate(), ds({})).report.plan.missingPaths, []);
+  // 줄바꿈이 든 값으로 채운 누름틀은 모양이 inline이 된다: 구간 전체를 바꿔 다시 채운다(건너뜀 없음)
   const filled = done(generate(FIELDS, emptyTemplate(), ds({ 성명: "a\nb", 소속: "c" }))).output;
+  assert.deepEqual(values(reparse(filled)).map((v) => v[1]), ["a\nb", "c", "a\nb"]);
   const again = generate(filled, emptyTemplate(), ds({ 성명: "x", 소속: "y" }));
-  assert.deepEqual(values(reparse(done(again).output)).map((v) => v[1]), ["a\nb", "y", "a\nb"]);
-  assert.deepEqual(again.report.plan.skipped.map((s) => [s.code, s.anchor]), [["FIELD_UNSUPPORTED_SHAPE", "field:성명"], ["FIELD_UNSUPPORTED_SHAPE", "field:성명"]]);
+  assert.deepEqual(values(reparse(done(again).output)).map((v) => v[1]), ["x", "y", "x"]);
+  assert.deepEqual(again.report.plan.skipped, []);
 });
 
 test("암묵 채움: 명시 규칙이 가리키는 누름틀은 그 규칙이 맡는다(순번을 준 규칙은 그 순번만). 조건이 거짓인 규칙의 누름틀도 암묵으로 채우지 않는다", () => {

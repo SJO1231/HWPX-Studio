@@ -197,11 +197,17 @@ test("E2: 시작과 끝 사이에 글이 없는 누름틀(empty)은 시작 컨�
   assert.ok(bytesEqual(none.output, hollow));
 });
 
-test("E2: 인라인 요소가 낀 누름틀(inline)은 FIELD_UNSUPPORTED_SHAPE로 거절한다", () => {
-  const bytes = mutateEntryText(readFixture("hancom-field"), SEC, (x) => x.replace("<hp:t>홍길동</hp:t>", '<hp:t>홍<hp:tab width="0" leader="0" type="0"/>길동</hp:t>'));
-  assert.equal(listFields(reparse(bytes))[0]?.shape, "inline");
+test("E2: 탭이 낀 누름틀(inline)은 구간 전체를 값으로 바꿔 채우고, 개체가 낀 누름틀(object)은 FIELD_UNSUPPORTED_SHAPE로 거절한다", () => {
   const t = tpl({ anchors: [{ id: "a", kind: "field", name: "성명" }], rules: [fillRule("r", "a", { text: "x" })] });
-  assert.deepEqual(failed(generate(bytes, t, ds({}))), ["FIELD_UNSUPPORTED_SHAPE"]);
+  const inline = mutateEntryText(readFixture("hancom-field"), SEC, (x) => x.replace("<hp:t>홍길동</hp:t>", '<hp:t>홍<hp:tab width="0" leader="0" type="0"/>길동</hp:t>'));
+  assert.equal(listFields(reparse(inline))[0]?.shape, "inline");
+  const filled = listFields(reparse(done(generate(inline, t, ds({}))).output))[0];
+  assert.deepEqual([filled?.valueText, filled?.shape], ["x", "simple"]);
+  const object = mutateEntryText(readFixture("hancom-field"), SEC, (x) =>
+    x.replace("<hp:t>홍길동</hp:t>", '<hp:t>홍</hp:t><hp:ctrl><hp:pageNum pos="BOTTOM_CENTER" formatType="DIGIT" sideChar="-"/></hp:ctrl><hp:t>길동</hp:t>'),
+  );
+  assert.equal(listFields(reparse(object))[0]?.shape, "object");
+  assert.deepEqual(failed(generate(object, t, ds({}))), ["FIELD_UNSUPPORTED_SHAPE"]);
 });
 
 // ── E3 ─────────────────────────────────────────────────────────

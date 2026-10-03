@@ -176,7 +176,7 @@ type HwpxDocument = {
 ### 5.3 누름틀 조회 `listFields(doc): FieldInfo[]`
 
 - `FieldInfo = { name, type, occurrence(같은 이름 안 순번, 0부터), sectionIndex, path, valueText, dirty, shape }`
-- `shape`: `simple`(begin·end가 같은 문단, 사이에 `hp:t`가 하나 이상, 인라인 자식 없음) / `empty`(사이에 `hp:t` 없음) / `inline`(사이에 인라인 자식 있음) / `crossParagraph` / `unpaired`
+- `shape`(2026-10-04 7종): `simple`(begin·end가 같은 문단, 사이에 글이 있고 인라인·객체 조각 없음) / `empty`(사이가 빔) / `inline`(같은 문단, 사이에 탭·줄바꿈 같은 인라인 조각만 있고 객체 없음) / `object`(같은 문단, 사이에 표·그림·중첩 컨트롤 같은 객체 조각이 있음) / `crossParagraph`(끝 표식이 같은 컨테이너의 다른 문단에 있음. `endPath`에 끝 문단 경로) / `crossContainer`(끝 표식이 다른 컨테이너·구역에 있음) / `unpaired`(끝 없음). `crossParagraph`의 `valueText`는 빈 문자열이다.
 - `type`이 `HYPERLINK`인 필드는 목록에서 뺀다. 그 밖의 알 수 없는 type은 포함한다. 단, 누름틀 암묵 채움(8.3)과 빠른 생성 화면([스튜디오 명세](studio-spec.md) 4a)은 `type`이 `CLICK_HERE`인 것만 누름틀로 다룬다(책갈피·날짜·메일 머지 같은 다른 type은 건드리지 않는다).
 
 ### 5.4 모델 내보내기 `src/store/` `exportModel(doc): ModelJson`
@@ -217,7 +217,7 @@ type HwpxDocument = {
 - `ParagraphNode`에 `objects`, `fieldMarks`, `bookmarks`가 있고 `SectionModel`에 `bodyRefs`가 있다.
 - `FieldMark`: 시작은 `id` 속성을, 끝은 `fieldid` 속성을 `id`에 담는다. 끝의 `beginIDRef`는 따로 둔다. `dirty`는 문자열이다.
 - `beginIDRef`는 알 수 없는 참조로 세지 않는다.
-- 시작과 끝 사이에 객체 조각이 낀 누름틀의 shape는 `inline`이다. `crossParagraph`·`unpaired`의 `valueText`는 빈 문자열이다.
+- 시작과 끝 사이에 객체 조각이 낀 누름틀의 shape는 `object`(2026-10-04 전에는 `inline`)이다. `crossParagraph`·`unpaired`의 `valueText`는 빈 문자열이다.
 - 문단모양의 `heading` 참조는 `type`이 `NUMBER`면 numbering, `BULLET`이면 bullet이다.
 - header 항목은 manifest에서 `id="header"`이거나 href가 `header.xml`로 끝나는 것이다.
 - `escapeText`·`escapeAttr`는 줄바꿈·탭을 바꾸지 않는다. 그런 문자가 든 값은 채움 단계에서 거절한다(`VALUE_CONTROL_CHAR`).
@@ -715,7 +715,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
   - 값 재읽기는 논리 텍스트(줄바꿈 요소는 `\n`, 탭 요소는 `\t`)와 맞춘 값이 같아야 한다.
   - 요소의 모양 [확인: 한컴 13 저장본]: 줄바꿈은 `hp:t` 안의 `<hp:lineBreak/>`(속성 없음), 탭은 `<hp:tab width="0" leader="0" type="1"/>`(한컴은 `width`·`type`을 읽을 때 쓰지 않고 다시 저장하면 조판 값으로 바꾼다. rhwp는 `type="1"`이어야 한컴과 같은 자리에 그린다). 접두사는 그 run의 것을 따른다.
   - 한컴의 필드 읽기 API는 줄바꿈 요소를 글자로 주지 않는다(`첫 줄둘째 줄`). 보존 확인은 한컴이 다시 저장한 문서를 엔진이 읽어 `\n`이 남는 것으로 한다.
-  - 줄바꿈이 든 값으로 채운 누름틀은 모양이 `inline`이 되어 다시 채울 수 없다(한컴이 만든 줄바꿈 누름틀도 같다). 한계로 둔다. 실제 문서에서는 유일한 누름틀이 여러 문단에 걸친 모양(`crossParagraph`)인 경우가 흔해(자리 있는 153건 중 56건, 2026-10-03 독립 검증) 이 두 모양의 채움은 M1 뒤의 과제다([검증 기준](validation.md) 15절, [작업 기록](task-record.md)). 빠른 생성 화면은 이 모양을 "채울 수 없는 모양"으로 미리 표시한다.
+  - 줄바꿈이 든 값으로 채운 누름틀은 모양이 `inline`이 된다. 2026-10-04부터 `inline`은 다시 채운다(옛 줄바꿈·탭 요소를 옛 값의 일부로 보고 통째로 바꾼다. 8.3). 여러 문단에 걸친 누름틀(`crossParagraph`. 실제 문서의 자리 있는 153건 중 56건)도 같은 날부터 한컴 방식으로 채운다(8.3).
   - 그 밖의 XML 금지 문자(제어 문자)는 지금처럼 `VALUE_CONTROL_CHAR`다.
   - md·txt 어댑터의 규칙은 9절 그대로다(md 표 셀의 줄바꿈은 거부).
 
@@ -731,7 +731,8 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 
 - **누름틀 암묵 채움**(2026-10-03): 대상은 `type`이 `CLICK_HERE`인 필드만이다(다른 type의 필드는 채우지도 보고하지도 않는다. 독립 검증에서 책갈피 범위 필드가 `DATA_MISSING`으로 생성을 막는 것을 보고 2026-10-03 고침). 템플릿이 없거나 그 누름틀을 가리키는 `field` 규칙이 없으면, 이름이 데이터 경로 문법에 맞는 누름틀은 "이름 = 경로"로 채운다(`{{}}`의 암묵 규칙과 같은 자리, 같은 누락 정책). 이름이 경로가 아니면 건너뜀 `FIELD_NAME_NOT_PATH`, 채울 수 없는 모양이면 건너뜀 `FIELD_UNSUPPORTED_SHAPE`(오류가 아니다). 같은 이름은 전부 같은 값. 삭제·교체되는 문단과 반복 원형 행 안의 누름틀은 `dropped`.
 - **적용된 액션이 0이면 실패**: `FILL_NOTHING_APPLIED`(출력 없음, 메시지에 건너뜀 코드별 건수). CLI도 종료 코드 1.
-- 누름틀(shape별): `simple` → 시작과 끝 사이 첫 글 조각에 값을 넣고 나머지 글 조각은 비운다. `empty` → 시작 컨트롤 바로 뒤에 `<접두사:t>값</접두사:t>`를 넣는다. 둘 다 시작 요소의 `dirty`를 `"1"`로 한다(없으면 속성 추가). 안내문과 값을 비교하지 않는다. `inline`·`crossParagraph`·`unpaired`는 `FIELD_UNSUPPORTED_SHAPE`.
+- 누름틀(shape별): `simple` → 시작과 끝 사이 첫 글 조각에 값을 넣고 나머지 글 조각은 비운다. `empty` → 시작 컨트롤 바로 뒤에 `<접두사:t>값</접두사:t>`를 넣는다. 둘 다 시작 요소의 `dirty`를 `"1"`로 한다(없으면 속성 추가). 안내문과 값을 비교하지 않는다. `object`·`crossContainer`·`unpaired`는 `FIELD_UNSUPPORTED_SHAPE`.
+  - **`inline`·`crossParagraph`(2026-10-04, 한컴이 직접 채워 저장한 정답 `test/fixtures/span/`과 대조)**: 시작 표식 조각(`hp:ctrl`)의 끝부터 끝 표식 조각의 시작까지를 한 번의 구간 치환으로 `<접두사:t>값</접두사:t>`로 바꾼다(값이 비면 삭제만). 결과는 시작 run의 여는 태그 + 시작 컨트롤 + 값 + 끝 컨트롤 + 끝 run의 나머지 + 끝 문단의 나머지이고, 시작 run과 끝 run의 여는 태그가 다르면 끝 run을 다시 열어 끝 뒤 글의 글자모양을 지킨다. `crossParagraph`에서는 사이 문단(표 포함)이 사라지고 끝 표식 뒤 글이 첫 문단에 합쳐지며 첫 문단의 속성은 그대로다(한컴과 같다). 건너뜀(`FIELD_UNSUPPORTED_SHAPE`, 사유를 메시지에): 사이·끝 문단에 `secPr`(시작 문단은 표식 뒤에 있을 때만), 구간을 가로질러 짝이 끊기는 다른 필드(모든 type), 구간 경계에 걸친 형광펜·변경 추적 표식(짝 없는 표식이 남게 되는 경우). 지워지는 부분(시작 문단 꼬리·끝 문단 머리·사이 문단)의 표·그림·책갈피·쪽 번호 같은 개체는 한컴처럼 함께 지운다(독립 검증이 한컴 COM으로 확인: 꼬리의 표·책갈피, 머리의 표·쪽 번호가 있어도 한컴은 채우고 지운다). 구간 안에 통째로 든 다른 필드(모든 type)·책갈피는 함께 지우고 `dropped`에 적는다. 구간 안의 `{{}}`와 다른 누름틀의 암묵 채움은 `dropped`. 구간(시작 문단부터 끝 문단까지)을 가리키는 **명시** 규칙(line·cell 채움, insertText, inject, tableProps, 안쪽 누름틀의 명시 채움, 삭제, 행 반복)은 규칙 순서와 무관하게 `TPL_CONFLICT`이고, 시작·끝 문단을 앵커로 쓰는 삽입·주입은 앞뒤 어디든 `TPL_CONFLICT`다(2026-10-04 독립 검증 M1·L2 반영). 수량 예상은 치환 전후 구간을 다시 읽어 센 차이로 `report.expected`에 더한다. `crossParagraph`를 채우면 경고 `FIELD_PARAGRAPHS_MERGED`("누름틀 <이름>이 걸친 문단 N개를 합쳤고 사이의 문단 M개를 지웠습니다(그 안의 표 T개 포함)." T는 지워진 부분 전체의 표 수로, 꼬리·머리의 표도 센다)를 낸다(`generateBatch`의 `BatchItem.warnings`, `--report`의 `items[].warnings`, 단건은 `report.issues`의 severity `warning`). 같은 문단 `inline`은 경고 없음.
   - **안내문 상태**(`dirty`가 `"1"`이 아님) [확인: 한컴 13 저장본]: 시작 컨트롤, 안내문 글, 끝 컨트롤이 서로 다른 run에 있고 안내문 run은 안내문용 글자모양(빨강·기울임)을 쓴다. 값을 넣을 때 시작 run과 끝 run 사이에 있는 run들의 `charPrIDRef`를 **시작 컨트롤이 든 run의 값**으로 바꾼다(한컴이 값을 넣었을 때의 결과와 같은 글자모양). 빈 값을 넣는 경우에는 `dirty`와 글자모양을 건드리지 않는다.
   - 채운 뒤 `listFields`의 `valueText`가 넣은 값과 같아야 한다(값 재읽기).
 - 자기닫힘 run(`<hp:run charPrIDRef="0"/>`, 한컴의 빈 셀·빈 문단 모양)에 글을 넣을 때는 `<hp:run charPrIDRef="0"><접두사:t>값</접두사:t></hp:run>`로 펼친다.

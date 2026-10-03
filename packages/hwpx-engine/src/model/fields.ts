@@ -6,8 +6,14 @@ type Pair = { begin: Located; end: Located | null };
 
 function shapeBetween(paragraph: ParagraphNode, begin: FieldMark, end: FieldMark): FieldShape {
   const between = paragraph.pieces.slice(begin.pieceIndex + 1, end.pieceIndex);
-  if (between.some((p) => p.kind === "inline" || p.kind === "object")) return "inline";
+  if (between.some((p) => p.kind === "object")) return "object";
+  if (between.some((p) => p.kind === "inline")) return "inline";
   return between.some((p) => p.kind === "text" || p.kind === "entity") ? "simple" : "empty";
+}
+
+/** 두 문단이 같은 컨테이너(같은 구역의 같은 목록)의 형제인가. 주소는 `[문단, 하위목록, 문단, ...]`이라 마지막 문단 번호만 빼고 같으면 형제다. */
+function siblingPaths(a: number[], b: number[]): boolean {
+  return a.length === b.length && a.every((v, i) => i === a.length - 1 || v === b[i]);
 }
 
 /** 문서의 누름틀(fieldBegin)을 문서 순서로 나열한다. type이 HYPERLINK인 필드는 뺀다. */
@@ -46,10 +52,12 @@ export function listFields(doc: HwpxDocument): FieldInfo[] {
 
     let shape: FieldShape;
     let valueText = "";
+    let endPath: number[] | undefined;
     if (end === null) {
       shape = "unpaired";
     } else if (end.paragraph !== begin.paragraph) {
-      shape = "crossParagraph";
+      endPath = end.paragraph.path;
+      shape = end.sectionIndex === begin.sectionIndex && siblingPaths(begin.paragraph.path, end.paragraph.path) ? "crossParagraph" : "crossContainer";
     } else {
       const p = begin.paragraph;
       shape = shapeBetween(p, begin.mark, end.mark);
@@ -66,6 +74,7 @@ export function listFields(doc: HwpxDocument): FieldInfo[] {
       valueText,
       dirty: begin.mark.dirty ?? "",
       shape,
+      ...(endPath === undefined ? {} : { endPath }),
     });
   }
   return out;

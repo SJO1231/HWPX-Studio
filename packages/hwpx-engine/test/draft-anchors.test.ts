@@ -390,7 +390,7 @@ test("D11: field 초안은 채움과 같은 판단(fieldFillBlock)을 쓴다 —
       assert.ok(field !== undefined, `${name} ${t.info.name}: field 초안이 없다`);
       assert.ok(!("blocked" in field), "field 초안에는 blocked가 없다");
       // 채울 수 없는 모양이면(판단 함수) 초안 조건을 통과하지 못한다
-      assert.deepEqual(fieldFillBlock({ ...t, info: { ...t.info, shape: "inline" } })?.code, "FIELD_UNSUPPORTED_SHAPE");
+      assert.deepEqual(fieldFillBlock({ ...t, info: { ...t.info, shape: "object" } })?.code, "FIELD_UNSUPPORTED_SHAPE");
       assert.deepEqual(fieldFillBlock({ ...t, end: null })?.code, "FIELD_UNSUPPORTED_SHAPE");
     }
   }

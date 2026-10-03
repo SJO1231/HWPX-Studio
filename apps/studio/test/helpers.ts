@@ -2,7 +2,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openPackage, readEntry, rewriteArchive } from "../../../packages/hwpx-engine/src/index.ts";
+import { collectFields, fieldFillBlock, openPackage, parseDocument, readEntry, rewriteArchive } from "../../../packages/hwpx-engine/src/index.ts";
 import { FIELD_BEGIN, FIELD_END, P, R, T, fixtureNames, readFixture, synth } from "../../../packages/viewer/test/helpers.ts";
 
 export { fixtureNames, readFixture };
@@ -31,3 +31,18 @@ export function sandbox(): { dir: string; remove(): void } {
   const dir = mkdtempSync(join(tmpdir(), "studio-test-"));
   return { dir, remove: () => rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) };
 }
+
+// ── 여러 문단 누름틀 합성 조각(문서는 `synth`로 만든다) ────────────
+// 모양(crossParagraph)만 보면 채울 수 있는 것 같지만 엔진의 fieldFillBlock이 막는 곳과 막지 않는 곳. 막는 일은 데이터와 무관하게 문서만으로 정해진다.
+
+const SEC_PR = '<hp:secPr id="" textDirection="HORIZONTAL"/>';
+/** 여러 문단 누름틀: 사이 문단에 구역 설정(secPr)이 있어 엔진이 건너뛴다 */
+export const secBetween = (id: string, name: string): string => P(R(FIELD_BEGIN(id, name, "1", "x") + T("앞"))) + P(R(SEC_PR + T("사이"))) + P(R(T("뒤") + FIELD_END(id)));
+/** 여러 문단 누름틀 둘이 엇갈린다(바깥 `name`의 구간 안에서 시작한 `other`가 구간 밖에서 끝난다): 둘 다 엔진이 건너뛴다 */
+export const crossed = (id: string, name: string, otherId: string, other: string): string =>
+  P(R(FIELD_BEGIN(id, name, "1", "x") + T("앞"))) + P(R(FIELD_BEGIN(otherId, other, "1", "x") + T("사이"))) + P(R(T("뒤") + FIELD_END(id))) + P(R(T("끝") + FIELD_END(otherId)));
+/** 여러 문단 누름틀: 엔진이 채운다(문단이 합쳐진다) */
+export const openCross = (id: string, name: string): string => P(R(FIELD_BEGIN(id, name, "1", "x") + T("앞"))) + P(R(T("뒤") + FIELD_END(id)));
+
+/** 문서의 누름틀마다 엔진의 fieldFillBlock이 준 문구(채울 수 있으면 undefined), 문서 순서 */
+export const blockMessages = (bytes: Uint8Array): (string | undefined)[] => collectFields(parseDocument(openPackage(bytes))).map((t) => fieldFillBlock(t)?.message);

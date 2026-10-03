@@ -59,6 +59,8 @@ hwpx fill form.hwpx --data data.json -o filled.hwpx --mode strict --missing empt
 hwpx fill form.hwpx --data data.json -o filled.hwpx        # data.json 값에 "첫 줄\n둘째 줄"이 있어도 된다
 ```
 
+여러 문단에 걸친 누름틀(같은 본문이나 같은 표 칸 안의 서로 다른 문단에 시작·끝 표식이 있는 것)은 한컴처럼 채운다: 값은 첫 문단에 들어가고, 사이 문단(표가 든 문단 포함)과 시작 문단 꼬리·끝 문단 머리의 표·그림·책갈피·쪽 번호 같은 개체는 함께 지워지며, 끝 표식 뒤의 글은 첫 문단에 이어 붙고, 첫 문단의 문단 속성은 그대로다. 합쳐서 지운 문단 수는 `경고 [FIELD_PARAGRAPHS_MERGED]`("누름틀 <이름>이 걸친 문단 N개를 합쳤고 사이의 문단 M개를 지웠습니다(그 안의 표 T개 포함).")로 알린다(종료 코드는 바뀌지 않고, `--batch`에서는 건마다 `  경고 [코드] 메시지` 줄로 나온다). 구간 안에 통째로 든 다른 필드·책갈피도 함께 지워지고 채움 계획의 `버림` 수에 든다. 탭·줄바꿈이 든 누름틀(줄바꿈이 든 값으로 한 번 채운 것 포함)도 안의 글 전체를 새 값으로 바꾼다. 그림·표가 든 누름틀(같은 문단 안), 시작은 표 칸 안이고 끝은 칸 밖인 것처럼 끝 표식이 다른 칸·구역에 있는 누름틀, 지워질 구간에 구역 설정이 있거나 다른 필드의 짝이 끊기거나 형광펜·변경 추적 표식의 짝이 구간 밖으로 이어지는 누름틀은 여전히 건너뛴다(`FIELD_UNSUPPORTED_SHAPE`). 지워지는 구간 안을 가리키는 템플릿 규칙(채움·삽입·주입·표 설정·삭제·행 반복)은 규칙 순서와 상관없이 `TPL_CONFLICT`다.
+
 ### 여러 건 만들기 (`--batch`)
 
 데이터 JSON의 최상위가 배열이거나(`[ {...}, {...} ]`) 묶음 형식(`hwpx-studio/dataset@1`)의 `data`가 배열이면 원소마다 결과 파일 하나를 만든다. `--batch`를 주고 `-o`에는 **이미 있는 폴더**를 준다.
@@ -75,7 +77,7 @@ hwpx fill form.hwpx --data list.json --batch --dry-run         # 파일 없이 �
 - 한 건이 실패해도(누락 키, 제어 문자, 게이트 실패) 나머지는 만든다. 실패한 건의 파일은 없고(`--overwrite`로 다시 돌릴 때 전 실행이 남긴 같은 이름의 파일이 있으면 지우고 `이전 결과 파일을 지웠습니다`라고 알린다. `--dry-run`이면 지우지 않는다), 하나라도 실패하면 종료 코드 1이다. 데이터가 0건이면 파일 없이 종료 코드 0이다. 입력 문서를 열 수 없으면 종료 코드 2다.
 - `--template`, `--missing`, `--mode`, `--reissue-internal`은 건마다 같게 적용된다. 같은 입력은 같은 바이트(파일도 보고서도)다.
 - 건마다 한 줄(`성공 001 form-001.hwpx (채움 3, 건너뜀 0)`, 실패는 오류 코드와 메시지)과 마지막에 요약을 낸다. 값 원문은 없다.
-- `--report`는 JSON 하나다: `{ batch, ok, dryRun, total, succeeded, failed, items: [{ index, name, ok, filled, skipped: [{ code, anchor, message }], errorCodes, errors: [{ code, message }] }] }`. `filled`는 채움 액션이 채운 자리 수(템플릿의 채움 규칙, 문서 안 `{{}}`, 이름이 데이터 경로인 누름틀의 암묵 채움을 모두 센다), 실패한 건은 0이다. 값 원문은 없다(`name`은 `--name` 값에서 온 파일 이름이다).
+- `--report`는 JSON 하나다: `{ batch, ok, dryRun, total, succeeded, failed, items: [{ index, name, ok, filled, skipped: [{ code, anchor, message }], warnings: [{ code, message, anchor? }], errorCodes, errors: [{ code, message }] }] }`. `filled`는 채움 액션이 채운 자리 수(템플릿의 채움 규칙, 문서 안 `{{}}`, 이름이 데이터 경로인 누름틀의 암묵 채움을 모두 센다), 실패한 건은 0이다. `warnings`는 그 건의 계획 단계 경고(예: 여러 문단에 걸친 누름틀을 채우며 문단을 합친 `FIELD_PARAGRAPHS_MERGED`)이고 없으면 빈 배열이다. 값 원문은 없다(`name`은 `--name` 값에서 온 파일 이름이다).
 
 Markdown·텍스트도 같은 데이터·템플릿으로 채운다. UTF-8만 받고 BOM과 줄바꿈 방식(LF·CRLF)은 그대로 둔다.
 
