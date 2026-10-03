@@ -9,7 +9,7 @@ import { analyze, boundData, checkProject, confirmFields, normalize, parseCondit
 import { applyProject, markdownHwpx, nativeHwpx } from '../src/hwpx.ts';
 import { demo, demoSources } from '../src/demo.ts';
 import { createApp } from '../src/server.ts';
-import { openPackage, parseDocument, listFields, readArchive, readEntry, validateDocument, compileDocument, walkParagraphs, compareToBaseline } from '@hwpx-studio/engine';
+import { openPackage, parseDocument, listFields, readArchive, readEntry, validateDocument, compileDocument, walkParagraphs, compareToBaseline, rewriteArchive } from '@hwpx-studio/engine';
 import { initSync, HwpDocument } from '../vendor/rhwp/rhwp.js';
 import JSZip from 'jszip';
 import type { Project, Field, Source } from '../src/model.ts';
@@ -79,6 +79,36 @@ test('한컴 저장 누름틀 → 확정 → 채움 → Unwrap; 본문 밖 ZIP �
     assert.deepEqual(b.subarray(next.localStart,next.localEnd),original.subarray(entry.localStart,entry.localEnd),entry.name);
   }
   assert.equal(validateDocument(b).errors.length,0);writeFileSync(artifact('native-fields.hwpx'),b);
+});
+
+for(const fragment of [false,true]) test(`미승인 공백 이름 누름틀: ${fragment?'Anchor+ 교체':'승인 Field 채움'} 뒤 내용·구조 보존`,async()=>{
+  const sample=fixture('field-states.hwpx'),archive=readArchive(sample);
+  const xml=new TextDecoder().decode(readEntry(archive,sample,'Contents/section0.xml'));
+  const original=rewriteArchive(sample,archive,{replace:new Map([['Contents/section0.xml',new TextEncoder().encode(xml.replaceAll('name="성명"','name="담당자 이름"'))]])});
+  const before=parseDocument(openPackage(original));
+  const pending=listFields(before).filter(f=>f.name==='담당자 이름');
+  assert.equal(pending.length,2);assert(pending.every(f=>f.type==='CLICK_HERE'));
+  const pendingXml=(bytes:Uint8Array)=>{
+    const doc=parseDocument(openPackage(bytes)),section=doc.sections[0];
+    // Any section edit invalidates its layout cache; field controls and run formatting must stay identical.
+    return [0,2].map(i=>{const el=section.paragraphs[i].element;return section.text.slice(el.start,el.end).replace(/<hp:linesegarray>[\s\S]*?<\/hp:linesegarray>/g,'');});
+  };
+  const p=baseNative(original);p.records=[{소속:'새 승인 기관','담당자 이름':'미승인 데이터'}];
+  p.fields=analyze(p.sources,p.records);
+  p.fields.forEach(f=>f.approved=f.name==='소속');
+  assert.equal(p.fields.find(f=>f.name==='담당자 이름')?.approved,false);
+  if(fragment) {
+    p.ranges=[{id:'slot',group:'q',sourceId:p.sources[0].id,from:2,to:2}];
+    p.blocks=[{id:'q',group:'q',alias:'안내',engine_type:'markdown',condition:'',priority:0,content:'새 블록 안내'}];
+  }
+  const projectBefore=JSON.stringify(p),r=await nativeHwpx(p,p.records[0],{});
+  assert(text(r.bytes).includes(fragment?'새 블록 안내':'새 승인 기관'));
+  assert(!text(r.bytes).includes('미승인 데이터'));
+  assert.deepEqual(listFields(parseDocument(openPackage(r.bytes))),pending);
+  assert.deepEqual(pendingXml(r.bytes),pendingXml(original));
+  assert(r.reports.some(report=>report.plan.skipped.some((s:any)=>s.ruleId==='implicit'&&s.code==='FIELD_NAME_NOT_PATH')));
+  assert.equal(validateDocument(r.bytes).errors.length,0);
+  assert.equal(JSON.stringify(p),projectBefore);
 });
 
 test('원본 Anchor+ 범위 → 타 문서 병합 표 Fragment → 재매핑·채움·렌더',async()=>{
