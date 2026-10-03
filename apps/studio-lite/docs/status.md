@@ -45,7 +45,7 @@
 - Studio **Helper 연결**에서 프로필 ID·표시 이름·명시적으로 선택한 저장 프로젝트 revision·절대 출력 폴더를 저장한다. 프로필 설정 POST는 Studio Origin을 요구하고, Native의 프로필 조회/생성 전달은 Origin 없는 로컬 요청을 허용한다. 기존 Host/Origin 검사를 유지한다.
 - `GET /api/g2b/profiles`, `POST /api/g2b/profiles`, `POST /api/g2b/generate`. 생성 본문은 `requestId`(1~200자), `profileId`, `sourceKind`(`screen`/`db`), `items`(1~100개)이며 각 항목은 scalar `fields`·`userValues`, `children` 배열과 선택적 출처·식별·단계 정보다. 임의 프로젝트/출력 경로는 생성 요청에서 받지 않는다.
 - 저장 revision의 `fields.column`과 명시적 Block 선택을 기존 `applyProject`에 적용한다. 이름 충돌, 필수값·조건값 누락, 조건 선택 동률, 실제 행이 있는 하위 표는 `needs-input`으로 돌려준다. 유효한 `key`·`label`·`kind`·`rows: []` 빈 하위 표는 scalar 생성을 막지 않는다. 잘못된 하위 표 구조와 중첩 원천 필드는 명시적으로 거절하며, 매핑하지 않은 빈 문자열 필드는 허용한다. 금액 형식은 현재 Core의 Number/locale 변환 전에 정수 원·안전 정수 범위를 검사하며 소수/범위 초과 문자열은 조용히 반올림하지 않고 보완 요청한다. 정밀한 값은 문자 필드로 매핑할 수 있다.
-- SQLite에 요청 지문·고정 프로필/revision 사본·항목별 생성 바이트/해시 계획을 보관한다. 같은 요청 재시도는 같은 결과를 복구하며, 같은 ID의 다른 본문은 HTTP 409로 거절한다. 출력은 `g2b-{requestId SHA256}-{항목번호}.hwpx`이며 flush한 임시 파일을 hard link로 발행해 기존 파일을 덮어쓰지 않는다. hard link를 지원하지 않는 출력 파일시스템은 명시적 저장 오류가 되며 덮어쓰기 방식으로 우회하지 않는다.
+- SQLite에 요청 지문·고정 프로필/revision 사본·항목별 생성 바이트/해시 계획을 보관한다. 같은 요청 재시도는 같은 결과를 복구하며, 같은 ID의 다른 본문은 HTTP 409로 거절한다. 출력은 `g2b-{requestId <실제 문서 4>`이며 flush한 임시 파일을 hard link로 발행해 기존 파일을 덮어쓰지 않는다. hard link를 지원하지 않는 출력 파일시스템은 명시적 저장 오류가 되며 덮어쓰기 방식으로 우회하지 않는다.
 - 항목별 `success`/`needs-input`/`error`와 파일 경로·코드·안내, 요청별 summary와 `partial` 상태로 부분 성공을 표시한다. 정상 파일의 해시가 달라졌으면 기존 파일을 보존하고 오류를 알린다. 실패한 발행은 저장된 바이트 계획으로 재시도한다.
 
 검증: 2026-10-03 `npm run verify`의 첫 샌드박스 실행은 새 연결 시험 5개와 구문·TypeScript·110파일 해시 검사를 통과했으나 기존 합성 산출물 갱신에서 EPERM으로 실패했다. 승인된 동일 명령을 권한 있는 실행으로 재실행해 **33/33 통과, 실패/건너뜀 0**, 구문·TypeScript·재사용 원본 110파일 SHA-256·RHWP 읽기 전용 경계 통과를 확인했다. 새 5개 시험은 임시 SQLite/출력 폴더와 루프백 HTTP로 scalar 값/매핑, Origin 제한, 동시·재시작·발행 후 기록 중단 복구, 프로필 변경 이후 기존 요청 snapshot, 기존 파일 충돌/부분 성공, 이름 충돌/필수값/children/금액 정밀도/Block 동률을 확인한다. 실제 업무 문서·운영 DB·한컴·Helper 전체 연결·새 설정 UI의 브라우저 동작은 이번 Studio 시험에서 확인하지 않았다. 앞선 미수정 Core 결함 5개를 해결한 것으로 표현하지 않는다.
@@ -120,7 +120,7 @@ Python+TypeScript 혼합보다 **TypeScript Core + 표준 Node HTTP/SQLite + 브
 - `artifacts/studio-native.jpg`, `artifacts/studio-markdown.jpg`는 실제 브라우저 결과 화면.
 - 다운로드 버튼 클릭은 수행했지만 Codex 내장 브라우저의 download 이벤트 대기가 시간 초과되어, OS 다운로드 폴더의 저장 완료는 확인하지 못함. API 생성 바이트 및 아래 로컬 파일의 저장·재파싱은 확인됨.
 
-산출물: `artifacts/markdown.hwpx`, `native-fields.hwpx`, `native-fragment.hwpx`, `markdown.svg`, `native-fragment.svg`. 시험은 매번 이 합성 산출물만 갱신합니다.
+산출물: `artifacts/<실제 문서 8>`, `<실제 문서 6>`, `<실제 문서 3>`, `markdown.svg`, `native-fragment.svg`. 시험은 매번 이 합성 산출물만 갱신합니다.
 
 발견·수정:
 
@@ -156,7 +156,7 @@ Python+TypeScript 혼합보다 **TypeScript Core + 표준 Node HTTP/SQLite + 브
 
 추가 시험 자료 4개는 기준 프로젝트 `packages/hwpx-engine/test/fixtures/{tables,hancom}`의 `tables-nested.hwpx`, `tables-rich.hwpx`, `ph-mixed.hwpx`, `header-footer.hwpx`를 읽기 전용 사본으로 가져왔습니다. 출처 문서는 모두 합성 자료임을 명시합니다. SHA-256은 시험 코드에 고정되어 있습니다.
 
-**한컴 직접 열기:** 설치된 한컴 `13, 0, 0, 711`의 COM API로 `complex-md-23.hwpx`, `complex-native.hwpx`, `complex-header-footer.hwpx` 3개를 열었습니다. 3/3 열림, 기대 본문 문자열 10/10 발견, 입력 파일 해시 3/3 불변, 검사 후 이번 실행이 띄운 한컴 종료를 확인했습니다. 머리말/꼬리말 문자열 자체는 한컴의 TEXT 추출 대조 대상에서 제외하고 HWPX XML 재파싱에서 확인했습니다. 결과는 `artifacts/hancom-check.json`, 수동 재현 스크립트는 `artifacts/hancom-check.ps1`입니다. 샌드박스 COM 시작은 완료되지 않아 해당 작업자를 정리하고 호스트에서 재실행했습니다. 파일을 연 채 해시를 읽으려던 검사 스크립트의 잠금 오류는 문서를 닫은 뒤 해시를 비교하도록 수정했습니다.
+**한컴 직접 열기:** 설치된 한컴 `13, 0, 0, 711`의 COM API로 `<실제 문서 7>`, `<실제 문서 5>`, `<실제 문서 1>` 3개를 열었습니다. 3/3 열림, 기대 본문 문자열 10/10 발견, 입력 파일 해시 3/3 불변, 검사 후 이번 실행이 띄운 한컴 종료를 확인했습니다. 머리말/꼬리말 문자열 자체는 한컴의 TEXT 추출 대조 대상에서 제외하고 HWPX XML 재파싱에서 확인했습니다. 결과는 `artifacts/hancom-check.json`, 수동 재현 스크립트는 `artifacts/hancom-check.ps1`입니다. 샌드박스 COM 시작은 완료되지 않아 해당 작업자를 정리하고 호스트에서 재실행했습니다. 파일을 연 채 해시를 읽으려던 검사 스크립트의 잠금 오류는 문서를 닫은 뒤 해시를 비교하도록 수정했습니다.
 
 긴 문서의 쪽 수는 **RHWP 12쪽 / 한컴 13쪽**으로 다릅니다. 한컴 열기·본문 값 확인은 성공했지만, PDF와 육안으로 페이지별 배치를 대조한 것은 아닙니다.
 
@@ -176,7 +176,7 @@ Python+TypeScript 혼합보다 **TypeScript Core + 표준 Node HTTP/SQLite + 브
 
 | 최종 실행 대상 | 결과 |
 |---|---|
-| 원본 분석 | 35종 파싱, 기존 구조 오류 0. `뇌파계 공고서.hwpx` 1종은 이번 선택 기준의 Field가 없어 생성 대상에서 제외 |
+| 원본 분석 | 35종 파싱, 기존 구조 오류 0. `뇌파계 <실제 문서 9>` 1종은 이번 선택 기준의 Field가 없어 생성 대상에서 제외 |
 | 데이터 주입 | 34종 × 3행 = 102건. 15종의 선택 Field 45건 성공, 19종 57건 차단 |
 | 참가자격 Fragment 교체 | 4쌍 모두 기대 문단·새 XML 오류 검사·렌더 통과 |
 | 합계 | **106건: 성공 49 / 차단 57 / 생성 후 검증 실패 0**, RHWP **574쪽** 렌더 |
@@ -195,7 +195,7 @@ Python+TypeScript 혼합보다 **TypeScript Core + 표준 Node HTTP/SQLite + 브
 
 로컬 4318 서버도 수정본으로 재시작했습니다. 최초 프로세스 종료 시도가 실패한 뒤 실행 경로·PID·리스너 소유권을 확인해 재시작했고, HTTP health 200 및 실제 `/api/analyze`에서 빈 라벨 후보 0을 확인했습니다(`artifacts/server-smoke.json`). 이번 변경은 Core/어댑터/하네스에 한정되며 새 브라우저 UI 시험은 수행하지 않았습니다.
 
-한컴과 RHWP는 한 생성물에서 **12쪽 / 11쪽**으로 달랐습니다(`aa0f29fa71-fill-0.hwpx`). 직접 열기·본문 확인은 조판 동일성 증명이 아닙니다. PDF/이미지로 페이지별 배치 대조는 수행하지 않았습니다. 후보 의미 정확도 전체, 선택하지 않은 모든 항목, 지원하지 않는 서식의 주입 성공을 보장하지 않습니다. 차단 57건은 성공 건수에 포함하지 않습니다.
+한컴과 RHWP는 한 생성물에서 **12쪽 / 11쪽**으로 달랐습니다(`<실제 문서 2>`). 직접 열기·본문 확인은 조판 동일성 증명이 아닙니다. PDF/이미지로 페이지별 배치 대조는 수행하지 않았습니다. 후보 의미 정확도 전체, 선택하지 않은 모든 항목, 지원하지 않는 서식의 주입 성공을 보장하지 않습니다. 차단 57건은 성공 건수에 포함하지 않습니다.
 
 ### 코드 리뷰 (2026-10-02 당시 발견 사항; 2026-10-03 위 수정 기록 참조)
 
