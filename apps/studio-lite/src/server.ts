@@ -3,7 +3,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve, extname } from 'node:path';
-import { analyze, assert, checkProject, checkRecords, confirmFields, md, parseCsv, parseXlsx, schemaFrom, sourceLines } from './core.ts';
+import { analyze, assert, checkProject, checkRecords, confirmFields, md, parseCsv, importXlsx, schemaFrom, sourceLines } from './core.ts';
 import { applyProject, markdownHwpx } from './hwpx.ts';
 import { demo, demoSources } from './demo.ts';
 import { createG2B, G2BRequestError } from './g2b.ts';
@@ -54,7 +54,8 @@ export function createApp(database=':memory:') {
       if(path==='/api/g2b/generate')return send(200,await g2b.generate(input));
       if(path==='/api/import-data') {
         assert(typeof input.content==='string' && typeof input.name==='string','파일 형식을 확인하세요.');
-        const records=/\.xlsx$/i.test(input.name)?parseXlsx(Buffer.from(input.content,'base64')):/\.csv$/i.test(input.name)?parseCsv(input.content):JSON.parse(input.content);
+        if(/\.xlsx$/i.test(input.name))return send(200,importXlsx(Buffer.from(input.content,'base64'),input.sheetIndex));
+        const records=/\.csv$/i.test(input.name)?parseCsv(input.content):JSON.parse(input.content);
         checkRecords(records);return send(200,{records});
       }
       if(path==='/api/demo-native') {

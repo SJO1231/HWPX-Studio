@@ -1,6 +1,7 @@
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const state={p:null,draft:null,docs:[],selected:{},output:null,tab:'template',rev:0,urls:[],templateHtml:''};
+const state={p:null,draft:null,docs:[],selected:{},output:null,tab:'template',rev:0,urls:[],templateHtml:'',xlsx:null};
+let dataImportRevision=0;
 let blockDraft=[];
 function status(message,error=false){$('#status').textContent=message;$('#status').classList.toggle('error',error);}
 async function api(path,body){const r=await fetch(`/api/${path}`,body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const v=await r.json();if(!r.ok)throw new Error(v.error??'요청에 실패했습니다.');return v;}
@@ -10,7 +11,7 @@ function getProject(){state.p.markdown=$('#editor').value;state.p.name=$('#name'
 function saveFile(content,name,type='application/json'){const url=URL.createObjectURL(new Blob([content],{type}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 function bytes64(text){return Uint8Array.from(atob(text),c=>c.charCodeAt(0));}
 async function file64(file){const bytes=new Uint8Array(await file.arrayBuffer());let text='';for(let i=0;i<bytes.length;i+=8192)text+=String.fromCharCode(...bytes.subarray(i,i+8192));return btoa(text);}
-function setProject(p){state.p=p;state.draft=null;state.docs=[];state.selected=p.selectedBlocks??{};state.output=null;state.rev++;state.tab='template';render();}
+function setProject(p){dataImportRevision++;state.xlsx=null;state.p=p;state.draft=null;state.docs=[];state.selected=p.selectedBlocks??{};state.output=null;state.rev++;state.tab='template';render();}
 
 function render(){
   const p=state.p;$('#name').value=p.name;$('#editor').value=p.markdown;
@@ -24,11 +25,28 @@ function render(){
   const selected=String(p.activeRecord??0);
   $('#record').innerHTML=p.records.map((r,i)=>`<option value="${i}">${i+1}. ${esc(r.사업명??Object.values(r)[0]??'레코드')}</option>`).join('');
   $('#record').value=selected!=='' && p.records[Number(selected)]?selected:'0';
-  recordDetail(); renderGroups();renderGrid();lineNumbers();previewTemplate();
+  renderXlsx();recordDetail(); renderGroups();renderGrid();lineNumbers();previewTemplate();
   $('#document-strip').textContent=p.mode==='markdown'?'Main Template · Markdown':`Master · ${p.sources[0]?.name??'HWPX를 추가하세요'}`;
   $('#sources').innerHTML=p.sources.map((s,i)=>`<span class="source-tag">${i===0?'Master · ':''}${esc(s.name)}</span>`).join('')+(p.sources.length?'<button id="clear-docs" class="small">문서 비우기</button>':'');
   $('#clear-docs')?.addEventListener('click',()=>{p.sources=[];p.fields=[];p.ranges=[];state.draft=null;state.docs=[];changed();render();});
   refreshProjects();
+}
+function renderXlsx(){
+  const x=state.xlsx;$('#xlsx-options').hidden=!x;if(!x)return;
+  $('#xlsx-sheet').innerHTML=x.sheets.filter(s=>x.sheets.length===1||s.index>0).map(s=>`<option value="${s.index}" ${s.index===x.selectedSheet?'selected':''}>${s.index+1}. ${esc(s.name)}</option>`).join('');
+  $('#xlsx-warnings').textContent=x.warnings.join(' · ');
+}
+async function loadData(input,analyze=false){
+  const revision=++dataImportRevision,project=state.p;
+  const content=await input.content;
+  if(revision!==dataImportRevision||project!==state.p)return;
+  const result=await api('import-data',{...input,content});
+  if(revision!==dataImportRevision||project!==state.p)return;
+  state.p.records=result.records;state.p.activeRecord=0;
+  state.xlsx=/\.xlsx$/i.test(input.name)?{input:{...input,content},sheets:result.sheets,selectedSheet:result.selectedSheet,warnings:result.warnings}:null;
+  changed();render();if(analyze&&state.p.sources.length)await analyzeDocs();
+  const sheet=state.xlsx?` · ${state.xlsx.selectedSheet+1}번째 시트`:'',warnings=result.warnings?.length?` · 확인할 알림 ${result.warnings.length}개`:'';
+  status(`${result.records.length}개 레코드 입력 완료${sheet}${warnings}`);
 }
 function recordDetail(){const r=state.p.records[Number($('#record').value)]??{};$('#record-detail').innerHTML=Object.entries(r).map(([k,v])=>`<div class="data-pair"><span>${esc(k)}</span><span>${esc(v)}</span></div>`).join('');}
 function renderGroups(){
@@ -101,8 +119,9 @@ $('#save').onclick=action(async()=>{if(state.draft)throw new Error('Grid 수정�
 $('#load').onclick=action(async()=>{if(!$('#saved-projects').value)throw new Error('저장한 템플릿을 선택하세요.');setProject(await api(`project?id=${$('#saved-projects').value}`));status('저장한 프로젝트를 불러왔습니다.');});
 $('#export').onclick=()=>saveFile(JSON.stringify(getProject(),null,2),'template.studio.json');
 $('#project-file').onchange=action(async e=>{const file=e.target.files[0];if(!file)return;const p=JSON.parse(await file.text());await api('markdown',{project:p});setProject(p);status('프로젝트 JSON을 불러왔습니다.');e.target.value='';});
-$('#update-records').onclick=action(async()=>{const r=await api('import-data',{name:'records.json',content:$('#records-json').value});state.p.records=r.records;changed();render();status(`${r.records.length}개 레코드를 반영했습니다.`);});
-$('#data-file').onchange=action(async e=>{const f=e.target.files[0];if(!f)return;const r=await api('import-data',{name:f.name,content:/\.xlsx$/i.test(f.name)?await file64(f):await f.text()});state.p.records=r.records;changed();render();if(state.p.sources.length)await analyzeDocs();status(`${r.records.length}개 레코드 입력 완료${/\.xlsx$/i.test(f.name)?' · 첫 번째 시트, 날짜는 Excel 원시값':''}`);e.target.value='';});
+$('#update-records').onclick=action(async()=>{await loadData({name:'records.json',content:$('#records-json').value});});
+$('#data-file').onchange=action(async e=>{const f=e.target.files[0];if(!f)return;try{await loadData({name:f.name,content:/\.xlsx$/i.test(f.name)?file64(f):f.text()},true);}finally{e.target.value='';}});
+$('#xlsx-sheet').onchange=action(async e=>{if(!state.xlsx)return;const input={...state.xlsx.input,sheetIndex:Number(e.target.value)};e.target.disabled=true;try{await loadData(input,true);}finally{renderXlsx();e.target.disabled=false;}});
 $('#documents').onchange=action(async e=>{for(const f of e.target.files){if(f.size>10*1024*1024)throw new Error('문서 하나당 10MB 이내로 선택하세요.');state.p.sources.push({id:crypto.randomUUID(),name:f.name,kind:/\.hwpx$/i.test(f.name)?'hwpx':'md',content:/\.hwpx$/i.test(f.name)?await file64(f):await f.text()});}state.p.fields=[];state.p.ranges=[];await analyzeDocs();e.target.value='';});
 $('#example-compare').onclick=action(async()=>{state.p.sources=await api(state.p.mode==='hwpx'?'demo-native':'demo-sources',state.p.mode==='hwpx'?{}:undefined);state.p.fields=[];state.p.ranges=[];state.p.blocks=[];state.p.records=[{사업명:'서버 구매',예정금액:120000000,계약방법:'제한경쟁',납품장소:'본관 전산실'},{사업명:'모니터 구매',예정금액:35000000,계약방법:'일반경쟁',납품장소:'본관 회의실'}];await analyzeDocs();});
 $('#confirm').onclick=action(async()=>{if(!state.draft)throw new Error('문서를 분석하거나 Grid를 먼저 수정하세요.');const p=structuredClone(getProject());p.fields=state.draft;state.p=await api('confirm',{project:p});state.draft=null;changed();render();status('Grid를 확정했습니다. 레코드와 Block을 선택한 뒤 데이터를 적용하세요.');});

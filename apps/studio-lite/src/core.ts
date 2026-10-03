@@ -272,37 +272,115 @@ export function parseCsv(text: string) {
   checkRecords(result); return result;
 }
 
-export function parseXlsx(bytes: Uint8Array) {
+type XlsxSheet = { index: number; name: string; path: string };
+type XlsxCell = string | number | boolean;
+
+function openXlsx(bytes: Uint8Array) {
   const zip=readArchive(bytes);
   const read=(name:string)=>parseXmlBytes(readEntry(zip,bytes,name),name).root;
-  const texts=(root:any)=>[...walkElements(root)].filter((e:any)=>e.local==='t').map((e:any)=>e.children.map((x:any)=>x.value??'').join('')).join('');
-  const shared=zip.entries.some(e=>e.name==='xl/sharedStrings.xml') ? [...walkElements(read('xl/sharedStrings.xml'))].filter(e=>e.local==='si').map(texts) : [];
-  const sheets=zip.entries.filter(e=>/^xl\/worksheets\/sheet\d+\.xml$/.test(e.name)).sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true}));
-  let firstSheet=sheets[0]?.name;
+  let sheets:XlsxSheet[];
   if(zip.entries.some(e=>e.name==='xl/workbook.xml')) {
-    const sheet=[...walkElements(read('xl/workbook.xml'))].find(e=>e.local==='sheet');
-    const relation=sheet && [...walkElements(read('xl/_rels/workbook.xml.rels'))].find(e=>e.local==='Relationship'&&attrValue(e,'Id')===attrValue(sheet,'r:id'));
-    const target=relation && attrValue(relation,'Target');
-    assert(relation && target && attrValue(relation,'TargetMode')!=='External','XLSX 첫 번째 시트 연결을 확인하세요.');
-    firstSheet=posix.resolve('/xl',target).slice(1);
-    assert(firstSheet.startsWith('xl/worksheets/') && zip.entries.some(e=>e.name===firstSheet),'XLSX 시트 경로를 확인하세요.');
+    const listed=[...walkElements(read('xl/workbook.xml'))].filter(e=>e.local==='sheet');
+    const relations=[...walkElements(read('xl/_rels/workbook.xml.rels'))].filter(e=>e.local==='Relationship');
+    const relationIds=relations.map(e=>attrValue(e,'Id'));
+    assert(relationIds.every(Boolean) && new Set(relationIds).size===relationIds.length,'XLSX 시트 연결 ID가 비었거나 중복되었습니다.');
+    const sheetIds=listed.map(e=>attrValue(e,'sheetId')).filter(x=>x!==undefined);
+    const used=new Set<string>();
+    const paths=new Set<string>();
+    assert(new Set(sheetIds).size===sheetIds.length,'XLSX 시트 ID가 중복되었습니다.');
+    sheets=listed.map((sheet,index)=>{
+      const link=attrValue(sheet,'r:id');
+      assert(link && !used.has(link),'XLSX 시트 연결 ID가 비었거나 중복되었습니다.');
+      used.add(link);
+      const relation=relations.find(e=>attrValue(e,'Id')===link);
+      const target=relation && attrValue(relation,'Target');
+      assert(relation && target && attrValue(relation,'TargetMode')!=='External','XLSX 시트 연결을 확인하세요.');
+      assert(!/[\\\u0000?#:]/.test(target),'XLSX 시트 경로를 확인하세요.');
+      const path=posix.resolve('/xl',target).slice(1);
+      assert(path.startsWith('xl/worksheets/') && zip.entries.some(e=>e.name===path),'XLSX 시트 경로를 확인하세요.');
+      assert(!paths.has(path),'XLSX 시트 경로가 중복되었습니다.');
+      paths.add(path);
+      return {index,name:attrValue(sheet,'name')??('시트 '+String(index+1)),path};
+    });
+  } else {
+    sheets=zip.entries.filter(e=>/^xl\/worksheets\/sheet\d+\.xml$/.test(e.name)).sort((a,b)=>a.name.localeCompare(b.name,undefined,{numeric:true})).map((e,index)=>({index,name:'시트 '+String(index+1),path:e.name}));
   }
-  assert(firstSheet,'XLSX 첫 번째 시트가 없습니다.');
-  const rows=[...walkElements(read(firstSheet))].filter(e=>e.local==='row').map(r=> {
-    const out:string[]=[];
-    for(const c of [...walkElements(r)].filter(e=>e.local==='c')){
+  assert(sheets.length>0,'XLSX 첫 번째 시트가 없습니다.');
+  return {zip,read,sheets};
+}
+
+function xlsxRows(book:ReturnType<typeof openXlsx>, sheet:XlsxSheet, typed:boolean): XlsxCell[][] {
+  const texts=(root:any)=>[...walkElements(root)].filter((e:any)=>e.local==='t').map((e:any)=>e.children.map((x:any)=>x.value??'').join('')).join('');
+  const shared=book.zip.entries.some(e=>e.name==='xl/sharedStrings.xml') ? [...walkElements(book.read('xl/sharedStrings.xml'))].filter(e=>e.local==='si').map(texts) : [];
+  return [...walkElements(book.read(sheet.path))].filter(e=>e.local==='row').map(r=>{
+    const out:XlsxCell[]=[];
+    for(const c of [...walkElements(r)].filter(e=>e.local==='c')) {
       const letters=attrValue(c,'r')?.match(/^[A-Z]+/)?.[0]??'';
       const col=[...letters].reduce((n,c)=>n*26+c.charCodeAt(0)-64,0)-1;
-      assert(col>=0 && col<200, 'XLSX는 최대 200열을 지원합니다.');
-      const v=[...walkElements(c)].find(e=>e.local==='v'); const raw=v?.children.map((x:any)=>x.value??'').join('')??'';
+      assert(col>=0 && col<200,'XLSX는 최대 200열을 지원합니다.');
+      const v=[...walkElements(c)].find(e=>e.local==='v');
+      const raw=v?.children.map((x:any)=>x.value??'').join('')??'';
       assert(![...walkElements(c)].some(e=>e.local==='f') || v,'캐시 값이 없는 수식이 있습니다. Excel에서 계산 후 저장하세요.');
       const type=attrValue(c,'t');
       assert(type!=='e','XLSX에 오류 셀이 있습니다. Excel에서 수정 후 저장하세요.');
       assert(type!=='s' || (/^\d+$/.test(raw)&&shared[Number(raw)]!==undefined),'XLSX 공유 문자열 참조가 올바르지 않습니다.');
-      out[col]=type==='s' ? shared[Number(raw)] : type==='inlineStr'?texts(c):type==='b'?(raw==='1'?'true':'false'):raw;
-    } return out;
+      let value:XlsxCell;
+      if(type==='s') value=shared[Number(raw)];
+      else if(type==='inlineStr') value=texts(c);
+      else if(!typed) value=type==='b'?(raw==='1'?'true':'false'):raw;
+      else {
+        assert(type===undefined || ['n','b','str'].includes(type),'XLSX 셀 값 형식을 확인하세요.');
+        if(raw==='') value='';
+        else if(type==='b') {
+          assert(raw==='0' || raw==='1','XLSX 불리언 셀 값은 0 또는 1이어야 합니다.');
+          value=raw==='1';
+        } else if(type==='str') value=raw;
+        else {
+          assert(/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][+-]?\d+)?$/.test(raw),'XLSX 숫자 셀 값을 확인하세요.');
+          const number=Number(raw);
+          assert(Number.isFinite(number) && (!Number.isInteger(number) || Number.isSafeInteger(number)),'XLSX 숫자는 유한한 값과 안전한 정수 범위여야 합니다.');
+          value=number;
+        }
+      }
+      out[col]=value;
+    }
+    return out;
   }).filter(r=>r.some(v=>v!==''));
+}
+
+export function listXlsxSheets(bytes:Uint8Array): {index:number;name:string}[] {
+  return openXlsx(bytes).sheets.map(({index,name})=>({index,name}));
+}
+
+export function importXlsx(bytes:Uint8Array, sheetIndex?:number): {sheets:{index:number;name:string}[];selectedSheet:number;records:Record<string,unknown>[];warnings:string[]} {
+  const book=openXlsx(bytes);
+  const selectedSheet=sheetIndex===undefined?(book.sheets.length>1?1:0):sheetIndex;
+  assert(Number.isInteger(selectedSheet) && selectedSheet>=0 && selectedSheet<book.sheets.length,'XLSX 시트 선택을 확인하세요.');
+  assert(book.sheets.length===1 || selectedSheet!==0,'첫 번째 시트는 안내 시트입니다. 두 번째 이후 데이터 시트를 선택하세요.');
+  const rows=xlsxRows(book,book.sheets[selectedSheet],true);
+  const header=rows.shift()??[];
+  const width=Math.max(header.length,...rows.map(r=>r.length));
+  const headers=Array.from({length:width},(_,i)=>String(header[i]??'').trim().replace(/^\uFEFF/,''));
+  const named=headers.filter(Boolean);
+  assert(named.length>0 && new Set(named).size===named.length && named.every(keyOK),'XLSX 열 이름이 비었거나 중복되었습니다.');
+  const warnings:string[]=[];
+  const columns=headers.flatMap((name,col)=>{
+    if(name) return [{name,col}];
+    let letters='';let index=col+1;
+    while(index>0){index--;letters=String.fromCharCode(65+index%26)+letters;index=Math.floor(index/26);}
+    warnings.push('머리글이 없는 '+letters+'열을 건너뛰었습니다.');
+    return [];
+  });
+  const records=rows.map(row=>Object.fromEntries(columns.map(({name,col})=>[name,row[col]??'']))).filter(row=>Object.values(row).some(v=>v!==''));
+  checkRecords(records);
+  return {sheets:book.sheets.map(({index,name})=>({index,name})),selectedSheet,records,warnings};
+}
+
+// Keep the legacy strict, string-valued API for callers that require it.
+export function parseXlsx(bytes: Uint8Array) {
+  const book=openXlsx(bytes);
+  const rows=xlsxRows(book,book.sheets[0],false);
   const width=rows[0]?.length??0;
   assert(rows.every(r=>!r.slice(width).some(v=>v!=='')),'XLSX 헤더가 없는 열에 데이터가 있습니다. 열 이름을 추가하세요.');
-  return parseCsv(rows.map(r=>Array.from({length:width},(_,i)=>`"${(r[i]??'').replaceAll('"','""')}"`).join(',')).join('\n'));
+  return parseCsv(rows.map(r=>Array.from({length:width},(_,i)=>'"'+String(r[i]??'').replaceAll('"','""')+'"').join(',')).join('\n'));
 }
