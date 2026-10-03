@@ -35,6 +35,7 @@
 | 한컴으로 열기·PDF | `python tools/com/open_check.py --out 결과.json [--pdf-dir 폴더] 파일...` | 확인(한컴 13) |
 | 한컴 시험 문서 다시 만들기 | `python tools/com/make_fixtures.py` | 확인 |
 | 빠른 생성 예시 서식 다시 만들기 | `python tools/com/make_examples.py` → `examples/quick/*.hwpx` | 확인(한컴 13) |
+| 여러 문단 누름틀 정답 문서 다시 만들기 | `python tools/com/make_span_fixtures.py` → `tools/com/out/field-span*.hwpx`, `inline-breaks-filled.hwpx`(한컴이 직접 채운 정답. 사본은 `packages/hwpx-engine/test/fixtures/span/`) | 확인(한컴 13) |
 
 - 한컴 COM을 쓰는 작업은 한 번에 하나만 돌린다. 여러 작업이 동시에 한컴을 띄우면 서로의 실행이 실패한다(확인).
 

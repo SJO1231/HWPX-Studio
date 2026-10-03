@@ -1,0 +1,282 @@
+{
+  "field-span": {
+    "reopen": {
+      "reopen_ok": true,
+      "page_count": 1,
+      "reopen_field_list": [
+        "성명"
+      ],
+      "reopen_field_text": {
+        "성명": "첫 문단\r\n가운데 문단\r\n끝 문단"
+      }
+    },
+    "structure": {
+      "paragraphs": 5,
+      "top_level_paragraphs": 5,
+      "tables": 0,
+      "texts": [
+        "앞 문단",
+        "성명: 첫 문단",
+        "가운데 문단",
+        "끝 문단 끝 뒤 글",
+        "뒤 문단"
+      ],
+      "fields": [
+        {
+          "name": "성명",
+          "type": "CLICK_HERE",
+          "dirty": "1",
+          "begin_paragraph": 1,
+          "end_paragraph": 3,
+          "paragraphs_between": 1,
+          "tables_between": 0,
+          "same_parent": true
+        }
+      ]
+    }
+  },
+  "field-span-table": {
+    "reopen": {
+      "reopen_ok": true,
+      "page_count": 1,
+      "reopen_field_list": [
+        "성명"
+      ],
+      "reopen_field_text": {
+        "성명": "첫 문단\r\n\r\n끝 문단"
+      }
+    },
+    "structure": {
+      "paragraphs": 7,
+      "top_level_paragraphs": 5,
+      "tables": 1,
+      "texts": [
+        "앞 문단",
+        "첫 문단",
+        "",
+        "칸1",
+        "칸2",
+        "끝 문단 끝 뒤 글",
+        "뒤 문단"
+      ],
+      "fields": [
+        {
+          "name": "성명",
+          "type": "CLICK_HERE",
+          "dirty": "1",
+          "begin_paragraph": 1,
+          "end_paragraph": 5,
+          "paragraphs_between": 3,
+          "tables_between": 1,
+          "same_parent": true
+        }
+      ]
+    }
+  },
+  "field-span-cell": {
+    "reopen": {
+      "reopen_ok": true,
+      "page_count": 1,
+      "reopen_field_list": [
+        "칸"
+      ],
+      "reopen_field_text": {
+        "칸": "칸 첫 문단\r\n칸 둘째 문단"
+      }
+    },
+    "structure": {
+      "paragraphs": 6,
+      "top_level_paragraphs": 3,
+      "tables": 1,
+      "texts": [
+        "표 앞",
+        "",
+        "칸: 칸 첫 문단",
+        "칸 둘째 문단",
+        "옆 칸",
+        "표 뒤"
+      ],
+      "fields": [
+        {
+          "name": "칸",
+          "type": "CLICK_HERE",
+          "dirty": "1",
+          "begin_paragraph": 2,
+          "end_paragraph": 3,
+          "paragraphs_between": 0,
+          "tables_between": 0,
+          "same_parent": true
+        }
+      ]
+    }
+  },
+  "field-span-filled": {
+    "reopen": {
+      "before_field_text": {
+        "성명": "첫 문단\r\n가운데 문단\r\n끝 문단"
+      },
+      "reopen_ok": true,
+      "page_count": 1,
+      "reopen_field_list": [
+        "성명"
+      ],
+      "reopen_field_text": {
+        "성명": "새 값"
+      }
+    },
+    "structure": {
+      "paragraphs": 3,
+      "top_level_paragraphs": 3,
+      "tables": 0,
+      "texts": [
+        "앞 문단",
+        "성명: 새 값 끝 뒤 글",
+        "뒤 문단"
+      ],
+      "fields": [
+        {
+          "name": "성명",
+          "type": "CLICK_HERE",
+          "dirty": "1",
+          "begin_paragraph": 1,
+          "end_paragraph": 1,
+          "paragraphs_between": 0,
+          "tables_between": 0,
+          "same_parent": true
+        }
+      ]
+    }
+  },
+  "field-span-table-filled": {
+    "reopen": {
+      "before_field_text": {
+        "성명": "첫 문단\r\n\r\n끝 문단"
+      },
+      "reopen_ok": true,
+      "page_count": 1,
+      "reopen_field_list": [
+        "성명"
+      ],
+      "reopen_field_text": {
+        "성명": "새 값"
+      }
+    },
+    "structure": {
+      "paragraphs": 3,
+      "top_level_paragraphs": 3,
+      "tables": 0,
+      "texts": [
+        "앞 문단",
+        "새 값 끝 뒤 글",
+        "뒤 문단"
+      ],
+      "fields": [
+        {
+          "name": "성명",
+          "type": "CLICK_HERE",
+          "dirty": "1",
+          "begin_paragraph": 1,
+          "end_paragraph": 1,
+          "paragraphs_between": 0,
+          "tables_between": 0,
+          "same_parent": true
+        }
+      ]
+    }
+  },
+  "field-span-cell-filled": {
+    "reopen": {
+      "before_field_text": {
+        "칸": "칸 첫 문단\r\n칸 둘째 문단"
+      },
+      "reopen_ok": true,
+      "page_count": 1,
+      "reopen_field_list": [
+        "칸"
+      ],
+      "reopen_field_text": {
+        "칸": "새 칸 값"
+      }
+    },
+    "structure": {
+      "paragraphs": 5,
+      "top_level_paragraphs": 3,
+      "tables": 1,
+      "texts": [
+        "표 앞",
+        "",
+        "칸: 새 칸 값",
+        "옆 칸",
+        "표 뒤"
+      ],
+      "fields": [
+        {
+          "name": "칸",
+          "type": "CLICK_HERE",
+          "dirty": "1",
+          "begin_paragraph": 2,
+          "end_paragraph": 2,
+          "paragraphs_between": 0,
+          "tables_between": 0,
+          "same_parent": true
+        }
+      ]
+    }
+  },
+  "inline-breaks-filled": {
+    "reopen": {
+      "before_field_text": {
+        "줄": "첫 줄둘째 줄",
+        "탭": "가\t나"
+      },
+      "reopen_ok": true,
+      "page_count": 1,
+      "reopen_field_list": [
+        "줄",
+        "탭"
+      ],
+      "reopen_field_text": {
+        "줄": "다시 넣은 값",
+        "탭": "탭 다시"
+      }
+    },
+    "structure": {
+      "paragraphs": 9,
+      "top_level_paragraphs": 7,
+      "tables": 1,
+      "texts": [
+        "첫 줄\n둘째 줄",
+        "가\t나",
+        "다\t라",
+        "누름틀: 다시 넣은 값",
+        "누름틀: 탭 다시",
+        "",
+        "셀 첫 줄\n셀 둘째 줄",
+        "옆 칸",
+        "끝"
+      ],
+      "fields": [
+        {
+          "name": "줄",
+          "type": "CLICK_HERE",
+          "dirty": "1",
+          "begin_paragraph": 3,
+          "end_paragraph": 3,
+          "paragraphs_between": 0,
+          "tables_between": 0,
+          "same_parent": true
+        },
+        {
+          "name": "탭",
+          "type": "CLICK_HERE",
+          "dirty": "1",
+          "begin_paragraph": 4,
+          "end_paragraph": 4,
+          "paragraphs_between": 0,
+          "tables_between": 0,
+          "same_parent": true
+        }
+      ]
+    }
+  }
+}

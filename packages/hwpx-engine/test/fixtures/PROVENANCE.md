@@ -47,3 +47,14 @@
 - `inline-breaks.hwpx`: 문단 7개(`첫 줄`+줄바꿈+`둘째 줄`, 탭이 든 문단 둘, 줄바꿈이 든 누름틀 `줄`, 탭이 든 누름틀 `탭`, 표, `끝`)와 1행 2열 표(첫 칸에 줄바꿈).
 
 패키지 메타데이터는 `tools/fixtures/scrub-metadata.ts`로 정리했다(작성자·최종 저장자를 `synthetic`으로).
+
+## `span/` — 한컴 오피스가 저장한 여러 문단 누름틀 문서와 한컴이 직접 채운 정답 (`tools/com/make_span_fixtures.py`로 생성)
+
+여러 문단에 걸친 누름틀과 줄바꿈·탭 요소가 든 누름틀을 한컴이 어떻게 채우는지 관측하려고 만들었다. `*-filled.hwpx`는 같은 한컴이 원본을 열어 `PutFieldText`로 값을 넣고 저장한 것이라 엔진 결과의 정답지로 쓴다(바이트 동일은 기대하지 않고 문단 수·글·누름틀 값·표 수를 대조한다). 해시는 이 폴더의 `SHA256SUMS`에 있다.
+
+- `field-span.hwpx`: 본문에서 세 문단에 걸친 누름틀 `성명`(누름틀 안에서 Enter를 친 서식. 시작 문단에 "성명: " 접두 글, 끝 표식 뒤에 " 끝 뒤 글"). `field-span-filled.hwpx`: 값 "새 값"을 넣은 결과. 최상위 문단 5 → 3, 글은 "성명: 새 값 끝 뒤 글"로 합쳐진다.
+- `field-span-table.hwpx`: 문단·표 문단·문단을 블록으로 잡고 만든 누름틀 `성명`(사이에 1행 2열 표). `field-span-table-filled.hwpx`: 값 "새 값"을 넣은 결과. 최상위 문단 5 → 3, 사이의 표가 사라진다.
+- `field-span-cell.hwpx`: 1행 2열 표의 첫 칸 안에서 두 문단에 걸친 누름틀 `칸`. `field-span-cell-filled.hwpx`: 값 "새 칸 값"을 넣은 결과. 칸의 두 문단이 하나로 합쳐진다.
+- `inline-breaks-filled.hwpx`: `inline/inline-breaks.hwpx`의 누름틀 `줄`·`탭`을 "다시 넣은 값"·"탭 다시"로 채운 결과. 옛 줄바꿈·탭 요소가 사라지고 값만 남는다.
+
+패키지 메타데이터는 작성자·최종 저장자를 `synthetic`으로 바꿨다. 한컴의 `GetFieldText`는 문단 경계를 CRLF로 주고 줄바꿈 요소는 글자로 주지 않는다.
