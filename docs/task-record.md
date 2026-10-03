@@ -1,5 +1,9 @@
 # 작업 기록: HWPX Studio
 
+## Lite 통합 브랜치 (2026-10-03)
+
+사용자 요청으로 `studio-lite` 브랜치에서 별도 Lite 저장소의 이력과 미커밋 Helper 연결을 `apps/studio-lite`로 통합한다. 공통 엔진을 직접 사용하고 원본 main 및 그 작업 폴더의 미커밋 변경은 수정하지 않는다. Lite 기능·기존 결함·검증 기록의 정본은 [앱 상태](../apps/studio-lite/docs/status.md)다. 아래 원본 Studio 상태와 구분한다.
+
 ## 현재 상태
 
 - 기록 시각: 2026-10-02
