@@ -29,7 +29,7 @@
 | CLI | `node apps/cli/src/main.ts <명령>` (`--help`로 명령 9종. `fill`·`inspect`는 `.hwpx`·`.md`·`.txt`. 표는 `table list`·`table set`). 설명은 `apps/cli/README.md` | 확인 |
 | 실제 문서 스트레스 시험 | `node tools/stress/campaign.ts --corpus <폴더> --seed 1 --pairs 150 --oracle-sample 40` | 확인 |
 | 실제 문서 표 스트레스 시험 | `node tools/stress/tables.ts --corpus <폴더> --seed 21 --docs 160 --ops 1500 [--prefer-merged-only] [--no-com \| --com-sample 15]` | 확인 |
-| 한컴 표 대조 테스트 | `HWPX_COM=1 node --test packages/hwpx-engine/test/table-com.test.ts` | 확인(한컴 13) |
+| 한컴 표 대조 테스트 | `HWPX_COM=1 node --test packages/hwpx-engine/test/table-com.test.ts` | 확인(한글 2024. COM `Version`은 "13") |
 | Lite 앱 | `npm run start:lite` → `http://127.0.0.1:4318` (`studio-lite` 브랜치) | 확인(통합 브랜치) |
 | Lite 포함 기본 검사 | `npm run verify` | 확인(통합 브랜치) |
 | 뷰어 시험 앱 | `node apps/viewer-poc/server.ts` → `http://127.0.0.1:4173` (`.claude/launch.json`의 `viewer-poc`) | 확인 |
@@ -50,7 +50,8 @@
 | `packages/viewer/` | 뷰어(rhwp 임베드, 위치 변환). 런타임 의존은 `@rhwp/core` 하나 | 포함 |
 | `apps/studio-lite/` | Markdown·원본 HWPX 생성 MVP. 공통 엔진 사용. 상세 상태는 앱의 `docs/status.md` | 포함 |
 | `apps/viewer-poc/` | 뷰어 시험 앱(로컬 서버와 웹 화면) | 포함 |
-| `apps/studio/` | 스튜디오. 빠른 생성 화면과 로컬 서버(`server.ts`, 4174) | 포함 |
+| `apps/studio/` | 빠른 생성 화면과 로컬 서버(`server.ts`, 4174). 사용자 결정(2026-10-04)으로 `apps/studio-lite`에 흡수될 예정 | 포함 |
+| `apps/studio-lite/` | 제품 앱의 바탕(사용자 결정 2026-10-04). 비교 Grid·블록·조건·SQLite 저장·Helper 연결. `npm run start:lite` → 4318. 소유: Codex | 포함 |
 | `examples/quick/` | 빠른 생성 예시 서식(한컴 저장본)과 데이터(가짜 값). 사용자가 고쳐 시험하는 용도. 순서는 그 폴더의 `README.md` | 포함 |
 | `tools/oracle/` | 검증 보조 스크립트(선택 실행) | 포함 |
 | `docs/` | 정본 문서 | 포함 |
@@ -91,6 +92,8 @@
 - 이 저장소 한정 설정: 작성자는 GitHub noreply 주소, `core.autocrlf=false`, `.gitattributes`의 `* -text`.
 - **수정 사항은 GitHub 이슈로 등록한 뒤 처리한다**(사용자 지시 2026-10-04). 이슈 하나에 결함·보강 하나. 본문은 현상·재현·수정 범위·검증 방법만 적고 개인 경로·실제 문서 이름·대화 인용은 넣지 않는다. 커밋 메시지에 이슈 번호를 적고 끝나면 닫는다.
 - 이슈·PR 명령은 `gh` CLI를 쓴다(설치·로그인은 사용자가 한다: `winget install GitHub.cli`, `gh auth login`). 없으면 등록할 이슈 목록을 보고에 적어 두었다가 생기는 대로 등록한다.
+- **역할 분담**(사용자 결정 2026-10-04): Claude = 엔진(`packages/hwpx-engine`)·뷰어(`packages/viewer`)·템플릿 모델·정본 문서(`docs/`)·검증·합치기. Codex = 앱(`apps/studio-lite`)·화면·SQLite 저장·데이터 입력·Helper 연결·CI(`.github/`). 서로의 파일을 건드리지 않는다. 엔진 API 변경으로 앱이 깨지면 엔진 옵션으로 흡수하거나 이슈로 넘긴다.
+- **가지**: `studio-lite` 가지는 2026-10-04 main에 합쳤고(`6394dbb`) 삭제한다. 이후 가지는 이슈별 작업 가지(`issue-N-주제`)뿐이며 PR 대상은 main이다.
 - **단계 운영**(사용자 지시 2026-10-04): 단계마다 마일스톤(목표·범위·제외사항·완료 기준)과 이슈(작업 내용·선행 작업·검사 방법·산출물)를 초안으로 먼저 보이고 기존 것과 중복을 확인한 뒤 등록한다. 첫 화면 검토와 단계 종료 검토는 별도 이슈다. 이슈마다 가지(`issue-N-주제`)와 PR을 만들고, 구현 중 진행 상황과 검사 근거(테스트 수치, 독립 검증 요지)를 이슈·PR에 남긴다. 합치기는 CI 통과와 필요한 독립 검증 뒤에 한다.
 
 ## Skill

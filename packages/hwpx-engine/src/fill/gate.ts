@@ -26,6 +26,11 @@ export type GenerateOptions = FillOptions & {
   reissueInternalDuplicates?: boolean;
   /** 시험 전용 훅: 단계마다 적용 직후 바이트를 바꿔 게이트가 결함을 잡는지 본다. */
   testHooks?: ExecuteHooks;
+  /**
+   * 적용된 액션이 0이어도 실패(`FILL_NOTHING_APPLIED`)로 보지 않고 원본과 같은 결과를 낸다. 기본 끔.
+   * 이미 조립한 문서에 채울 자리가 없을 수 있는 호출자(studio-lite의 블록 교체 뒤 채움 단계)가 켠다. CLI·빠른 생성은 켜지 않는다.
+   */
+  allowNothingApplied?: boolean;
 };
 
 export type ValidationSummary = { errors: number; warnings: number };
@@ -146,7 +151,7 @@ export function generate(bytes: Uint8Array, template: Template, dataset: Dataset
   issues.push(...built.report.issues);
   if (errorsOf(built.report.issues).length > 0) return failed();
   // 채운 자리·적용한 액션이 하나도 없으면 사용자가 바라던 결과가 아니다: 원본 복사본을 내지 않고 건너뜀 사유와 함께 실패로 알린다
-  if (built.report.actions.length === 0) {
+  if (built.report.actions.length === 0 && !options.allowNothingApplied) {
     const byCode = new Map<string, number>();
     for (const s of built.report.skipped) byCode.set(s.code, (byCode.get(s.code) ?? 0) + 1);
     const why = byCode.size === 0 ? "" : ` 건너뜀: ${[...byCode].map(([code, n]) => `${code} ${n}곳`).join(", ")}.`;

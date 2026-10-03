@@ -92,7 +92,7 @@ export async function nativeHwpx(p: Project, row: Record<string,unknown>, select
     }
   }
   const reports:any[]=[];
-  if(structural.rules.length){ const r=checked(generate(bytes,structural,{data:{},derived:{}},{mode:'baseline',missing:'keep'})); bytes=r.output; reports.push(r.report); }
+  if(structural.rules.length){ const r=checked(generate(bytes,structural,{data:{},derived:{}},{mode:'baseline',missing:'keep',allowNothingApplied:true})); bytes=r.output; reports.push(r.report); }
   const fill=emptyTemplate(); const filledNames=new Set<string>(); const current=docOf(bytes);
   const placeholderValues=new Map<string,unknown>();
   for(const f of p.fields.filter(f=>f.approved&&f.kind==='field')) {
@@ -143,7 +143,7 @@ export async function nativeHwpx(p: Project, row: Record<string,unknown>, select
     filledNames.add(f.info.name);
   }
   // No data reaches the implicit scanner: injected scalar text is never interpreted again.
-  const result=checked(generate(bytes,readTemplate(fill),{data:{},derived:{}},{mode:'baseline',missing:'keep'}));
+  const result=checked(generate(bytes,readTemplate(fill),{data:{},derived:{}},{mode:'baseline',missing:'keep',allowNothingApplied:true}));
   bytes=unwrapFields(result.output,filledNames); reports.push(result.report);
   const before=validateDocument(original), after=validateDocument(bytes);
   const regression=compareToBaseline(before,after).newErrors;
