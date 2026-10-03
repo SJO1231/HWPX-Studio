@@ -1,15 +1,14 @@
-# HWPX Studio lite
+# HWPX Studio lite (apps/studio-lite)
 
-- 목적: 같은 Field / Anchor / In Template 모델로 Markdown 및 원본 HWPX를 생성하는 로컬 MVP.
-- 먼저 README.md, docs/status.md와 관련 소스를 읽고 실제 흐름을 추적한다.
-- Ponytail 원칙: 기존 Core → 표준 라이브러리 → 설치 의존성 순으로 재사용. UI 프레임워크나 서비스는 필요가 확인될 때만 추가한다.
-- 엔진은 공통 `packages/hwpx-engine`를 직접 사용한다. 앱 전용 변경은 이 앱에서 해결한다. 삭제한 엔진 복사본의 출처·해시는 `vendor/provenance.json`과 이전 Git 이력에 보존한다. RHWP vendor는 읽기 전용이다.
-- RHWP는 열기·렌더·free만 사용한다. 편집·직렬화 API를 호출하지 않는다.
-- 추천은 초안이다. Grid 확정 없이 문서 후보를 템플릿에 적용하지 않는다. 변경 시 이전 생성물을 무효화한다.
-- 사용자 원본은 덮어쓰지 않는다. 생성 전후 재파싱·검증, 불변 ZIP 항목 보존을 확인한다.
-- 조건은 제한된 구문으로 해석한다. eval/Function을 사용하지 않는다. 외부 경로·문서 내용을 신뢰하지 않는다.
-- 작업 완료 전 `npm run verify`. UI 변경은 실행 페이지에서 확인. 실패·미검증·한컴 미확인은 docs/status.md에 구분한다.
-- 하네스 정본은 `tools/check.mjs`, `test/studio.test.ts`, `docs/status.md`다. 작은 작업마다 계획·역할·보고서 파일을 늘리지 않는다.
-- 위임은 사용자가 요청했을 때 파일 소유권과 검사 명령을 지정한다. 같은 파일을 동시에 수정하지 않는다.
-- 관리 저장소는 `https://github.com/SJO1231/HWPX-Studio.git`, 작업 브랜치는 `studio-lite`다. 사용자는 Lite 이력 통합 및 이 브랜치의 커밋·관리를 승인했다. Studio main에는 별도 요청 없이 병합·push하지 않는다. 이전 Lite 저장소·작업 폴더는 신규 개발 기준이 아니다.
-- 커밋 전 변경 범위와 검증 결과를 확인한다. `data/`, `artifacts/`, 실제 참고자료, 자격증명은 올리지 않는다. 재사용 파일의 바이트·해시를 보존하며 강제 push는 하지 않는다.
+공통 규칙과 프로젝트 경계(정본 위치, 역할 분담, 참고·의존 규칙, 실제 문서 취급, 한컴·시험, Git·이슈)는 저장소 루트의 [AGENTS.md](../../AGENTS.md)를 따른다. 이 파일은 이 앱에만 해당하는 사실을 적는다.
+
+- 위치·소유: 제품 앱의 바탕이다(사용자 결정 2026-10-04). 소유는 Codex(앱·화면·SQLite 저장·데이터 입력·Helper 연결·CI). 공통 엔진 `packages/hwpx-engine`·뷰어 `packages/viewer`·`docs/`는 Claude 소유이며 여기서 수정하지 않는다. 필요한 엔진 변경은 이슈로 요청한다.
+- 가지: `studio-lite` 가지는 main에 합쳐졌고 삭제됐다(2026-10-04). 작업은 이슈마다 `issue-N-주제` 가지를 main에서 따고 PR을 main으로 낸다.
+- 실행·검사: 저장소 루트에서 `npm run start:lite`(http://127.0.0.1:4318), 필수 검사 `npm run verify`(형 검사·시험·`tools/check.mjs`). UI 변경은 실행 화면에서 확인한다. 구현·검증 상태의 정본은 [docs/status.md](docs/status.md)다.
+- 엔진 사용: 공통 엔진을 직접 쓴다(스냅샷 복사 금지). 블록 교체 뒤 채울 자리가 없을 수 있는 채움 단계는 `generate`의 `allowNothingApplied`를 켠다(`src/hwpx.ts`).
+- RHWP는 열기·렌더·free만 쓴다. 편집·직렬화 API를 호출하지 않는다. `vendor/rhwp` 사본은 공용 뷰어의 `@rhwp/core`로 통일할 예정이다(이슈).
+- 의존: `kordoc`·`markdown-it`은 제거 대상이다(사용자 지시 2026-10-04). Markdown→HWPX는 엔진의 문단 삽입·조각으로, 미리보기는 자체 최소 변환으로 바꾼다. 새 의존은 사용자 승인 없이 넣지 않는다.
+- 추천은 초안이다. Grid 확정 없이 후보를 템플릿에 적용하지 않는다. 변경 시 이전 생성물을 무효화한다. 사용자 원본은 덮어쓰지 않고, 생성 전후 재파싱·검증과 불변 ZIP 항목 보존을 확인한다.
+- 조건은 제한된 구문으로 해석한다. eval/Function을 쓰지 않는다. 외부 경로·문서 내용을 신뢰하지 않는다.
+- 데이터 입력: 사용자 데이터 견본(xlsx)은 2번째 시트부터 데이터다(`parseXlsx`의 첫 시트 고정은 바꿔야 한다. 이슈).
+- `data/`, `artifacts/`, 실제 참고자료, 자격증명은 Git에 올리지 않는다. 작은 작업마다 계획·역할·보고서 파일을 늘리지 않는다.
