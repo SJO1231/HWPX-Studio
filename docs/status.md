@@ -1,8 +1,8 @@
 # 구현 및 검증 기록
 
-## G2B Helper 문서 생성 연결 작업 중 (2026-10-03)
+## G2B Helper 문서 생성 연결 구현·검증 (2026-10-03)
 
-사용자가 Helper의 선택 자료를 Studio lite의 지정 서식으로 생성·저장하는 연결 구현을 승인했다. 기존 생성 코어와 읽기 전용 vendor는 유지하며 `src/g2b.ts` 어댑터와 HTTP 경로, 최소 설정 UI, `test/g2b.test.ts`를 추가했다. Studio 단위/API 검증은 완료했으며 Helper Native·확장과의 통합 및 새 UI의 브라우저 확인은 별도 검증 단계다.
+사용자가 Helper의 선택 자료를 Studio lite의 지정 서식으로 생성·저장하는 연결 구현을 승인했다. 기존 생성 코어와 읽기 전용 vendor는 유지하며 `src/g2b.ts` 어댑터와 HTTP 경로, 최소 설정 UI, `test/g2b.test.ts`를 추가했다. Studio 단위/API 검증과 아래 범위의 Helper Native 통합·새 UI 브라우저 검증을 완료했다. 실설치 확장·실제 업무 서식의 인수와 구분한다.
 
 - Studio **Helper 연결**에서 프로필 ID·표시 이름·명시적으로 선택한 저장 프로젝트 revision·절대 출력 폴더를 저장한다. 프로필 설정 POST는 Studio Origin을 요구하고, Native의 프로필 조회/생성 전달은 Origin 없는 로컬 요청을 허용한다. 기존 Host/Origin 검사를 유지한다.
 - `GET /api/g2b/profiles`, `POST /api/g2b/profiles`, `POST /api/g2b/generate`. 생성 본문은 `requestId`(1~200자), `profileId`, `sourceKind`(`screen`/`db`), `items`(1~100개)이며 각 항목은 scalar `fields`·`userValues`, `children` 배열과 선택적 출처·식별·단계 정보다. 임의 프로젝트/출력 경로는 생성 요청에서 받지 않는다.
@@ -13,6 +13,14 @@
 검증: 2026-10-03 `npm run verify`의 첫 샌드박스 실행은 새 연결 시험 5개와 구문·TypeScript·110파일 해시 검사를 통과했으나 기존 합성 산출물 갱신에서 EPERM으로 실패했다. 승인된 동일 명령을 권한 있는 실행으로 재실행해 **33/33 통과, 실패/건너뜀 0**, 구문·TypeScript·재사용 원본 110파일 SHA-256·RHWP 읽기 전용 경계 통과를 확인했다. 새 5개 시험은 임시 SQLite/출력 폴더와 루프백 HTTP로 scalar 값/매핑, Origin 제한, 동시·재시작·발행 후 기록 중단 복구, 프로필 변경 이후 기존 요청 snapshot, 기존 파일 충돌/부분 성공, 이름 충돌/필수값/children/금액 정밀도/Block 동률을 확인한다. 실제 업무 문서·운영 DB·한컴·Helper 전체 연결·새 설정 UI의 브라우저 동작은 이번 Studio 시험에서 확인하지 않았다. 앞선 미수정 Core 결함 5개를 해결한 것으로 표현하지 않는다.
 
 후속 검증(같은 날): 빈 하위 표 2개와 사용하지 않는 `blank: ''` 필드가 포함된 scalar 문서 생성, 빈 필드의 요청 지문 보존, 잘못된 하위 구조 5종·중첩 값 거절 시험을 추가했다. 첫 실행은 새 회귀를 통과했으나 재시작 시험의 OS 임시 포트가 Node fetch 금지 포트여서 `bad port`로 실패했다. 신규 연결 시험의 HTTP 전달을 `node:http`로 바꾼 뒤 승인된 `npm run verify`를 재실행해 **34/34 통과, 실패/건너뜀 0** 및 구문·TypeScript·원본 110파일 해시·RHWP 경계 통과를 확인했다. 기존 Core/vendor 변경은 없다. Helper 전체 연결 검증은 root 담당이며 이 숫자와 구분한다.
+
+최종 보완에서는 필수 데이터/조건값 누락 시 원천 키 이름을 message에 포함하여 Helper에서 보완 대상을 알 수 있게 했다. 실제 값은 오류 메시지에 넣지 않는다. 기존 및 추가 assertion을 포함한 `npm run verify` 34/34 통과, 실패/건너뜀 0을 재확인했고 Helper의 `artifacts/document-bridge/studio-verify.json`에 관련 Studio 소스 5파일 해시를 기록했다.
+
+Helper 통합은 `E:/Prodev/G2B_Helper/scripts/verify-document-bridge.mjs`로 8개 흐름을 실제 실행했다. 격리 SQLite·실제 Python Native 프레이밍·Studio HTTP·실제 HWPX 파일을 사용했다. 새 Helper 연결 UI에서 프로필을 저장하고, 화면과 DB의 같은 자료로 생성한 문서 재파싱 내용이 일치했으며 선행0/큰 소수 문자열/0/false·미선택 행 제외·Helper DB 무변경을 확인했다. 요청 재사용/다른 본문 거절, 지연과 응답 유실 후 같은 요청 복구, 미연결 서식 지정, 누락/중첩/기존 파일 보존/Studio 미실행을 검사했다. 스크린샷과 결과는 Helper `artifacts/document-bridge`에 있다. 브라우저 메시지 전달/캡처만 검증 어댑터이며 실제 설치 확장, 업무 서식 한 개의 내용 인수, 한컴 열기는 아직 미검증이다.
+
+코어 대조의 기준: 110파일 검사는 provenance manifest의 고정 스냅샷과 vendor 일치 검사다. 관련 생성/매핑 경로를 별도 읽기 대조한 결과 fill/gate.ts·fragment-fill.ts·template/condition.ts는 현재 원본과도 동일했고 fill/index.ts·draft.ts는 이후 원본의 API/blocked 판단 추가로 달랐다. Lite 연결은 그 신규 API에 의존하지 않으며 원본/vendor 양쪽을 별도로 수정하지 않았다. 전체 프로젝트 중복량을 조사한 결과로 확대하지 않는다.
+
+빈 값 보존 최종 보완(같은 날): 어댑터의 매핑 누락 검사를 기존 `boundData`와 맞춰 없는 key/null만 거절하고 명시적으로 존재하는 텍스트 `''`는 빈 문자열로 출력한다. 새 required 속성이나 원본 엔진 변경은 없다. 기존 빈 하위 표 시험에 text Field의 빈 원천 Column 매핑을 추가하고 생성 HWPX를 재파싱해 `구분앞[]구분뒤`를 확인했다. 빈 금액은 `MONEY_PRECISION`, 빈 조건값은 `MISSING_CONDITION_FIELDS`로 계속 보완 요청한다. 해당 메시지에는 누락 원천 키가 포함되며 값은 표시하지 않는다. 승인된 `npm run verify` 재실행은 **34/34 통과, 실패/건너뜀 0**, 구문·TypeScript·원본 110파일 해시·RHWP 경계 통과다.
 
 확인일: 2026-10-03. 이 파일이 구현 상태·검증 근거·남은 작업의 정본입니다.
 

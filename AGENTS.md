@@ -1,5 +1,7 @@
 # HWPX Studio lite
 
+> 2026-10-03 관리 위치 이전: 이 폴더는 복구용 사본이다. 신규 개발·검사·커밋은 `E:/Prodev/HWPX-Studio-studio-lite` 작업 폴더의 `studio-lite` 브랜치에서 수행한다. 앱은 `apps/studio-lite`, 공통 엔진은 `packages/hwpx-engine`이다. Studio main에는 별도 요청 없이 병합하지 않는다. 아래 별도 저장소·vendor 지침은 이전 전 기록이며 새 작업 폴더의 AGENTS.md를 따른다.
+
 - 목적: 같은 Field / Anchor / In Template 모델로 Markdown 및 원본 HWPX를 생성하는 로컬 MVP.
 - 먼저 README.md, docs/status.md와 관련 소스를 읽고 실제 흐름을 추적한다.
 - Ponytail 원칙: 기존 Core → 표준 라이브러리 → 설치 의존성 순으로 재사용. UI 프레임워크나 서비스는 필요가 확인될 때만 추가한다.

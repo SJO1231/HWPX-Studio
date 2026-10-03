@@ -1,5 +1,7 @@
 # HWPX Studio lite
 
+> **개발 위치가 이전되었습니다.** 현재 폴더는 복구용 사본입니다. 신규 개발은 `E:/Prodev/HWPX-Studio-studio-lite`의 `studio-lite` 브랜치에서 진행합니다. 앱은 `apps/studio-lite`이며 저장소 루트에서 `npm run start:lite`로 실행합니다. 관리 저장소는 [HWPX-Studio / studio-lite](https://github.com/SJO1231/HWPX-Studio/tree/studio-lite)입니다. 아래 내용은 이전 전 사용 기록입니다.
+
 Markdown과 원본 HWPX를 같은 Field / In Template 개념으로 다루는 로컬 MVP입니다. Node.js 24.19 이상, Windows x64 기준입니다.
 
 관리 저장소는 [SJO1231/HWPX-Studio-Lite](https://github.com/SJO1231/HWPX-Studio-Lite)이며 기본 브랜치는 `main`입니다. 기존 HWPX-Studio와 독립적으로 관리합니다. 사용자 DB·실제 참고자료·시험 산출물은 Git에 포함하지 않으며 `samples/`에는 합성 시험 문서만 포함합니다.
