@@ -10,7 +10,7 @@
 - 이전 전 Lite 검사 34/34 통과. 통합 후 루트 필수 검사: 형 검사, 시험 1,136개 통과·실패 0·선택 시험 48개 건너뜀, 공통 엔진 연결·RHWP 해시·읽기 전용 경계 통과. 첫 실행의 검사 도구 경로 오류를 수정한 뒤 재실행했다. `artifacts/integration-verify.log`가 근거다.
 - 원래 SQLite를 보존하고 새 앱 폴더로 backup했다. 저장 프로젝트 2개의 모든 행 일치, 8개 HTTP 경로, 실제 생성 HWPX의 사업명·금액·선택 조항과 구조 검증을 확인했다. `artifacts/migration-runtime.json`이 근거다. 사용자 데이터·검증 산출물은 Git에 넣지 않는다.
 - 이번 이전은 UI 코드 변경이 없다. 새 작업 폴더의 브라우저 시각 검증·실제 공고서 전체 캠페인·한컴은 재실행하지 않았다. 기존 Core 결함 5개를 수정한 작업이 아니다.
-- 기존 Lite 로컬 폴더와 Git bundle은 복구용으로 유지한다. 신규 개발 기준은 Studio `studio-lite`다. 통합 커밋 `464b3f8`의 원격 게시를 확인했고 기존 `HWP-Studio-lite` 브랜치는 삭제했다. 이후 추가된 Helper 빈 문자열 처리와 시험·문서도 검증 후 이전했으며 원래 이력 `bd3367f`를 함께 보존한다. 별도 Lite 저장소 삭제는 API 403 이후 Chrome 삭제 절차에서 GitHub 본인 확인(Confirm access)을 기다리는 중이다. 삭제 완료로 기록하지 않는다.
+- 기존 Lite 로컬 폴더와 Git bundle은 복구용으로 유지한다. 신규 개발 기준은 Studio `studio-lite`다. 통합 커밋 `464b3f8`의 원격 게시를 확인했고 기존 `HWP-Studio-lite` 브랜치는 삭제했다. 이후 추가된 Helper 빈 문자열 처리와 시험·문서도 검증 후 이전했으며 원래 이력 `bd3367f`를 함께 보존한다. 별도 Lite 저장소는 API 403 및 Chrome 본인 확인 단계 이후 사용자가 직접 삭제했다. 같은 인증의 GitHub API가 404를 반환함을 확인했다. 원격 브랜치는 `main`과 `studio-lite`만 남았으며 main은 기준 `927a41f` 그대로다.
 
 ## G2B Helper 문서 생성 연결 구현·검증 (2026-10-03)
 
