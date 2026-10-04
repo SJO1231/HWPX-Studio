@@ -1,0 +1,183 @@
+{
+  "schema": "hwpx-studio/template@2",
+  "id": "t3f9a01c2",
+  "version": 4,
+  "meta": {
+    "name": "물품 구매 공고(시험)"
+  },
+  "source": {
+    "kind": "hwpx",
+    "sha256": "24299a3a2757eeb6c088ff4a47286b1709d4c01a2b27e53fed0017ea9308b713"
+  },
+  "patterns": [
+    {
+      "id": "pt1",
+      "name": "1단 제목",
+      "marker": {
+        "form": "digitDot",
+        "level": 1
+      },
+      "char": {
+        "bold": true,
+        "height": 1200,
+        "print": "charpr-print-synthetic"
+      },
+      "place": "body",
+      "match": [
+        "marker",
+        "bold",
+        "height"
+      ],
+      "rejected": []
+    }
+  ],
+  "anchors": [
+    {
+      "id": "a1",
+      "kind": "range",
+      "at": {
+        "sectionIndex": 0,
+        "parentPath": []
+      },
+      "from": 18,
+      "to": 21,
+      "print": {
+        "first": {
+          "text": "3. 참가자격",
+          "sha256": "2b3a0a736c611255549bd7d05dc35a3384b40e84007dc4b5efd8b2726c89d0ee"
+        },
+        "last": {
+          "text": "",
+          "sha256": "97d259fd21b0ee89162e51fe02c928c08394a2abe8d943b5cfdda2c5c4b7e60e"
+        },
+        "count": 4,
+        "sha256": "f1678903617393c0e1c33fbfe8033889666669c7bd1856171eb42b5a7381de1b"
+      },
+      "pattern": "pt1"
+    },
+    {
+      "id": "a2",
+      "kind": "word",
+      "at": {
+        "sectionIndex": 0,
+        "path": [
+          5
+        ]
+      },
+      "start": 5,
+      "end": 10,
+      "print": {
+        "text": "예시 사업",
+        "before": "사업명: ",
+        "after": ""
+      }
+    }
+  ],
+  "values": [
+    {
+      "id": "v1",
+      "name": "사업명",
+      "format": "text"
+    },
+    {
+      "id": "v2",
+      "name": "추정가격",
+      "format": "money"
+    },
+    {
+      "id": "v3",
+      "name": "중소기업",
+      "format": "text"
+    }
+  ],
+  "bindings": [
+    {
+      "value": "v1",
+      "key": "사업명",
+      "aliases": [
+        "사업 명"
+      ]
+    },
+    {
+      "value": "v2",
+      "key": "추정가격(원)"
+    },
+    {
+      "value": "v3",
+      "path": "bidder.sme"
+    }
+  ],
+  "places": [
+    {
+      "id": "p1",
+      "kind": "placeholder",
+      "key": "사업명",
+      "value": "v1"
+    },
+    {
+      "id": "p2",
+      "kind": "mailMerge",
+      "key": "추정가격",
+      "value": "v2"
+    },
+    {
+      "id": "p3",
+      "kind": "word",
+      "anchor": "a2",
+      "value": "v1"
+    }
+  ],
+  "slots": [
+    {
+      "id": "s1",
+      "name": "참가자격",
+      "anchors": [
+        "a1"
+      ],
+      "parent": null
+    }
+  ],
+  "blocks": [
+    {
+      "id": "b1",
+      "slot": "s1",
+      "name": "직접생산",
+      "priority": 20,
+      "proto": {
+        "id": "k7d20a4e1",
+        "version": 2
+      },
+      "content": {
+        "fragment": "25b1b391bb8498d6574e89613df1d283d1e87a6aa478c832f946ecc4555d8f48"
+      },
+      "when": {
+        "all": [
+          {
+            "path": "v3",
+            "op": "eq",
+            "value": true
+          },
+          {
+            "path": "v2",
+            "op": "ge",
+            "value": 100000000
+          }
+        ]
+      }
+    },
+    {
+      "id": "b2",
+      "slot": "s1",
+      "name": "일반",
+      "priority": 0,
+      "content": {
+        "text": "{{사업명}}에는 자격을 갖춘 업체가 참가할 수 있습니다."
+      }
+    }
+  ],
+  "options": {
+    "missing": "error",
+    "unregistered": "error",
+    "requireConfirm": false
+  }
+}

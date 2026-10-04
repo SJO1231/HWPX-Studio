@@ -1,0 +1,16 @@
+{
+  "schema": "hwpx-studio/block-proto@1",
+  "id": "k7d20a4e1",
+  "version": 2,
+  "name": "참가자격(직접생산)",
+  "content": {
+    "fragment": "25b1b391bb8498d6574e89613df1d283d1e87a6aa478c832f946ecc4555d8f48"
+  },
+  "keys": [
+    "사업명"
+  ],
+  "previous": {
+    "version": 1,
+    "content": "0f1988359809148dca09f18bdaaa973670e7baea3b54a4974ba2a5f296f78cb0"
+  }
+}

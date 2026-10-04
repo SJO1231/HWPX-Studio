@@ -2,7 +2,7 @@
 <html lang="ko">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HWPX Studio lite</title><link rel="stylesheet" href="/style.css"></head>
 <body>
-<header class="topbar"><div class="brand"><span class="mark">H</span><strong>HWPX Studio <small>lite</small></strong></div><div class="project-name"><input id="name" aria-label="프로젝트 이름" value="구매 공고 템플릿"><span id="saved">로컬 작업공간</span></div><div class="actions"><button id="new">새 템플릿</button><button id="save">저장</button><button id="apply" class="primary">데이터 적용</button><button id="download" disabled>HWPX 다운로드</button></div></header>
+<header class="topbar"><div class="brand"><span class="mark">H</span><strong>HWPX Studio <small>lite</small></strong></div><div class="project-name"><input id="name" aria-label="프로젝트 이름" value="구매 공고 템플릿"><span id="saved">로컬 작업공간</span></div><div class="actions"><a href="/">템플릿 준비 · 빠른 생성</a><button id="new">새 템플릿</button><button id="save">저장</button><button id="apply" class="primary">데이터 적용</button><button id="download" disabled>HWPX 다운로드</button></div></header>
 <nav class="workflow" aria-label="작업 단계"><span>문서 · 데이터</span><span>후보 확인</span><span>템플릿 구성</span><span>적용 · 생성</span><span class="local">● 내 PC에서 처리</span></nav>
 <div id="status" role="status" aria-live="polite">예시 템플릿을 불러오는 중입니다.</div>
 <main class="workspace">
@@ -14,7 +14,7 @@
   <section><details><summary>Helper 연결</summary><p>저장된 프로젝트의 Column 매핑과 Block 선택으로 문서를 생성합니다. 변경한 템플릿은 먼저 저장한 뒤 아래에서 다시 선택하세요.</p><label>생성 프로필<select id="helper-profiles"><option value="">새 프로필</option></select></label><label>프로필 ID<input id="helper-profile-id" placeholder="receipt-document" maxlength="80"></label><label>표시 이름<input id="helper-profile-label" placeholder="접수 문서" maxlength="120"></label><label>저장한 프로젝트<select id="helper-revision"><option value="">명시적으로 선택하세요</option></select></label><label>출력 폴더<input id="helper-output-directory" placeholder="E:\문서\Helper 출력"></label><button id="save-helper-profile" class="full">프로필 저장</button><p id="helper-profile-status" class="muted">프로필은 이 PC에 저장합니다. 첫 연결은 단일 값만 지원합니다.</p></details></section>
 </aside>
 <section class="editor-pane">
-  <div class="pane-heading"><div><h1>템플릿 편집</h1><p id="editor-hint">변수와 블록을 배치하고, 데이터를 적용하세요.</p></div><span id="line-position" class="pill">Line 1</span></div>
+  <div class="pane-heading"><div><h1>저장한 템플릿으로 생성 · 기존 프로젝트</h1><p id="editor-hint">변수와 블록을 배치하고, 데이터를 적용하세요.</p></div><span id="line-position" class="pill">Line 1</span></div>
   <div class="editor-toolbar"><button id="insert-field">{{ Field }}</button><button id="insert-block">In Template</button><button id="make-block">선택 → Block</button><button id="native-ranges">Anchor+ 설정</button></div>
   <div class="editor-wrap"><pre id="line-numbers" aria-hidden="true">1</pre><textarea id="editor" spellcheck="false" aria-label="Main Markdown Template"></textarea></div>
   <div id="document-strip" class="document-strip">Main Template · Markdown</div>

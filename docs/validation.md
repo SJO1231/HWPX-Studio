@@ -367,3 +367,24 @@ M1(값의 줄바꿈·탭, 여러 건 생성, 빠른 생성 화면 `apps/studio`,
 반영: 명세 7.10(재탐색 범위·changed 창·초안 꼴·`head` 직렬화·이동표 항목 단위와 범위·충돌 규칙·1판 수용·텍스트 어댑터), 8.4(`--range`), 8.8.11, CLI 안내(`--range`·`moves`), 쉬운 말 표 `ANCHOR_CHANGED`.
 
 남은 것: 실제 공고서 결과의 한글 열기(합성 6건만 열었다), 실제 공고서의 CLI 경로(엔진 API로만), 구역을 섞은 한 계획의 이동표 정렬, strict·repair 게이트와 `fitTable: allowBreak`가 range와 함께 쓰일 때(코드만 읽음). `checkAnchors`·`unverified`(#32)와 2단계 생성(#31)은 미구현. `draftAnchors`·`findCandidates`의 cell 초안에 `print` 넣기는 후속.
+
+## 20. 2판 템플릿 읽기·검사·값 연결·선택 평가 검증 (2026-10-04, 이슈 #29)
+
+엔진 명세 8.8의 `readStudioTemplate`·`readCase`·`readBlockProto`·`write*`·`bindValues`·`selectSlots`·`listProtoUsage`·`planProtoUpdate`(`src/template/studio-*.ts`). 생성 쪽(2단계 생성·CLI)은 #31이라 이 절에 없다. 독립 검증은 구현자와 다른 Agent가 자기 스크립트로 했다.
+
+| 검사 | 결과 |
+| --- | --- |
+| 시험 자료 | 합성 2판 템플릿 2개(값 31·자리 41·앵커 12·슬롯 3·블록 7 포함), 원형 2판·3판, 이번 건 1, 1판 승계용 1(`test/fixtures/template-v2/`, 전부 지어낸 글·해시) |
+| W1 왕복(독립) | 템플릿·이번 건·원형 모두 읽기→정규 쓰기→읽기 deepEqual, 정규 JSON(문자열 밖 공백 0·키 코드포인트순·끝 줄바꿈 없음·두 번 써도 같은 바이트), `@1`은 `readTemplate` 결과와 deepEqual |
+| W2 거부(독립) | 8.8.10 표를 직접 입력 87행으로 실행해 코드 불일치 0(ID 중복 종류 안·사이, NFD 이름, 끊긴 참조 7종+where·parent·pattern, 순환 2종, `@0`·`@3`·schema 숫자·빈 글·null, 모르는 키 최상위·하위, 앵커 종류 불일치, 키 충돌, 연결 없음, MIXED_RULES, 원형 핀, 덩어리). 시험 코드의 거부 표 92행 |
+| W3 선택(독립) | 금액 경계 아래·같음·위, 동률, 조건 없는 블록 2개, 누락(`exists`·`empty`만 쓴 조건은 판정), manual·confirmed 유지와 `differs`, 삭제·내용 변경(공백 1자) → recheck, 상위 recheck → 하위 parentChanged, 상위 다른 블록 → 하위 inactive, requireConfirm. 독립 판정기로 무작위 300회(슬롯 760, 상태 6종 모두 출현) 불일치 0, 시드 2개 |
+| bindValues(독립) | 열 이름의 공백·점·괄호 그대로, `a.b.0` 경로, 별칭 충돌(빈 글 포함), `-1234`→`-1,234원`, `1e21`·`"+5"`·`"1,234"`는 DATA_FORMAT, U+0008·U+FFFE는 VALUE_CONTROL_CHAR(탭·줄바꿈 통과), valueEdits 뒤 행·이번 건 바이트 불변, 누락 3정책, 1,011자 값 보존. 시험에 자리 41개·200~1,000자 값·무작위 100회(자리 1,000개 이상) |
+| 1판 비회귀 | `template/read.ts` 변경은 `export` 추가만(diff 11줄, `export ` 제거 뒤 동일). 1판 시험 424건 실패 0 |
+| 결정성 | 시드 고정(`rng(20261004)`). 새 시험 2회 출력 동일, 독립 무작위 해시 2회 동일 |
+| 결함과 수정 | **중간 1**: `matches` 조건에 10,000자 초과 값이 오면 `evaluateCondition`이 던져 `selectSlots` 전체 실패(manual 저장 선택도 잃음) → 그 슬롯만 `undecided`(`valueRejected`), 저장 선택 유지. **낮음 4**: 프로토타입 속성(`toString`·`constructor`)을 값·선택으로 읽음 → `Object.hasOwn`; `-0` 왕복 불일치 → 읽기에서 0; `lookupProto`의 대문자 해시 거절 → 소문자 비교; 최상위 오류 `where`·검사 순서는 명세에 서술로 반영. **명세 빈틈**: 같은 `path` 두 값 연결이 허용되던 것 → `TPL_KEY_CONFLICT`, 슬롯 겹침 `TPL_CONFLICT`에 `where` |
+| 수정 뒤 재확인 | 독립 스크립트 재실행: W1 왕복·`-0` 왕복 통과, W2 87행 실패 0, W3 재현 입력(10,001자)에서 던지지 않고 다른 슬롯 정상·manual 유지, 무작위 300회 불일치 0(해시 동일) |
+| 회귀(수정 뒤) | 형 검사 0. 1,553개 중 1,496 통과, 0 실패, 57 선택 실행분(직전 1,518/1,461/0/57. 새 시험 35) |
+
+반영: 명세 8.8.4(값 표 모양·money 범위·`bindings` 생략·연결 둘은 `TPL_FIELD`), 8.8.7(핀 판 없음·usage 상태·전파 세부), 8.8.8(`valueRejected`·`blocked`·`message`·중첩 세부), 8.8.10(표는 항목 목록, 같은 `path`, `TPL_CONFLICT`, 해시 소문자·`-0`), 8.8.11(`@1`은 1판 `Template` 그대로), 8.8.15(형 요지와 구현 상태). 쉬운 말 표(apps/studio)에 코드 15개.
+
+남은 것: W1의 생성 항목(1판 경로와 승계 경로의 바이트 동일, CLI=앱)·W2의 `TPL_NESTED`·W3의 "고르지 않은 블록이 출력에 없다"는 #31. lite `version` 2(`MIG_VERSION`)는 Codex(#25). 참고 오픈소스와의 구조 비교는 하지 않았다(이름·주석 grep만). 같은 이름의 누름틀을 `occurrence`로 나눠 다른 값에 연결하는 것은 명세대로 `TPL_KEY_CONFLICT`다(필요하면 사용자 확인 뒤 완화).

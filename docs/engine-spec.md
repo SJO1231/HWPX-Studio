@@ -1195,15 +1195,15 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 
 소유: 엔진 = Claude.
 
-- 값 `{ id, name, format }`: `text`는 8.2의 값 변환을 따른다(문자열은 그대로, 숫자·불리언은 글, 객체·배열은 `DATA_NOT_SCALAR`). `money`는 정수로 읽히는 값(숫자, 또는 앞뒤 공백 없는 10진 정수 글. 음수 허용)만 받는다. 조건에서는 숫자이고 출력은 천 단위 쉼표와 `원`이다(`1234` → `1,234원`). 정수로 읽히지 않으면 `DATA_FORMAT`이다.
-- 연결 `{ value, key 또는 path, aliases? }`: 값에 데이터 한 칸을 잇는다. 쓰이는 값(자리·조건·블록 글이 가리키는 값)마다 정확히 하나가 있어야 하고, 없으면 `TPL_UNBOUND_VALUE`다. 쓰이지 않는 값은 연결이 없어도 된다.
+- 값 `{ id, name, format }`: `text`는 8.2의 값 변환을 따른다(문자열은 그대로, 숫자·불리언은 글, 객체·배열은 `DATA_NOT_SCALAR`). `money`는 정수로 읽히는 값(숫자, 또는 앞뒤 공백 없는 10진 정수 글. 음수 허용)만 받는다. 조건에서는 숫자이고 출력은 천 단위 쉼표와 `원`이다(`1234` → `1,234원`, `-1234` → `-1,234원`). 정수로 읽히지 않으면 `DATA_FORMAT`이다. 허용 범위는 안전 정수(±2⁵³−1)다. `"+5"`·빈 글·`"1,234"`·소수는 `DATA_FORMAT`, `"007"`은 7, `-0`은 0이다(#29 구현 확정).
+- 연결 `{ value, key 또는 path, aliases? }`: 값에 데이터 한 칸을 잇는다. 쓰이는 값(자리·조건·블록 글이 가리키는 값)마다 정확히 하나가 있어야 하고, 없으면 `TPL_UNBOUND_VALUE`, 둘 이상이면 `TPL_FIELD`다. 쓰이지 않는 값은 연결이 없어도 된다. `bindings[]`가 없으면 빈 목록으로 읽는다.
   - `key`: 데이터 행(JSON 객체)의 최상위 열 이름 그대로다. 공백·점·괄호가 있어도 된다(점은 경로 구분이 아니다). 엑셀 머리글을 그대로 쓰기 위한 것이다.
   - `path`: 중첩 경로(8.2의 경로 문법).
   - `aliases`: 같은 값의 다른 열 이름(머리글 차이). `key`와 같은 순위로 찾는다.
   - 행에서 `key`와 별칭 가운데 둘 이상에 값(null·없음이 아님. 빈 글은 값이다)이 있으면 `DATA_ALIAS_CONFLICT`다. 하나만 있으면 그것을 쓰고, 없으면 `missing`이다.
   - 한 키(별칭 포함)를 두 값에 연결하면 `TPL_KEY_CONFLICT`다.
-- `bindValues(t, record, case, opts)`는 값 표를 돌려준다. 값마다 `{ id, name, state, text?, number?, via? }`다. 순서: ① 연결로 행에서 찾는다. ② `case.valueEdits[값 id]`가 있으면 그것이 이긴다(원본 행은 바꾸지 않는다. state `edited`). ③ 형식을 적용한다. ④ 글에 XML 금지 제어 문자가 있으면 `VALUE_CONTROL_CHAR`(8.2). 값이 없으면 state `missing`이다.
-- 누락 정책 `options.missing`은 그 값을 쓰는 자리를 채울 때만 적용한다(`error`는 `DATA_MISSING`으로 중단). 조건에서의 누락은 8.8.8이 다룬다.
+- `bindValues(t, record, case, opts)`는 값 표를 돌려준다. 값마다 `{ id, name, format, state, text?, number?, source, issue? }`이고 `state`는 `bound`(행에서 찾음)·`edited`(`valueEdits`가 이김)·`missing`(값 없음)·`empty`(빈 글)·`rejected`(형식·제어 문자 오류)다(8.8.15). 순서: ① 연결로 행에서 찾는다(`source`는 어디서 왔는지: 열 이름·별칭·경로·수정·없음). ② `case.valueEdits[값 id]`가 있으면 그것이 이긴다(원본 행은 바꾸지 않는다. state `edited`). ③ 형식을 적용한다(`money`는 `number`와 `1,234원` 꼴 `text`). ④ 글에 XML 금지 제어 문자가 있으면 `VALUE_CONTROL_CHAR`(8.2). 값 오류(`DATA_FORMAT`·`DATA_NOT_SCALAR`·`DATA_ALIAS_CONFLICT`·`VALUE_CONTROL_CHAR`)는 던지지 않고 `rejected`와 `issue { code, message }`로 남긴다(그 값을 쓰는 자리·조건이 있을 때만 막힌다. 값 원문은 담지 않는다). 값이 없으면 누락 정책과 무관하게 state `missing`이다.
+- 누락 정책 `opts.missing`은 그 값을 쓰는 자리를 채울 때만 적용한다. `error`면 `missing` 값의 `issue`가 `DATA_MISSING`(채움 중단), `empty`면 `text`가 빈 글, `keep`이면 `text`가 없어 자리를 그대로 둔다. 조건에서의 누락은 8.8.8이 다룬다.
 - 같은 값을 여러 자리가 쓴다. 한 값은 어디서나 같은 글이다.
 - 연결은 템플릿 안의 별도 절(`bindings[]`)에 둔다. 데이터 머리글이 달라지면 별칭을 더해 새 템플릿 판으로 저장한다.
 
@@ -1257,7 +1257,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 ```
 
 - `content`는 블록과 같은 꼴이다. "내용 해시"는 `fragment`이면 그 해시, `text`이면 글의 UTF-8 sha256이다. `keys`는 내용에 쓰인 자리 키 목록이다(만드는 쪽이 계산해 넣는다. 엔진의 `readBlockProto`는 형식만 본다). `previous`는 직전 판의 번호와 내용 해시다.
-- 핀 검사: 블록에 `proto`가 있으면 그 판의 내용과 블록 `content`가 같아야 한다(`TPL_PROTO_MISMATCH`). 검사는 읽는 쪽이 준 `lookupProto`로 한다(8.8.10).
+- 핀 검사: 블록에 `proto`가 있으면 그 판의 내용과 블록 `content`가 같아야 한다(`TPL_PROTO_MISMATCH`). 검사는 읽는 쪽이 준 `lookupProto`로 한다(8.8.10). `lookupProto`가 그 판을 찾지 못해도 `TPL_PROTO_MISMATCH`다.
 
 영향 목록 `listProtoUsage(templates, protoId, latest)` 결과:
 
@@ -1269,7 +1269,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 ```
 
 - `templates`는 읽은 템플릿(각 템플릿의 최신 판), `latest`는 저장소가 아는 원형의 최신 판 번호다. 형식과 무관한 순수 함수다. `state`: `current`(핀 = latest), `behind`(핀 < latest), `forked`(`proto`가 없고 `forkedFrom`만 있음. `forkedFrom`은 갈라진 원형 판 번호).
-- 전파: 템플릿별로 골라 `planProtoUpdate(t, proto)`가 새 템플릿 판(`version` + 1, 핀과 내용 갱신)을 계획한다. 고르지 않은 템플릿은 그대로다. 자동 전파는 없다. 원형 `keys` 가운데 그 템플릿에 자리(`placeholder`)나 그 자리의 값 연결이 없는 키가 있으면 막는다(`PROTO_UNBOUND_KEY`, `HwpxError`로 던지고 새 판 없음). 전파로 블록 내용이 바뀌면 그 블록을 저장 선택으로 가진 이번 건은 `recheck`가 된다(8.8.8).
+- 전파: 템플릿별로 골라 `planProtoUpdate(t, proto)`가 새 템플릿 판(`version` + 1, 핀과 내용 갱신)을 계획한다. 고르지 않은 템플릿은 그대로다. 자동 전파는 없다. 원형 `keys` 가운데 그 템플릿에 자리(`placeholder`)나 그 자리의 값 연결이 없는 키가 있으면 막는다(`PROTO_UNBOUND_KEY`, `HwpxError`로 던지고 새 판 없음). 전파로 블록 내용이 바뀌면 그 블록을 저장 선택으로 가진 이번 건은 `recheck`가 된다(8.8.8). 세부(#29 구현 확정): `listProtoUsage`는 핀이 `latest`와 같거나 크면 `current`, 작으면 `behind`, `forkedFrom`만 있으면 `forked`다. `planProtoUpdate`는 핀 판이 원형 판보다 낮은 블록만 갱신하고, 갱신할 블록이 없으면 같은 판의 복사본과 빈 `updated`를 돌려준다. 키 검사는 `where`가 없거나 그 블록을 가리키는 `placeholder` 자리만 센다.
 - 분기: 템플릿 안에서 원형 블록을 직접 고치면 `proto`가 빠지고 `forkedFrom: { id, version }`이 남는다. 분기 블록은 전파 대상이 아니고 영향 목록에 알림(`forked`)만 간다. 분기는 저장소·화면이 하고, 어긋난 채 저장된 템플릿은 엔진이 `TPL_PROTO_MISMATCH`로 거절한다.
 - 이번 건 수정과 분리: 이번 건에서 고친 블록은 `case.blockEdits`에만 남는다. "원형에 반영"은 별도 명시 동작(원형 새 판)이다.
 
@@ -1296,6 +1296,12 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
    - 조건 있는 블록 가운데 참인 것이 있으면 최고 `priority` 하나가 `default`다. 최고 우선순위가 동률이면 `undecided`(`reason: tie`).
    - 참인 조건 블록이 없으면 조건 없는 블록이 하나일 때 `fallback`이다. 둘 이상이면 `undecided`(`reason: tie`), 없으면 `undecided`(`reason: noCandidate`).
 4. `options.requireConfirm`이 true이면 `default`·`fallback`은 사용자가 확정(`confirmed`로 저장)하기 전까지 막는다(`SEL_UNDECIDED`, `reason: needConfirm`).
+
+세부(#29 구현 확정):
+- 블록의 `when`이 참조하는 값이 `rejected`(형식·제어 문자 오류)이면 `undecided`(`reason: valueRejected`). `valueMissing`·`valueRejected`·`tie`는 관련 블록을 `candidates`에 적는다.
+- 저장 선택의 블록이 있어도 다른 슬롯 소속이면 `recheck`(`blockMissing`).
+- `parentChanged`는 상위 슬롯이 그 블록을 저장 선택으로 가진 채 `recheck`이고 하위에도 저장 선택이 있을 때다. 상위가 다른 블록을 고르면 하위는 `inactive`다. 확정을 기다리는 `default`·`fallback` 상위는 하위 평가에서 선택된 것으로 본다.
+- 결과 `SlotSelection`에 막는 코드 `blocked`(`SEL_UNDECIDED`·`SEL_RECHECK`)와 사람이 읽는 `message`(값 원문 없음)가 있다(8.8.15).
 
 - 막는 상태는 슬롯마다 `SEL_*` 오류로 모아서 낸다. 첫 슬롯에서 멈추지 않는다. 생성은 출력이 없다.
 - `manual`·`confirmed`는 데이터가 바뀌어도 바꾸지 않는다. 사용자가 다시 고르거나 확정하면 `selections`가 새 내용 해시로 갱신되어 `recheck`가 풀린다.
@@ -1333,7 +1339,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 
 - `readStudioTemplate(json, opts)`, `readCase(json, t)`, `readBlockProto(json)`. `json`은 문자열이다. 실패하면 `HwpxError`를 던지고 `where`에 JSON 위치(예: `blocks[1].proto`)를 담는다. 첫 오류에서 멈춘다(1판 `readTemplate`과 같다). 아무것도 쓰지 않는다.
 - 선택 검사는 호출자가 준 함수로 한다: `opts.lookupProto(id, version)`(원형 판의 내용을 줌, 원형 핀 검사), `opts.hasBlob(sha256)`(덩어리 존재 검사). 주지 않으면 그 검사는 생략하고 생성 때 `generateFromTemplate`가 `loadBlob`으로 확인한다.
-- 검사 순서와 코드:
+- 거부 항목과 코드(표는 항목 목록이다. 검사 순서는 구현이 정하며 한 입력에 여러 결함이 있으면 그중 하나의 코드가 난다. 최상위 결함의 `where`는 `"템플릿"`·`"이번 건"`·`"원형"`이다):
 
 | 거부 항목 | 코드 |
 | --- | --- |
@@ -1346,7 +1352,8 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | 쓰임에 맞지 않는 앵커 종류·필드(예: `word` 자리가 `clickHere` 앵커를 가리킴, 슬롯 앵커가 `cell`, md에 `mailMerge`) | `TPL_ANCHOR` |
 | 끊긴 참조: `place.value`·`place.anchor`, `slot.anchors`, `block.slot`, 조건 경로(값 id가 아님), `binding.value`, 이번 건의 슬롯·블록·값 id, 다른 템플릿을 가리키는 이번 건 | `TPL_REF` |
 | 순환: `slot.parent` → 블록 → 슬롯 …, 자기 부모 | `TPL_CYCLE` |
-| 한 키를 두 값에 연결 | `TPL_KEY_CONFLICT` |
+| 한 키(별칭 포함) 또는 같은 `path`를 두 값에 연결, 같은 종류·같은 키의 자리를 다른 값에 연결(`key`와 `path`는 다른 이름 공간이라 교차 검사하지 않는다) | `TPL_KEY_CONFLICT` |
+| 두 슬롯의 앵커가 겹친다 | `TPL_CONFLICT` |
 | 쓰이는 값에 연결이 없다 | `TPL_UNBOUND_VALUE` |
 | 조건 연산자·정규식 한도 위반 | `TPL_CONDITION`(8.7) |
 | 1판 `rules[]`와 `slots`·`places`를 함께 씀 | `TPL_MIXED_RULES` |
@@ -1355,13 +1362,14 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 
 - 읽을 때 잡지 않고 생성 때 잡는 것: `slot.parent`가 null이 아닌 중첩 슬롯(`TPL_NESTED`, 8.8.6), 원본 해시 불일치(`TPL_SOURCE_MISMATCH`, 8.8.12), 별칭 충돌·형식 오류(`DATA_ALIAS_CONFLICT`·`DATA_FORMAT`, 값 확정 때, 8.8.4).
 - `block-proto@1`·`case@1`의 판 번호가 다르면 `TPL_VERSION`, 형식이 틀리면 `TPL_FIELD`다(`where`가 어느 파일 형식인지 알려 준다).
+- 해시(sha256)는 소문자 16진 64자로 저장한다. 입력의 대문자는 읽을 때 소문자로 바꾸고, `lookupProto`가 준 해시도 소문자로 비교한다. 정수 필드의 `-0`은 `0`으로 읽는다(쓰기와 왕복이 같도록).
 
 #### 8.8.11 1판 승계
 
 소유: 엔진 = Claude.
 
 - `template@1`의 `readTemplate`·`generate`·CLI 동작은 바꾸지 않는다. 옛 엔진은 `@2`를 `TPL_SCHEMA`로 거절한다(1판 읽기의 기존 동작).
-- `readStudioTemplate`는 `@1`을 읽어 `anchors`·`rules`·`options`만 가진 승계 템플릿으로 돌려준다. 승계 템플릿의 생성은 기존 `generate`(8.3) 한 번이라 1판 경로와 바이트가 같다. `{{경로}}` 암묵 채움(8.3)도 승계 템플릿에서만 유지된다.
+- `readStudioTemplate`는 `@1`을 읽어 `anchors`·`rules`·`options`만 가진 승계 템플릿(1판 `Template` 객체. `readTemplate` 결과와 같다. `slots`·`places` 필드 자체가 없다)으로 돌려준다. 승계 템플릿의 생성은 기존 `generate`(8.3) 한 번이라 1판 경로와 바이트가 같다. `{{경로}}` 암묵 채움(8.3)도 승계 템플릿에서만 유지된다.
 - `rules[]`는 승계 전용이다. 2판 템플릿에서 `slots`·`places`와 함께 쓰면 `TPL_MIXED_RULES`다(1차 금지). 2판 템플릿은 암묵 채움을 하지 않고 등록된 자리만 채운다(8.8.12).
 - 엔진 내부 `Template`의 앵커에 `range`·`mergeField`를 더한다(더하기만). `range` 앵커와 `cell`·`object`의 선택 `print`는 1판 `readTemplate`도 받는다(#30에서 더함. 7.10). 기존 1판 템플릿의 읽기 결과는 바뀌지 않는다.
 
@@ -1499,11 +1507,16 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | `listProtoUsage(templates, protoId, latest)`, `planProtoUpdate(t, proto)` | `src/template/` | 8.8.7(#21). 형식과 무관한 순수 함수 |
 | CLI `fill --template(@2) --case --blobs <폴더>` | `apps/cli` | 8.4. 앱과 같은 바이트 |
 
+구현 상태(2026-10-04): `read*`·`write*`·해시 도우미(`templateSha256`·`caseSha256`·`contentSha256`)·`bindValues`·`selectSlots`·`listProtoUsage`·`planProtoUpdate`는 #29, `range`·`moves`·`makeRangeAnchor`는 #30(7.10). `generateFromTemplate`·CLI `--case --blobs`(#31), `checkAnchors`(#32), 패턴(#20)은 미구현. 정확한 형은 `src/template/studio-types.ts`가 정본이고 아래는 요지다.
+
 ```ts
-type ValueState = "ok" | "missing" | "edited"
-type BoundValue = { id: string; name: string; state: ValueState; text?: string; number?: number; via?: "key" | "alias" | "path" | "edit" }
+type ValueState = "bound" | "edited" | "missing" | "empty" | "rejected"
+type BoundValue = { id: string; name: string; format: "text" | "money"; state: ValueState; text?: string; number?: number; source: BoundSource; issue?: { code: string; message: string } }
 type SelectionState = "manual" | "confirmed" | "default" | "fallback" | "undecided" | "recheck" | "inactive"
-type SlotSelection = { slot: string; state: SelectionState; block?: string; reason?: string; differs?: boolean; candidates?: string[] }
+type SelectionReason = "tie" | "noCandidate" | "valueMissing" | "valueRejected" | "needConfirm" | "blockMissing" | "contentChanged" | "parentChanged"
+type SlotSelection = { slot: string; state: SelectionState; block?: string; reason?: SelectionReason; differs?: boolean; candidates?: string[]; blocked?: "SEL_UNDECIDED" | "SEL_RECHECK"; message: string }
+type ProtoUsageList = { proto: string; latest: number; usages: { template: string; version: number; blocks: string[]; pinned?: number; forkedFrom?: number; state: "behind" | "current" | "forked" }[] }
+type ProtoUpdatePlan = { template: StudioTemplate; updated: { block: string; from: number; to: number }[] }
 type AnchorCheck = { anchor: string; state: "exact" | "relocated" | "changed" | "ambiguous" | "notFound" | "unverified"; found?: unknown; issues: Issue[] }
 ```
 
@@ -1512,7 +1525,7 @@ type AnchorCheck = { anchor: string; state: "exact" | "relocated" | "changed" | 
 
 #### 8.8.16 수용 조건
 
-소유: 검사 = 엔진 쪽 독립 검증(Claude 지휘). 앱 쪽 항목 = Codex 시험. 통과 전에는 [미구현]이다.
+소유: 검사 = 엔진 쪽 독립 검증(Claude 지휘). 앱 쪽 항목 = Codex 시험. 통과 전에는 [미구현]이다. 상태(2026-10-04): W1~W3의 읽기·쓰기·값 연결·선택 평가 부분은 #29에서 통과([검증 기준](validation.md) 20절). W1의 생성 바이트 동일·W2의 `TPL_NESTED`·W3의 출력 항목은 #31, W4의 전파 함수는 #29(저장·화면은 Codex), W7의 `range` 지문은 #30(19절).
 
 | ID | 조건 |
 | --- | --- |

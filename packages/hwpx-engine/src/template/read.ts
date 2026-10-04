@@ -32,43 +32,43 @@ type Obj = Record<string, unknown>;
 const MAX_CONDITION_DEPTH = 32;
 const POSITIONS: readonly string[] = ["before", "after", "replace"];
 
-function fail(code: string, message: string, where?: string): never {
+export function fail(code: string, message: string, where?: string): never {
   throw new HwpxError(code, where === undefined ? message : `${where}: ${message}`, where);
 }
 
-const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
+export const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
 
-function obj(v: unknown, where: string, code: string): Obj {
+export function obj(v: unknown, where: string, code: string): Obj {
   if (!isObj(v)) fail(code, "객체여야 합니다.", where);
   return v;
 }
 
-function onlyKeys(o: Obj, allowed: readonly string[], where: string, code: string): void {
+export function onlyKeys(o: Obj, allowed: readonly string[], where: string, code: string): void {
   for (const key of Object.keys(o)) {
     if (!allowed.includes(key)) fail(code, `알 수 없는 키 '${key}'가 있습니다.`, where);
   }
 }
 
-function str(o: Obj, key: string, where: string, code: string, nonEmpty = true): string {
+export function str(o: Obj, key: string, where: string, code: string, nonEmpty = true): string {
   const v = o[key];
   if (typeof v !== "string" || (nonEmpty && v === "")) fail(code, `${key}가 ${nonEmpty ? "비어 있지 않은 " : ""}문자열이 아닙니다.`, where);
   return v;
 }
 
-function int(o: Obj, key: string, where: string, code: string, min = 0): number {
+export function int(o: Obj, key: string, where: string, code: string, min = 0): number {
   const v = o[key];
   if (typeof v !== "number" || !Number.isInteger(v) || v < min) fail(code, `${key}가 ${min} 이상의 정수가 아닙니다.`, where);
   return v;
 }
 
-function list(o: Obj, key: string, where: string, code: string): unknown[] {
+export function list(o: Obj, key: string, where: string, code: string): unknown[] {
   const v = o[key];
   if (v === undefined) return [];
   if (!Array.isArray(v)) fail(code, `${key}가 배열이 아닙니다.`, where);
   return v;
 }
 
-function parseJson(text: string, code: string, what: string): unknown {
+export function parseJson(text: string, code: string, what: string): unknown {
   try {
     return JSON.parse(text);
   } catch (e) {
@@ -88,7 +88,7 @@ function readAt(v: unknown, where: string): AnchorAt {
   return { sectionIndex: int(at, "sectionIndex", `${where}.at`, "TPL_ANCHOR"), path: path as number[] };
 }
 
-function readAnchor(v: unknown, index: number): Anchor {
+export function readAnchor(v: unknown, index: number): Anchor {
   const where = `anchors[${index}]`;
   const a = obj(v, where, "TPL_ANCHOR");
   const id = str(a, "id", where, "TPL_ANCHOR");
@@ -227,7 +227,7 @@ function paragraphPrint(v: unknown, where: string): { text: string; sha256: stri
 const OPS: readonly string[] = CONDITION_OPS;
 const NEEDS_VALUE = new Set(["eq", "ne", "gt", "ge", "lt", "le", "contains", "in", "matches", "lengthEq", "lengthGt", "lengthLt"]);
 
-function readCondition(v: unknown, where: string, depth: number): Condition {
+export function readCondition(v: unknown, where: string, depth: number): Condition {
   if (depth > MAX_CONDITION_DEPTH) fail("TPL_CONDITION", `조건이 ${MAX_CONDITION_DEPTH}단계보다 깊습니다.`, where);
   const c = obj(v, where, "TPL_CONDITION");
   if ("all" in c || "any" in c) {
@@ -502,7 +502,7 @@ function readAction(v: unknown, where: string, kinds: Map<string, string>, objec
   }
 }
 
-function readRule(v: unknown, index: number, kinds: Map<string, string>, objectTypes: Map<string, string>): Rule {
+export function readRule(v: unknown, index: number, kinds: Map<string, string>, objectTypes: Map<string, string>): Rule {
   const where = `rules[${index}]`;
   const r = obj(v, where, "TPL_RULE");
   onlyKeys(r, ["id", "when", "do"], where, "TPL_RULE");
