@@ -1,7 +1,7 @@
 import type { SpanEdit } from "../edit/plan.ts";
 import type { ParagraphNode } from "../model/types.ts";
 import { findPlaceholders } from "../template/placeholder.ts";
-import type { Dataset, MissingPolicy, MixedFormatPolicy, ValueDigest } from "../template/types.ts";
+import type { Dataset, MissingPolicy, MixedFormatPolicy, ReportDrop, ValueDigest } from "../template/types.ts";
 import { digestValue, resolvePathValue } from "../template/value.ts";
 import type { Repl } from "./doc.ts";
 import { planRangeReplace, type Ctx } from "./text.ts";
@@ -19,8 +19,10 @@ export type PlaceholderOutcome = {
   missing: Map<string, number>;
   /** 채울 수 없는 값의 오류(경로·코드별로 한 번) */
   errors: { path: string; code: string; message: string }[];
-  /** 삭제·교체되는 문단 안이라 버린 자리 수(경로별) */
+  /** 삭제·교체·구간 치환으로 사라져 버린 자리 수(경로별) */
   dropped: Map<string, number>;
+  /** 메일 머지 필드가 맡는 표시 글 안이라 버린 자리 수(경로별) */
+  mergeDisplay: Map<string, number>;
 };
 
 /**
@@ -33,8 +35,8 @@ export function fillPlaceholders(
   dataset: Dataset,
   policy: MissingPolicy,
   mixed: MixedFormatPolicy,
-  /** 이 문단의 논리 구간 `[start, end)`에 있는 자리가 삭제·교체·치환으로 사라지는가(자리마다 묻는다). */
-  isDropped: (par: ParagraphNode, start: number, end: number) => boolean = () => false,
+  /** 이 문단의 논리 구간 `[start, end)`에 있는 자리를 버리는가와 그 까닭(자리마다 묻는다). 버리지 않으면 undefined. */
+  isDropped: (par: ParagraphNode, start: number, end: number) => ReportDrop["kind"] | undefined = () => undefined,
   /** 이 문단의 이 경로 자리는 채우지 않는다(오류도 건너뜀도 아니다. 호출자가 센다). 조건이 거짓인 행 반복의 원소·순번 자리에 쓴다. */
   isExcluded: (par: ParagraphNode, path: string) => boolean = () => false,
 ): PlaceholderOutcome {
@@ -47,14 +49,16 @@ export function fillPlaceholders(
     missing: new Map(),
     errors: [],
     dropped: new Map(),
+    mergeDisplay: new Map(),
   };
   const seenErrors = new Set<string>();
   const bump = (m: Map<string, number>, key: string): void => void m.set(key, (m.get(key) ?? 0) + 1);
 
   for (const par of paragraphs) {
     for (const hit of findPlaceholders(par.logicalText)) {
-      if (isDropped(par, hit.start, hit.end)) {
-        bump(out.dropped, hit.path);
+      const drop = isDropped(par, hit.start, hit.end);
+      if (drop !== undefined) {
+        bump(drop === "covered" ? out.dropped : out.mergeDisplay, hit.path);
         continue;
       }
       if (isExcluded(par, hit.path)) continue;

@@ -9,6 +9,7 @@ import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { run } from "../src/cli.ts";
 import { listFields, openPackage, parseDocument } from "../../../packages/hwpx-engine/src/index.ts";
+import { buildHwpx } from "../../../packages/hwpx-engine/test/helpers.ts";
 
 const FIXTURES = fileURLToPath(new URL("../../../packages/hwpx-engine/test/fixtures/", import.meta.url));
 const MESSAGE = "누름틀 성명이 걸친 문단 3개를 합쳤고 사이의 문단 1개를 지웠습니다(그 안의 표 0개 포함).";
@@ -99,4 +100,40 @@ test("C3 CLI fill --batch --report: items[]에 warnings(코드·메시지·ancho
   const pr = plain.p("report.json");
   assert.equal((await cli("fill", plain.p("form.hwpx"), "--data", plain.json("d.json", [{ 성명: "가" }]), "--batch", "-o", plain.p("out"), "--report", pr)).code, 0);
   assert.deepEqual((JSON.parse(readFileSync(pr, "utf8")) as { items: { warnings: unknown[] }[] }).items.map((i) => i.warnings), [[]]);
+});
+
+test("CLI fill --batch --report: items[]에 dropped(바깥 누름틀 구간 안에서 함께 지워진 안쪽 누름틀·{{}})가 있고, 버린 자리가 없는 건은 빈 배열이다. 값 원문은 없다(이슈 #16)", async () => {
+  const w = workspace("hancom-field");
+  const t = (x: string): string => `<hp:t>${x}</hp:t>`;
+  const para = (inner: string): string => `<hp:p id="0" paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0">${inner}</hp:run></hp:p>`;
+  const begin = (id: string, name: string): string => `<hp:ctrl><hp:fieldBegin id="${id}" type="CLICK_HERE" name="${name}" dirty="1" fieldid="${id}9"/></hp:ctrl>`;
+  const end = (id: string): string => `<hp:ctrl><hp:fieldEnd beginIDRef="${id}" fieldid="${id}9"/></hp:ctrl>`;
+  const body =
+    para(t("앞 ") + begin("1", "바깥") + t("안내")) +
+    para(begin("2", "안쪽") + t("안쪽 안내") + end("2") + t(" {{안쪽키}}")) +
+    para(t("안내") + end("1") + t(" 뒤")) +
+    para(t("{{보통}}"));
+  writeFileSync(w.p("nested.hwpx"), buildHwpx([body]));
+  const report = w.p("report.json");
+  const data = w.json("list.json", [
+    { 바깥: "바깥값하나", 안쪽: "안쪽값하나", 안쪽키: "키값하나", 보통: "보통값하나" },
+    { 바깥: "바깥값둘\n둘째 줄", 안쪽: "안쪽값둘", 안쪽키: "키값둘", 보통: "보통값둘" },
+  ]);
+  const r = await cli("fill", w.p("nested.hwpx"), "--data", data, "--batch", "-o", w.p("out"), "--report", report);
+  assert.equal(r.code, 0, r.err);
+  const text = readFileSync(report, "utf8");
+  const body2 = JSON.parse(text) as { items: { index: number; ok: boolean; dropped: { ruleId: string; anchor: string; reason: string; kind: string }[] }[] };
+  for (const item of body2.items) {
+    assert.ok(item.ok);
+    assert.deepEqual(item.dropped.map((d) => [d.ruleId, d.anchor, d.kind]), [["implicit", "{{안쪽키}}", "covered"], ["implicit", "field:안쪽", "covered"]], `${item.index}번 건`);
+    assert.ok(item.dropped.every((d) => d.reason.length > 0));
+  }
+  for (const v of ["바깥값", "안쪽값", "키값", "보통값"]) assert.ok(!text.includes(v), `보고서에 값 원문(${v})이 없다`);
+  // 결과 문서에 안쪽 누름틀이 없다
+  const out = parseDocument(openPackage(new Uint8Array(readFileSync(join(w.p("out"), "nested-001.hwpx")))));
+  assert.deepEqual(listFields(out).map((f) => [f.name, f.valueText]), [["바깥", "바깥값하나"]]);
+  // 버린 자리가 없는 문서는 빈 배열이다
+  const pr = w.p("plain-report.json");
+  assert.equal((await cli("fill", w.p("form.hwpx"), "--data", w.json("d.json", [{ 성명: "가" }]), "--batch", "-o", w.p("out"), "--report", pr)).code, 0);
+  assert.deepEqual((JSON.parse(readFileSync(pr, "utf8")) as { items: { dropped: unknown[] }[] }).items.map((i) => i.dropped), [[]]);
 });

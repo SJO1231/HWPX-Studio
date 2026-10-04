@@ -3,7 +3,7 @@ import { HwpxError, makeIssue, type Issue } from "../errors.ts";
 import { scanInstanceAttrs } from "../fragment/util.ts";
 import { listFields } from "../model/fields.ts";
 import { parseDocument } from "../model/document.ts";
-import { walkParagraphs } from "../model/paragraph.ts";
+import { fieldTypeOf, walkParagraphs } from "../model/paragraph.ts";
 import type { FieldMark, HwpxDocument, ParagraphNode, SectionModel } from "../model/types.ts";
 import { openPackage } from "../package/open.ts";
 import { findPlaceholders } from "../template/placeholder.ts";
@@ -84,8 +84,9 @@ export function planCompile(doc: HwpxDocument, anchors?: CompileTarget[], mergeF
     const text = f.section.text;
     const enclosing = piece === undefined ? undefined : insideField(f.paragraph, f.paragraph.pieces.indexOf(piece));
     if (enclosing !== undefined) {
-      if (mergeFields === undefined || enclosing.type !== "MAILMERGE" || enclosing.mergeKey === undefined) {
-        issues.push(makeIssue("warning", "COMPILE_SKIPPED", `${where}: 이미 ${enclosing.type === "MAILMERGE" ? "메일 머지 필드" : "누름틀"} 안에 있는 자리라 승격하지 않았습니다.`, where));
+      const merge = fieldTypeOf(enclosing.type) === "MAILMERGE";
+      if (mergeFields === undefined || !merge || enclosing.mergeKey === undefined) {
+        issues.push(makeIssue("warning", "COMPILE_SKIPPED", `${where}: 이미 ${merge ? "메일 머지 필드" : "누름틀"} 안에 있는 자리라 승격하지 않았습니다.`, where));
       }
       continue;
     }

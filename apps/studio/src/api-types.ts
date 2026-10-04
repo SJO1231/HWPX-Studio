@@ -116,7 +116,7 @@ export type ResultView = {
   errors: ReportEntry[];
   /**
    * 정보(실패·건너뜀이 아니다): 줄바꿈·탭이 든 값이 들어간 자리(`QUICK_MULTILINE`)와 엔진이 계획 단계에서 낸 경고(`BatchItem.warnings`.
-   * 예: 여러 문단에 걸친 누름틀을 채우며 문단을 합친 `FIELD_PARAGRAPHS_MERGED`. `place`는 `누름틀 "이름"`, `detail`은 엔진 메시지). 성공한 건에만 있다
+   * 예: 여러 문단에 걸친 누름틀을 채우며 문단을 합친 `FIELD_PARAGRAPHS_MERGED`. `place`는 `누름틀 "이름"`, `detail`은 엔진 메시지), 함께 지워진 자리(`QUICK_DROPPED`, 엔진의 `BatchItem.dropped` 가운데 `kind`가 `covered`인 것. `detail`은 엔진의 사유). 성공한 건에만 있다
    */
   notes: ReportEntry[];
 };

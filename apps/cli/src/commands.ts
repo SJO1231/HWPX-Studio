@@ -154,6 +154,7 @@ export function inspect(args: string[], out: Out): number {
       for (const h of findPlaceholders(par.logicalText)) placeholders.set(h.path, (placeholders.get(h.path) ?? 0) + 1);
     }
   }
+  const fields = listFields(doc);
   const summary = {
     file,
     bytes: bytes.length,
@@ -162,7 +163,7 @@ export function inspect(args: string[], out: Out): number {
     tables: census.tables,
     pictures: census.pictures,
     binaryItems: census.binaryItems,
-    fields: listFields(doc).map((f) => ({
+    fields: fields.map((f) => ({
       name: f.name,
       type: f.type,
       ...(f.mergeKey === undefined ? {} : { mergeKey: f.mergeKey }),
@@ -173,6 +174,8 @@ export function inspect(args: string[], out: Out): number {
       sectionIndex: f.sectionIndex,
       path: f.path,
     })),
+    /** type 속성이 없는 필드 수(종류 `UNKNOWN`. 자리로 세지 않고 채우지 않는다) */
+    fieldsWithoutType: fields.filter((f) => f.type === "UNKNOWN").length,
     placeholders: [...placeholders].sort(([a], [b]) => (a < b ? -1 : 1)).map(([path, count]) => ({ path, count })),
     resources: Object.fromEntries(Object.entries(doc.header.resources).map(([kind, items]) => [kind, items.length])),
     issues: doc.issues.length,
@@ -184,10 +187,10 @@ export function inspect(args: string[], out: Out): number {
   }
   out.log(`파일: ${file} (${bytes.length}바이트)`);
   out.log(`구역 ${summary.sections}개, 문단 ${summary.paragraphs}개, 표 ${summary.tables}개, 그림 ${summary.pictures}개, 이진 항목 ${summary.binaryItems}개`);
-  // 종류: 누름틀(CLICK_HERE)·메일머지(MAILMERGE, 이름이 비어 키로 가리킨다)·그 밖의 필드는 type 그대로
-  const kindOf = (f: { type: string }): string => (f.type === "CLICK_HERE" ? "누름틀" : f.type === "MAILMERGE" ? "메일머지" : f.type || "필드");
+  // 종류: 누름틀(CLICK_HERE)·메일머지(MAILMERGE, 이름이 비어 키로 가리킨다)·type 없음(UNKNOWN)·그 밖의 필드는 type 그대로
+  const kindOf = (f: { type: string }): string => (f.type === "CLICK_HERE" ? "누름틀" : f.type === "MAILMERGE" ? "메일머지" : f.type === "UNKNOWN" ? "type 없음" : f.type);
   out.log(
-    `누름틀·필드 ${summary.fields.length}개${summary.fields
+    `누름틀·필드 ${summary.fields.length}개${summary.fieldsWithoutType > 0 ? `(type 없음 ${summary.fieldsWithoutType}개는 자리로 세지 않음)` : ""}${summary.fields
       .map((f) => `\n  - [${kindOf(f)}] ${f.mergeKey ?? f.name}[${f.occurrence}] ${f.shape}, dirty=${f.dirty === "" ? "(없음)" : f.dirty}, 값 길이 ${f.valueLength}`)
       .join("")}`,
   );
@@ -606,7 +609,7 @@ function pathOfNameSpec(spec: string, usage: string): string {
 }
 
 /** 건별 결과 한 줄(보고서의 `items` 원소). 값 원문은 없다(`name`은 `--name` 값에서 온 파일 이름이다). */
-type BatchRow = Pick<BatchItem, "index" | "name" | "ok" | "filled" | "skipped" | "warnings" | "errorCodes" | "errors">;
+type BatchRow = Pick<BatchItem, "index" | "name" | "ok" | "filled" | "skipped" | "warnings" | "dropped" | "errorCodes" | "errors">;
 
 /**
  * `fill --batch`: 데이터가 배열이면 원소마다 결과 파일 하나를 `folder`에 만든다. 건마다 `generate`를 거치고(엔진의 `generateBatch`),
@@ -650,8 +653,8 @@ async function fillBatch(
   for (const item of generateBatch(bytes, c.template, records, call)) {
     // 만든 문서는 바로 쓰고 놓는다(건수가 많아도 문서를 모두 쥐지 않는다)
     if (item.output !== undefined && folder !== undefined) writeSafely(join(folder, item.name), item.output, inputs, overwrite);
-    const { index, name, ok, filled, skipped, errorCodes, errors, warnings } = item;
-    rows.push({ index, name, ok, filled, skipped, warnings, errorCodes, errors });
+    const { index, name, ok, filled, skipped, errorCodes, errors, warnings, dropped } = item;
+    rows.push({ index, name, ok, filled, skipped, warnings, dropped, errorCodes, errors });
     const label = `${String(index).padStart(3, "0")} ${name}`;
     if (ok) {
       out.log(`성공 ${label} (채움 ${filled}, 건너뜀 ${skipped.length})`);

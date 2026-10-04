@@ -26,7 +26,7 @@ export { decodeUtf8, encodeUtf8, parseXmlBytes, type ParsedXml } from "./xml/par
 export * from "./model/types.ts";
 export { parseDocument } from "./model/document.ts";
 export { parseHeader } from "./model/header.ts";
-export { parseParagraph, walkParagraphs, isTableNode } from "./model/paragraph.ts";
+export { parseParagraph, walkParagraphs, isTableNode, fieldTypeOf } from "./model/paragraph.ts";
 export { collectBodyRefs, checkReferences } from "./model/refs.ts";
 export { listFields } from "./model/fields.ts";
 

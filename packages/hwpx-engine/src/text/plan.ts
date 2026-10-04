@@ -236,7 +236,7 @@ export function buildTextPlan(doc: TextDoc, template: Template, dataset: Dataset
       continue;
     }
     if (blockDeletes.has(anchor.block.index) || replaced.has(anchor.block.index)) {
-      report.dropped.push({ ruleId: rule.id, anchor: action.anchor, reason: "삭제·교체되는 블록 안이라 버렸습니다." });
+      report.dropped.push({ ruleId: rule.id, anchor: action.anchor, reason: "삭제·교체되는 블록 안이라 버렸습니다.", kind: "covered" });
       continue;
     }
     const clash = repeatClaimed.get(lineIndex);
@@ -285,7 +285,7 @@ export function buildTextPlan(doc: TextDoc, template: Template, dataset: Dataset
   for (const [blockIndex, rows] of rowDeletes) {
     for (const [row, whos] of rows) {
       if (repeating.get(blockIndex)?.has(row) !== true) continue;
-      for (const w of whos) report.dropped.push({ ruleId: w.ruleId, anchor: w.anchor, reason: "반복하는 원형 행을 지우는 규칙이라 버렸습니다." });
+      for (const w of whos) report.dropped.push({ ruleId: w.ruleId, anchor: w.anchor, reason: "반복하는 원형 행을 지우는 규칙이라 버렸습니다.", kind: "covered" });
       rows.delete(row);
     }
   }
@@ -294,7 +294,7 @@ export function buildTextPlan(doc: TextDoc, template: Template, dataset: Dataset
   const deletedRows = new Map<number, number[]>();
   for (const [blockIndex, rows] of rowDeletes) {
     if (blockDeletes.has(blockIndex) || replaced.has(blockIndex)) {
-      for (const who of [...rows.values()].flat()) report.dropped.push({ ruleId: who.ruleId, anchor: who.anchor, reason: "삭제·교체되는 블록 안이라 버렸습니다." });
+      for (const who of [...rows.values()].flat()) report.dropped.push({ ruleId: who.ruleId, anchor: who.anchor, reason: "삭제·교체되는 블록 안이라 버렸습니다.", kind: "covered" });
     } else {
       deletedRows.set(blockIndex, [...rows.keys()].sort((a, b) => a - b));
     }
@@ -384,7 +384,7 @@ export function buildTextPlan(doc: TextDoc, template: Template, dataset: Dataset
         targets++;
       }
     }
-    if (droppedCount > 0) report.dropped.push({ ruleId: rule.id, anchor: action.anchor, reason: `삭제·교체되는 범위 안의 자리 ${droppedCount}곳을 버렸습니다.` });
+    if (droppedCount > 0) report.dropped.push({ ruleId: rule.id, anchor: action.anchor, reason: `삭제·교체되는 범위 안의 자리 ${droppedCount}곳을 버렸습니다.`, kind: "covered" });
     if (targets > 0) explicit.push({ ruleId: rule.id, type: "fill", anchor: action.anchor, targets, value: digestValue(text) });
   }
 
@@ -428,7 +428,7 @@ export function buildTextPlan(doc: TextDoc, template: Template, dataset: Dataset
     if (anchor === undefined || anchor.kind !== "line") continue;
     const block = anchor.block;
     if (blockDeletes.has(block.index)) {
-      report.dropped.push({ ruleId: rule.id, anchor: action.anchor, reason: "앵커 블록이 삭제되는 범위 안이라 버렸습니다." });
+      report.dropped.push({ ruleId: rule.id, anchor: action.anchor, reason: "앵커 블록이 삭제되는 범위 안이라 버렸습니다.", kind: "covered" });
       continue;
     }
     const eol = eolNear(doc, block.lastLine);
@@ -604,7 +604,7 @@ export function buildTextPlan(doc: TextDoc, template: Template, dataset: Dataset
   }
   const byPath = <T>([a]: [string, T], [b]: [string, T]): number => (a < b ? -1 : a > b ? 1 : 0);
   for (const [path, x] of [...implicit].sort(byPath)) report.actions.push({ ruleId: "implicit", type: "fill", anchor: `{{${path}}}`, targets: x.count, value: x.value });
-  for (const [path, n] of [...implicitDropped].sort(byPath)) report.dropped.push({ ruleId: "implicit", anchor: `{{${path}}}`, reason: `삭제·교체되는 범위 안의 자리 ${n}곳을 버렸습니다.` });
+  for (const [path, n] of [...implicitDropped].sort(byPath)) report.dropped.push({ ruleId: "implicit", anchor: `{{${path}}}`, reason: `삭제·교체되는 범위 안의 자리 ${n}곳을 버렸습니다.`, kind: "covered" });
   report.actions.push(...explicit);
 
   // ── 4. 삭제 편집 ────────────────────────────────────────────
