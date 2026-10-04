@@ -1414,7 +1414,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 
 소유: 엔진 = Claude. 재지정 화면 = Codex.
 
-`checkAnchors(doc, t): AnchorCheck[]`는 템플릿의 앵커마다 `doc`(새 원본)에서의 상태를 돌려준다. `resolveAnchors`(8.3)를 재사용한다. `field`·`clickHere`·`mailMerge`는 이름·키로 찾으므로 exact 또는 notFound뿐이다.
+`checkAnchors(doc, t): AnchorCheck[]`는 템플릿(1판 `Template` 또는 `StudioTemplate`. `anchors`만 쓴다)의 앵커마다 `doc`(새 원본)에서의 상태를 돌려준다. `resolveAnchors`(8.3)와 `locateRange`(7.10)를 재사용한다. `field`·`mergeField` 앵커는 이름·키(+`occurrence`)로 찾으므로 exact 또는 notFound뿐이다(`occurrence`는 수만 맞으면 exact다. 앞쪽 필드가 지워져 다른 필드를 가리켜도 알아내지 못한다). **[구현 #32]**(2026-10-04. 검증은 [검증 기준](validation.md) 21절).
 
 | 상태 | 판정 | 코드 | 생성에 쓸 수 있나 | 사용자 |
 | --- | --- | --- | --- | --- |
@@ -1423,10 +1423,15 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | changed | `range`의 양 끝은 찾았으나 안쪽 해시가 다름 | `ANCHOR_CHANGED` | 막음 | 확인 또는 재지정 |
 | ambiguous | 지문 일치가 2곳 이상 | `ANCHOR_AMBIGUOUS` | 막음 | 재지정(같은 패턴 후보 표시) |
 | notFound | 없음 | `ANCHOR_NOT_FOUND` | 막음 | 재지정 또는 자리 삭제 |
-| unverified | 지문 없는 `cell`·`object`(1판 승계) | `ANCHOR_UNVERIFIED`(경고) | 원본 해시가 같을 때만 | 확인 |
+| unverified | 지문 없는 `cell`·`object`(1판 승계)인데 그 서수의 표·개체가 있다 | `ANCHOR_UNVERIFIED`(경고) | 원본 해시가 같을 때만 | 확인 |
 
 - "생성에 쓸 수 있나"는 앵커 상태만 본 판정이다. 원본 해시가 다르면 상태와 무관하게 `TPL_SOURCE_MISMATCH`가 먼저 막는다(8.8.12). 그래서 원본이 바뀐 뒤에는 아래 재지정으로 새 템플릿 판(새 `source.sha256`)을 저장해야 한다.
-- 지문: `word`·`line`은 8.2, `range`·`cell`·`object`는 7.10.
+- 지문: `word`·`line`은 8.2, `range`·`cell`·`object`는 7.10. 지문 없는 `cell`·`object`의 서수 자리가 아예 없으면 unverified가 아니라 notFound다(`resolveAnchors`도 생성을 막는다). `cell`·`object`의 주소는 표·개체 서수라서 앞에 문단만 넣으면 exact이고, 앞에 표·개체를 넣으면 지문 있는 것은 relocated, 없는 것은 unverified다.
+- 결과 `AnchorCheck = { anchor, kind, state, found?, issues }`. `found`는 exact·relocated·unverified일 때 다시 찾은 주소(`word`는 `at`·`start`·`end`, `line`은 `at`, `range`는 `at`·`from`·`to`, `cell`은 `table`·`row`·`col`, `object`는 `objectType`·`sectionIndex`·`ordinal`)이고 `field`·`mergeField`에는 없다. `issues`에 문서 글은 넣지 않는다.
+- `planRelocation(t, checks): { anchors, changed: string[] } | undefined`: exact가 아닌 앵커가 전부 relocated(또는 unverified)일 때만 같은 id에 새 주소를 넣은 앵커 배열을 돌려준다(지문은 전체 일치라 그대로). changed·ambiguous·notFound가 하나라도 있으면 `undefined`. unverified 앵커는 그대로 둔다(서수만 보고 지문을 만들면 잘못된 표를 확정할 수 있다. 확인은 호출자 몫). 템플릿을 저장하지 않고 입력도 바꾸지 않는다.
+- `redraftAnchor(doc, old, draft): { anchor, kindChanged }`: `draftAnchors`([뷰어 명세](viewer-spec.md) 4절)의 초안에 옛 앵커의 `id`·`pattern`을 붙이고(초안의 `id`·`pattern`은 버린다), `range`·`cell`·`object`는 `doc`에서 지문을 다시 뜬다(`make*Anchor`). 종류가 바뀌면 `kindChanged: true`(허용). 옛 앵커가 `mergeField`이고 초안이 키로 가리키는 `field`이면 `mergeField`로 적는다. 초안의 `blocked`는 뺀다. 결과 앵커는 그 종류의 필드만 갖는다. 초안의 주소(문단·낱말 범위·범위·표 서수와 칸·개체 서수)가 문서에 없으면 모든 종류에서 `FILL_DRAFT_ADDRESS`.
+- 판정 순서: 주소의 지문이 맞으면 다른 곳에 같은 지문의 복제본이 있어도 exact다(exact가 ambiguous보다 앞선다). 복제가 ambiguous로 나오는 것은 원래 주소가 어긋났을 때다.
+- unverified의 정확한 조건: `cell`은 그 서수의 표에 그 (행, 열) 칸까지 있어야 하고, 없으면 notFound다. 지문이 없으므로 표가 끼어들면 다른 표를 가리킨 채 unverified가 될 수 있다(설계대로. 경고로 알리고 확인은 사용자 몫).
 
 **재지정 흐름**
 
@@ -1502,12 +1507,12 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | `selectSlots(t, values, case)` | `src/template/` | 8.8.8의 상태 판정. `evaluateCondition` 재사용 |
 | `generateFromTemplate(bytes, t, record, case, loadBlob, opts)` | `src/fill/` | 8.8.12의 2단계 생성·게이트·원장. md는 텍스트 어댑터 |
 | `range` 앵커와 `makeRangeAnchor`, 액션의 range 수용, 보고서의 `moves` | `src/fill/` | 7.10. 내부에서 이동표 변환과 느슨한 `{{ }}` 찾기 |
-| `checkAnchors(doc, t)` | `src/fill/` | 8.8.13의 상태표. `resolveAnchors` 재사용 |
+| `checkAnchors(doc, t)`, `planRelocation(t, checks)`, `redraftAnchor(doc, old, draft)` | `src/fill/` | 8.8.13의 상태표·relocated 일괄 갱신 계획·재지정(id 유지). `resolveAnchors`(안에서 `locateRange`)를 재사용하고, `draftAnchors`의 초안을 입력으로 받는다 |
 | `patternOf(doc, at)`, `suggestSimilar(doc, pattern)` | `src/fill/` | 7.10(#20. #19의 탐지 규칙에 의존) |
 | `listProtoUsage(templates, protoId, latest)`, `planProtoUpdate(t, proto)` | `src/template/` | 8.8.7(#21). 형식과 무관한 순수 함수 |
 | CLI `fill --template(@2) --case --blobs <폴더>` | `apps/cli` | 8.4. 앱과 같은 바이트 |
 
-구현 상태(2026-10-04): `read*`·`write*`·해시 도우미(`templateSha256`·`caseSha256`·`contentSha256`)·`bindValues`·`selectSlots`·`listProtoUsage`·`planProtoUpdate`는 #29, `range`·`moves`·`makeRangeAnchor`는 #30(7.10). `generateFromTemplate`·CLI `--case --blobs`(#31), `checkAnchors`(#32), 패턴(#20)은 미구현. 정확한 형은 `src/template/studio-types.ts`가 정본이고 아래는 요지다.
+구현 상태(2026-10-04): `read*`·`write*`·해시 도우미(`templateSha256`·`caseSha256`·`contentSha256`)·`bindValues`·`selectSlots`·`listProtoUsage`·`planProtoUpdate`는 #29, `range`·`moves`·`makeRangeAnchor`는 #30(7.10). `checkAnchors`·`planRelocation`·`redraftAnchor`는 #32(`src/fill/check-anchors.ts`). `generateFromTemplate`·CLI `--case --blobs`(#31), 패턴(#20)은 미구현. 정확한 형은 `src/template/studio-types.ts`(와 `src/fill/check-anchors.ts`)가 정본이고 아래는 요지다.
 
 ```ts
 type ValueState = "bound" | "edited" | "missing" | "empty" | "rejected"
@@ -1517,7 +1522,8 @@ type SelectionReason = "tie" | "noCandidate" | "valueMissing" | "valueRejected" 
 type SlotSelection = { slot: string; state: SelectionState; block?: string; reason?: SelectionReason; differs?: boolean; candidates?: string[]; blocked?: "SEL_UNDECIDED" | "SEL_RECHECK"; message: string }
 type ProtoUsageList = { proto: string; latest: number; usages: { template: string; version: number; blocks: string[]; pinned?: number; forkedFrom?: number; state: "behind" | "current" | "forked" }[] }
 type ProtoUpdatePlan = { template: StudioTemplate; updated: { block: string; from: number; to: number }[] }
-type AnchorCheck = { anchor: string; state: "exact" | "relocated" | "changed" | "ambiguous" | "notFound" | "unverified"; found?: unknown; issues: Issue[] }
+type AnchorCheck = { anchor: string; kind: StudioAnchor["kind"]; state: "exact" | "relocated" | "changed" | "ambiguous" | "notFound" | "unverified"; found?: AnchorAddress; issues: Issue[] }
+type AnchorAddress = Pick<WordAnchor, "kind" | "at" | "start" | "end"> | Pick<LineAnchor, "kind" | "at"> | Pick<RangeAnchor, "kind" | "at" | "from" | "to"> | Pick<CellAnchor, "kind" | "table" | "row" | "col"> | Pick<ObjectAnchor, "kind" | "objectType" | "sectionIndex" | "ordinal">
 ```
 
 - 형식 중립 경계(8.5): `src/template/`의 함수는 문서 형식을 모른다(HWPX 모델을 import하지 않는다). HWPX에 묶인 `generateFromTemplate`·`checkAnchors`·`patternOf`·`suggestSimilar`는 `src/fill/`에 둔다.
@@ -1525,7 +1531,7 @@ type AnchorCheck = { anchor: string; state: "exact" | "relocated" | "changed" | 
 
 #### 8.8.16 수용 조건
 
-소유: 검사 = 엔진 쪽 독립 검증(Claude 지휘). 앱 쪽 항목 = Codex 시험. 통과 전에는 [미구현]이다. 상태(2026-10-04): W1~W3의 읽기·쓰기·값 연결·선택 평가 부분은 #29에서 통과([검증 기준](validation.md) 20절). W1의 생성 바이트 동일·W2의 `TPL_NESTED`·W3의 출력 항목은 #31, W4의 전파 함수는 #29(저장·화면은 Codex), W7의 `range` 지문은 #30(19절).
+소유: 검사 = 엔진 쪽 독립 검증(Claude 지휘). 앱 쪽 항목 = Codex 시험. 통과 전에는 [미구현]이다. 상태(2026-10-04): W1~W3의 읽기·쓰기·값 연결·선택 평가 부분은 #29에서 통과([검증 기준](validation.md) 20절). W1의 생성 바이트 동일·W2의 `TPL_NESTED`·W3의 출력 항목은 #31, W4의 전파 함수는 #29(저장·화면은 Codex), W7의 `range` 지문은 #30(19절), W7의 상태 판정·일괄 갱신·재지정은 #32(21절. "생성이 막힌다"는 `resolveAnchors`의 기존 동작으로 확인).
 
 | ID | 조건 |
 | --- | --- |

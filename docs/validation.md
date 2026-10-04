@@ -388,3 +388,22 @@ M1(값의 줄바꿈·탭, 여러 건 생성, 빠른 생성 화면 `apps/studio`,
 반영: 명세 8.8.4(값 표 모양·money 범위·`bindings` 생략·연결 둘은 `TPL_FIELD`), 8.8.7(핀 판 없음·usage 상태·전파 세부), 8.8.8(`valueRejected`·`blocked`·`message`·중첩 세부), 8.8.10(표는 항목 목록, 같은 `path`, `TPL_CONFLICT`, 해시 소문자·`-0`), 8.8.11(`@1`은 1판 `Template` 그대로), 8.8.15(형 요지와 구현 상태). 쉬운 말 표(apps/studio)에 코드 15개.
 
 남은 것: W1의 생성 항목(1판 경로와 승계 경로의 바이트 동일, CLI=앱)·W2의 `TPL_NESTED`·W3의 "고르지 않은 블록이 출력에 없다"는 #31. lite `version` 2(`MIG_VERSION`)는 Codex(#25). 참고 오픈소스와의 구조 비교는 하지 않았다(이름·주석 grep만). 같은 이름의 누름틀을 `occurrence`로 나눠 다른 값에 연결하는 것은 명세대로 `TPL_KEY_CONFLICT`다(필요하면 사용자 확인 뒤 완화).
+
+## 21. `checkAnchors`·`planRelocation`·`redraftAnchor` 검증 (2026-10-04, 이슈 #32)
+
+엔진 명세 8.8.13. 구현은 `src/fill/check-anchors.ts` 하나이고 기존 `resolveAnchors`·`locateRange`·`draftAnchors`는 바꾸지 않았다. 독립 검증은 구현자와 다른 Agent가 자기 시험 문서(메일 머지 시험 문서에 본문 22문단·긴 문단 599자·1,200자·표 3개를 더한 것)와 앵커 52개(7종, 지문 유·무 포함)로 했다.
+
+| 검사 | 결과 |
+| --- | --- |
+| W7 장면(독립) | 같은 원본 → exact 47·unverified 5(지문 없는 cell·object만). 앞에 문단 1·3·5개 삽입 → word·line·range relocated(주소 +n, 칸 안 주소도 +n), cell·object·field·mergeField exact, 삽입 지점 앞은 exact. 앞에 표 삽입 → 지문 있는 cell·object relocated(서수 +1), 없는 것 unverified. 글 복제+위치 밀림 → ambiguous이고 `generate`가 `ANCHOR_AMBIGUOUS`로 출력 없음(표 복제 포함). 범위 끝 삭제 notFound, 안쪽 글 변경·안쪽 4문단 추가 changed, 5문단 추가 notFound(7.10 창과 일치). 누름틀 이름·메일 머지 키 문단 삭제 → notFound(다른 곳에도 있는 키는 exact). 지문 없는 cell의 표 삭제·없는 칸 → notFound. 장면 13개 독립 판정기와 불일치 0 |
+| `planRelocation`(독립) | relocated만 → 새 앵커(같은 id)로 다시 검사하면 exact 47·unverified 5, 입력 불변(깊은 비교), 2판 쓰기·읽기 왕복 뒤도 같음. changed·ambiguous·notFound가 섞이면 `undefined`(무작위 117회 모두 맞음) |
+| `redraftAnchor`(독립) | ambiguous 10개 재지정 → exact, cell 지문이 원래와 같음, word→line은 `kindChanged`, 키로 가리킨 field 초안은 `mergeField` 유지, 1판 field(mergeKey)는 field, 엉터리 지문의 range 초안은 다시 떠서 exact, `blocked`·`kindChanged` 키 없음, 앵커를 2판 템플릿에 넣어 왕복 통과 |
+| 글 누출(독립) | 무작위 160회 동안 모든 이슈 문구·`found`를 문단 글 6자 조각 전부와 대조해 0건(대조기 양성 확인) |
+| 무작위(독립) | 시드 2개 × 80회(변경 253건·판정 4,160건) 불일치 0, 비결정 0, 상태 6종 모두 출현. 구현자 시험 64회(판정 3,136건) 2회 실행 집계 동일 |
+| 긴 글(독립) | 421·865·1,447자 문단: 앞 40자가 같아도 해시로 구분, 꼬리 변경 → line notFound·3문단 range changed·2문단 range notFound, 머리 변경 → word가 같은 문단에서 다시 찾아짐(시작 424) |
+| 결함과 처리 | **낮음 5**: word·line 초안의 없는 주소를 `FILL_DRAFT_ADDRESS`로 막지 않음 → 모든 종류 검사로 고침; 초안의 `id`가 옛 id를 덮어씀(펼침 순서) → 옛 id·pattern만 쓰도록 고침; 명세 참조 오류(`draftAnchors`는 뷰어 명세 4절)·21절 부재·8.8.15 문구 → 문서 수정. **명세 빈틈**: 주소의 지문이 맞으면 복제본이 있어도 exact(exact 우선), cell의 unverified는 칸까지 있어야 함(없으면 notFound)·다른 표를 가리킨 채 unverified 가능 → 8.8.13에 적음 |
+| 회귀(수정 뒤) | 형 검사 0. 1,600개 중 1,542 통과, 0 실패, 58 선택 실행분(main 1,587/1,529/0/58. 새 시험 13). 수정 뒤 독립 스크립트 재실행: W7 장면 불일치 0, `FILL_DRAFT_ADDRESS`·id 유지·pattern 규칙 확인 |
+
+반영: 명세 8.8.13(`field`·`mergeField`, notFound 조건, `AnchorCheck` 형, `planRelocation`·`redraftAnchor`, exact 우선, unverified 조건), 8.8.15·8.8.16, 쉬운 말 표 `ANCHOR_UNVERIFIED`.
+
+남은 것: 구역 2개 이상 문서의 판정, 표가 아닌 개체(그림)의 relocated·ambiguous, 실제 문서 모음으로의 판정 실행, 재지정 화면(Codex)과의 연결, 생성 5단계(#31)에 `checkAnchors` 연결(합칠 때).

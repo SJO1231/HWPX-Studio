@@ -25,3 +25,4 @@ export { planCompile, compileDocument, type CompileTarget, type CompileResult, t
 export { generateBatch, planBatchNames, safeFileStem, sanitizeFileStem, type BatchItem, type BatchOptions } from "./batch.ts";
 export { findCandidates, type Candidate, type CandidateKind, type AnchorDraft } from "./candidates.ts";
 export { draftAnchors, type DraftBlock, type DraftedAnchor, type DraftRequest } from "./draft.ts";
+export { checkAnchors, planRelocation, redraftAnchor, type AnchorAddress, type AnchorCheck, type AnchorCheckState, type RedraftInput } from "./check-anchors.ts";
