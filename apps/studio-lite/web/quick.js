@@ -59,11 +59,12 @@ async function showDocument(url,original,title){
   try{state.view=createPageView({container:$('pages'),doc,scale:Number($('scale').value),onPick,onError:failed});state.doc=doc;}catch(e){doc.free();throw e;}
   state.original=original;$('viewer-title').textContent=title;marks();controls();
 }
+const fieldKind=f=>f?.mailMerge?(f.mailMerge===f.count?'메일머지':'누름틀·메일머지'):'누름틀';
 function renderPlaces(t){
   $('document-info').textContent=`${t.name} · ${t.bytes.toLocaleString()}바이트`;
   const box=$('places');box.replaceChildren();
   const list=(title,items)=>{box.append(el('h3',`${title} ${items.length}개`));const u=el('ul');items.forEach(text=>u.append(el('li',text)));box.append(items.length?u:el('p','없음','muted'));};
-  list('누름틀',t.places.fields.map(f=>`${f.name||'(이름 없음)'} · ${f.count}곳${f.usable?'':' · 데이터 경로로 쓸 수 없는 이름'}${f.merging?` · ${f.merging}곳은 문단 합침`:''}${f.unfillable.length?` · 채우지 못함: ${f.unfillable.map(u=>`${SHAPES[u.shape]} ${u.count}곳${u.reasons?` (${u.reasons.join(' ')})`:''}`).join(', ')}`:''}`));
+  list('누름틀·메일머지',t.places.fields.map(f=>`${fieldKind(f)} ${f.name||'(이름 없음)'} · ${f.count}곳${f.mailMerge?` (메일머지 ${f.mailMerge} · 누름틀 ${f.count-f.mailMerge})`:''}${f.usable?'':' · 데이터 경로로 쓸 수 없는 이름'}${f.merging?` · ${f.merging}곳은 문단 합침`:''}${f.unfillable.length?` · 채우지 못함: ${f.unfillable.map(u=>`${SHAPES[u.shape]} ${u.count}곳${u.reasons?` (${u.reasons.join(' ')})`:''}`).join(', ')}`:''}`));
   list('{{키}}',t.places.placeholders.map(p=>`{{${p.key}}} · ${p.count}곳`));
   list(`빈칸 후보${t.places.candidatesTruncated?' (앞 200개)':''}`,t.places.candidates.map(c=>`${CANDIDATES[c.kind]}: ${c.evidence}`));
 }
@@ -79,8 +80,8 @@ function renderData(d){
   const select=$('mapping');select.replaceChildren(el('option','연결할 경로 선택'));select.firstChild.value='';
   d.keys.filter(k=>k.usable&&!['object','array'].includes(k.type)).forEach(k=>{const o=el('option',`${k.path} (${k.type})`);o.value=k.path;select.append(o);});
   $('keys').replaceChildren();d.keys.forEach(k=>$('keys').append(el('p',`${k.path} · ${k.type} · ${k.records}건${k.usable?'':' · 경로 연결 불가'}`)));
-  const labels={ok:'데이터 있음',missing:'데이터 없음 / null',notScalar:'객체·배열',rejected:'값 문자 차단',badKey:'데이터 경로로 쓸 수 없는 이름',unfillable:'채울 수 없는 누름틀'};
-  table($('matches'),['자리 / 경로','연결 확인'],d.matches.map(m=>{const field=state.places.fields.find(f=>f.name===m.key);const shape=m.state==='unfillable'?(field?.unfillable??[]).map(u=>SHAPES[u.shape]).join(', '):'';return [`${m.kind==='field'?'누름틀':'{{키}}'}: ${m.key}`,`${labels[m.state]}${shape?` (${shape})`:''} · 맞음 ${m.counts.ok} / 누락 ${m.counts.missing}${m.reason?` (${m.reason})`:''}${m.multiline?' · 줄바꿈/탭 유지':''}`];}));
+  const labels={ok:'데이터 있음',missing:'데이터 없음 / null',notScalar:'객체·배열',rejected:'값 문자 차단',badKey:'데이터 경로로 쓸 수 없는 이름',unfillable:'채울 수 없는 필드'};
+  table($('matches'),['자리 / 경로','연결 확인'],d.matches.map(m=>{const field=state.places.fields.find(f=>f.name===m.key);const shape=m.state==='unfillable'?(field?.unfillable??[]).map(u=>SHAPES[u.shape]).join(', '):'';return [`${m.kind==='field'?fieldKind(field):'{{키}}'}: ${m.key}`,`${labels[m.state]}${shape?` (${shape})`:''} · 맞음 ${m.counts.ok} / 누락 ${m.counts.missing}${m.reason?` (${m.reason})`:''}${m.multiline?' · 줄바꿈/탭 유지':''}`];}));
 }
 function entryList(entries){const ul=el('ul');entries.forEach(e=>{const li=el('li',`${e.place?`[${e.place}] `:''}${e.plain} (${e.code})`);if(e.detail)li.append(el('p',e.detail,'muted'));ul.append(li);});return entries.length?ul:'-';}
 function renderResults(g){

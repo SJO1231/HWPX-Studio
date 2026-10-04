@@ -22,14 +22,15 @@ export type UnfillableShape = "object" | "crossContainer" | "unpaired" | "crossB
 
 export type PlacesView = {
   /**
-   * 누름틀(type이 `CLICK_HERE`인 것만. 책갈피 같은 다른 종류의 필드는 넣지 않는다) 이름별 정보.
+   * 누름틀(CLICK_HERE 이름)·키 있는 메일머지(MAILMERGE mergeKey)의 키별 정보. 다른 필드는 넣지 않는다.
+   * `mailMerge`는 메일머지가 있는 키에서만 해당 종류의 곳 수다. `count - (mailMerge ?? 0)`는 누름틀 수다.
    * `count`는 그 이름의 곳 수, `usable`이 거짓이면 이름이 데이터 키로 쓸 수 없는 글자(공백·점 등)를 가져 채우지 않는다.
    * 곳마다 채울 수 있는지는 엔진의 `fieldFillBlock`이 정한다(데이터와 무관하다): `fillable`은 막는 사유가 없는 곳 수, `unfillable`은 나머지를 분류별로 센 것이다(0인 분류는 없다).
    * `unfillable[].reasons`는 `crossBlocked`에만 있고, 엔진이 준 사유 문구(중복 제거, 처음 나온 순서)다. 문서의 글은 담지 않는다.
    * `merging`은 `fillable` 가운데 여러 문단에 걸친 모양(`crossParagraph`)인 곳 수다. 이런 곳은 채우면 첫 문단에 값을 넣고 사이 문단이 지워져 문단이 합쳐진다.
    * `count`는 `fillable`과 `unfillable`의 `count` 합이다.
    */
-  fields: { name: string; count: number; usable: boolean; fillable: number; merging: number; unfillable: { shape: UnfillableShape; count: number; reasons?: string[] }[] }[];
+  fields: { name: string; count: number; mailMerge?: number; usable: boolean; fillable: number; merging: number; unfillable: { shape: UnfillableShape; count: number; reasons?: string[] }[] }[];
   /** `{{키}}`별 곳 수 */
   placeholders: { key: string; count: number }[];
   /** 후보 자리(표시만). 많으면 앞의 200개 */

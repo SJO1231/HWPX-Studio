@@ -4,6 +4,7 @@
 import {
   DATASET_SCHEMA,
   checkValueText,
+  buildFillPlan,
   collectFields,
   emptyTemplate,
   fieldFillBlock,
@@ -43,11 +44,11 @@ const CANDIDATE_KINDS = new Set(["emptyCell", "labelColon", "blankMark"]);
 /** `unfillable`에 담는 모양의 순서 */
 const UNFILLABLE_SHAPES: readonly UnfillableShape[] = ["object", "crossContainer", "unpaired", "crossBlocked"];
 
-type FieldTally = { count: number; fillable: number; merging: number; unfillable: Map<UnfillableShape, { count: number; reasons: string[] }> };
+type FieldTally = { count: number; mailMerge: number; fillable: number; merging: number; unfillable: Map<UnfillableShape, { count: number; reasons: string[] }> };
 
 /**
  * 문서 바이트를 열어 자리 목록을 만든다. 열 수 없으면 엔진의 `HwpxError`(`PKG_`·`XML_`·`MODEL_`)가 올라온다.
- * 누름틀은 type이 `CLICK_HERE`인 필드만 센다(엔진이 이름 = 데이터 경로로 채우는 것도 그것뿐이다. 책갈피·메일머지 같은 필드는 목록에 없다).
+ * 누름틀은 name, 키가 있는 MAILMERGE는 mergeKey로 센다(엔진의 암묵 채움과 같다. 책갈피·날짜·키 없는 메일머지는 목록에 없다).
  * 이름의 `usable`은 엔진이 채우는 기준(`isValidPath`)과 같다. 곳마다 채울 수 있는지는 엔진의 `fieldFillBlock`(`collectFields`의 곳별 판정, 데이터와 무관하다)만 따른다:
  * 막는 사유가 없으면 `fillable`(그 가운데 여러 문단에 걸친 모양 `crossParagraph`는 `merging`에도 센다), 있으면 `unfillable`에 센다. 여러 문단에 걸친 모양인데 막힌 곳은
  * `crossBlocked`이고 엔진이 준 사유 문구를 `reasons`에 담는다. 나머지는 모양(`object`·`crossContainer`·`unpaired`)별로 센다.
@@ -58,13 +59,15 @@ export function analyzePlaces(bytes: Uint8Array): PlacesView {
   const tallies = new Map<string, FieldTally>();
   for (const target of collectFields(doc)) {
     const f = target.info;
-    if (f.type !== "CLICK_HERE") continue;
-    let tally = tallies.get(f.name);
+    const key = f.type === "CLICK_HERE" ? f.name : f.type === "MAILMERGE" ? f.mergeKey : undefined;
+    if (key === undefined) continue;
+    let tally = tallies.get(key);
     if (tally === undefined) {
-      tally = { count: 0, fillable: 0, merging: 0, unfillable: new Map() };
-      tallies.set(f.name, tally);
+      tally = { count: 0, mailMerge: 0, fillable: 0, merging: 0, unfillable: new Map() };
+      tallies.set(key, tally);
     }
     tally.count++;
+    if (f.type === "MAILMERGE") tally.mailMerge++;
     const block = fieldFillBlock(target);
     if (block === undefined) {
       tally.fillable++;
@@ -91,6 +94,7 @@ export function analyzePlaces(bytes: Uint8Array): PlacesView {
     fields: [...tallies].map(([name, t]) => ({
       name,
       count: t.count,
+      ...(t.mailMerge ? { mailMerge: t.mailMerge } : {}),
       usable: isValidPath(name),
       fillable: t.fillable,
       merging: t.merging,
@@ -234,30 +238,28 @@ const entry = (code: string, detail?: string, place?: string): ReportEntry => {
   return e;
 };
 
-/** 엔진 보고의 앵커(`{{키}}`, `field:이름`)를 사람이 읽는 자리 이름으로 바꾼다. */
+/** 엔진 보고의 앵커(`{{키}}`, `field:이름`, `merge:키`)를 사람이 읽는 자리 이름으로 바꾼다. */
 function placeOf(anchor: string): string | undefined {
   if (anchor.startsWith("{{")) return anchor;
-  return anchor.startsWith("field:") ? `누름틀 "${anchor.slice("field:".length)}"` : undefined;
+  if (anchor.startsWith("field:")) return `누름틀 "${anchor.slice("field:".length)}"`;
+  return anchor.startsWith("merge:") ? `메일머지 "${anchor.slice("merge:".length)}"` : undefined;
 }
 
-/** 이 건에서 줄바꿈·탭이 든 값이 들어간 자리(키)의 알림. 엔진이 건너뛴 자리의 키는 뺀다. */
-function multilineNotes(places: PlacesView, record: BatchRecord, item: BatchItem): ReportEntry[] {
-  if (!("dataset" in record)) return [];
-  const skipped = new Set(item.skipped.map((s) => s.anchor));
-  const keys = new Set([...places.fields.filter((f) => f.usable && f.fillable > 0).map((f) => f.name), ...places.placeholders.map((p) => p.key)]);
-  const notes: ReportEntry[] = [];
-  for (const key of keys) {
-    if (skipped.has(`{{${key}}}`) || skipped.has(`field:${key}`)) continue;
-    const j = judge(record.dataset, key);
-    if (j.state === "ok" && j.multiline) notes.push(entry("QUICK_MULTILINE", undefined, `키 ${key}`));
-  }
-  return notes;
+/** 실제 채운 키의 줄바꿈·탭 알림. 같은 키의 다른 종류/일부 곳 건너뜀이 성공 알림을 지우지 않는다. */
+function multilineNotes(source:Uint8Array,template:Template,missing:MissingPolicy,places:PlacesView,record:BatchRecord):ReportEntry[] {
+  if (!('dataset' in record)) return [];
+  const keys = new Set([...places.fields.filter(f=>f.usable&&f.fillable>0).map(f=>f.name),...places.placeholders.map(p=>p.key)]);
+  const multiline=[...keys].filter(key=>{const j=judge(record.dataset,key);return j.state==='ok'&&j.multiline;});
+  if(!multiline.length)return [];
+  // 공개 계획의 성공 액션만 사용한다. 값 원문과 계획은 화면 응답에 넣지 않는다.
+  const actions=buildFillPlan(parseDocument(openPackage(source)),template,record.dataset,{missing}).report.actions.filter(a=>a.type==='fill'&&a.targets>0);
+  return multiline.filter(key=>actions.some(a=>a.anchor===`{{${key}}}`||a.anchor===`field:${key}`||a.anchor===`merge:${key}`||template.rules.some(r=>r.id===a.ruleId&&r.do.type==='fill'&&'path' in r.do.value&&r.do.value.path===key))).map(key=>entry('QUICK_MULTILINE',undefined,`키 ${key}`));
 }
 
 export type Generated = { view: ResultView; output?: Uint8Array };
 
 /** 엔진의 건별 결과(`BatchItem`)를 화면 보고로 바꾼다. 번호는 0부터이고(파일 이름의 번호는 1부터) 값 원문은 담지 않는다. */
-function toGenerated(item: BatchItem, places: PlacesView, record: BatchRecord): Generated {
+function toGenerated(item: BatchItem, places: PlacesView, record: BatchRecord, source:Uint8Array, template:Template, missing:MissingPolicy): Generated {
   const view: ResultView = {
     index: item.index - 1,
     name: item.name,
@@ -265,7 +267,7 @@ function toGenerated(item: BatchItem, places: PlacesView, record: BatchRecord): 
     filled: item.filled,
     skipped: item.skipped.map((s) => entry(s.code, s.message, placeOf(s.anchor))),
     errors: item.errors.map((e) => entry(e.code, e.message)),
-    notes: item.ok ? [...multilineNotes(places, record, item), ...item.warnings.map((w) => entry(w.code, w.message, w.anchor === undefined ? undefined : placeOf(w.anchor)))] : [],
+    notes: item.ok ? [...multilineNotes(source, template, missing, places, record), ...item.warnings.map((w) => entry(w.code, w.message, w.anchor === undefined ? undefined : placeOf(w.anchor)))] : [],
   };
   if (!item.ok && view.errors.length === 0) view.errors.push(entry("QUICK_GENERATE_FAILED"));
   return item.ok && item.output !== undefined ? { view, output: item.output } : { view: { ...view, ok: false } };
@@ -289,7 +291,7 @@ export function generateAll(source: Uint8Array, places: PlacesView, data: QuickD
       break;
     }
     resultBytes += bytes;
-    out.push(toGenerated(item, places, data.records[item.index - 1] as BatchRecord));
+    out.push(toGenerated(item, places, data.records[item.index - 1] as BatchRecord, source, template, missing));
   }
   return out;
 }
