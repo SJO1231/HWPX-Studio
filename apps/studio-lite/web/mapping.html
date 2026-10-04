@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ko">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HWPX Studio · 데이터 연결</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/quick.css"><style>.mapping-center{padding:20px;background:white;min-width:0}.mapping-center h2{margin-bottom:10px}.mapping-center .grid-scroll{max-height:65vh;margin:15px 0}.mapping-center td{min-width:150px}.mapping-center td select,.mapping-center td input{margin-bottom:6px}.mapping-center .actions{margin:14px 0}.mapping-center small{white-space:pre-wrap;overflow-wrap:anywhere}.mapping-center p{font-size:12px}.quick-left label[for]{margin:12px 0 6px}</style></head>
+<body>
+<header class="topbar"><div class="brand"><span class="mark">H</span><strong>HWPX Studio <small>lite</small></strong></div><nav class="actions" aria-label="작업 방식"><a href="/">템플릿 준비 · 빠른 생성</a><a href="/template">저장한 템플릿으로 생성</a><a class="active" href="/mapping">데이터 연결</a></nav><span class="pill">내 PC에서 처리</span></header>
+<div id="status" role="status" aria-live="polite">템플릿과 데이터를 올려 원본 열·값·적용 위치를 확인하세요.</div>
+<main class="quick-workspace">
+<aside class="quick-left">
+<section><h1>데이터 연결</h1><p>템플릿의 항목을 원본 데이터에 연결하고, 변경한 연결은 새 판으로 보관합니다.</p><label class="file-button full">템플릿 JSON 올리기<input id="template-file" type="file" accept=".json" hidden></label><label class="file-button full">JSON·CSV·Excel 데이터 올리기<input id="data-file" type="file" accept=".json,.csv,.xlsx" hidden></label><p id="data-info" class="muted">JSON은 원래 구조를 그대로 읽습니다.</p><div id="xlsx-options" hidden><label for="xlsx-sheet">읽을 데이터 시트</label><select id="xlsx-sheet"></select><p class="muted">여러 시트가 있으면 두 번째 이후 데이터 시트를 선택합니다.</p></div><ul id="data-warnings" class="warn" aria-label="데이터 입력 알림"></ul><label for="row">확인할 데이터 행</label><input id="row" type="number" min="1" step="1" value="1" disabled><button id="preview" class="primary full" type="button" disabled>연결표 확인</button></section>
+<section><h2>참조하는 파일</h2><label class="file-button full">블록 원형 JSON 올리기<input id="proto-files" type="file" accept=".json" multiple hidden></label><label class="file-button full">원본 문서·조각 파일 올리기<input id="source-files" type="file" accept=".hwpx,.md,.txt,.json" multiple hidden></label><p class="muted">템플릿이 참조하는 원형과 조각을 함께 올리세요. 원본과 공용 블록을 바꾸지 않습니다.</p></section>
+<section><h2>새 데이터에 재사용</h2><p>연결을 새 판으로 보관하고 템플릿 JSON을 내려받으세요. 내려받은 템플릿을 다시 올려 다른 데이터와 연결할 수 있습니다.</p></section>
+</aside>
+<section class="mapping-center"><div class="section-head"><h2>항목별 연결표</h2><span id="template-info" class="pill">템플릿 확인 전</span></div><p>원본 열 이름은 공백과 점을 포함해 그대로 씁니다. JSON 안쪽 값을 읽을 때만 중첩 경로를 선택하세요.</p><p class="muted">위치는 템플릿에 지정된 정보입니다. 실제 원본 대상은 생성 단계에서 확인합니다. 문단 경로와 글 위치는 0부터 셉니다.</p><div class="grid-scroll"><table id="mapping-table" aria-label="원본 데이터 연결과 적용 위치"><thead><tr><th scope="col">템플릿 항목</th><th scope="col">데이터 연결</th><th scope="col">현재 값 / 상태</th><th scope="col">적용 위치</th></tr></thead><tbody id="mapping-rows"><tr><td colspan="4" class="empty">템플릿과 데이터를 올린 뒤 연결표 확인을 누르세요.</td></tr></tbody></table></div><datalist id="columns"></datalist><div class="actions"><button id="update" class="primary" type="button" disabled>연결을 확인하고 새 판으로 보관</button><button id="export" type="button" disabled>새 템플릿 JSON 내려받기</button></div><p id="revision-note" class="muted">파일은 현재 화면에서 다룹니다. 업로드한 템플릿 파일은 덮어쓰지 않습니다.</p></section>
+<aside class="quick-right">
+<section><h2>현재 데이터의 원본 열</h2><p class="muted">열 이름을 클릭해 자동 변경하지 않습니다. 연결표에서 직접 확인·수정하세요.</p><div id="column-list"></div></section>
+<section><h2>변경 범위</h2><p id="mapping-note" class="muted">연결을 수정하면 현재 값은 다시 확인해야 합니다.</p><p>이 화면은 템플릿의 데이터 연결만 바꿉니다. 원본 데이터 값·공용 블록·이번 건 수정은 바꾸지 않습니다.</p><p class="muted">SQLite 자동 연결, 이번 건 값 정정, 문서 생성은 이 화면의 범위가 아닙니다. 새 연결의 파일 저장과 재사용부터 확인하세요.</p></section>
+</aside>
+</main>
+<script type="module" src="/mapping.js"></script>
+</body></html>
