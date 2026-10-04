@@ -10,7 +10,7 @@ import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { run } from "../src/cli.ts";
 import { extractFragment, listFields, openPackage, parseDocument, readArchive, readEntry, serializeFragment, validateDocument } from "../../../packages/hwpx-engine/src/index.ts";
-import { parseSynthetic } from "../../../packages/hwpx-engine/test/helpers.ts";
+import { buildHwpx, parseSynthetic } from "../../../packages/hwpx-engine/test/helpers.ts";
 
 const FIXTURES = fileURLToPath(new URL("../../../packages/hwpx-engine/test/fixtures/", import.meta.url));
 const MAIN = fileURLToPath(new URL("../src/main.ts", import.meta.url));
@@ -67,6 +67,27 @@ test("G5 inspect: 요약(텍스트·--json)과 --model 저장, 종료 코드 0",
   // 있는 파일은 --overwrite 없이는 덮어쓰지 않는다
   assert.equal((await cli("inspect", p("hancom-ph-single.hwpx"), "--model", model)).code, 2);
   assert.equal((await cli("inspect", p("hancom-ph-single.hwpx"), "--model", model, "--overwrite")).code, 0);
+});
+
+test("inspect: 필드 종류는 대소문자를 무시하고(click_here → CLICK_HERE), type 없는 필드 수(fieldsWithoutType)를 낸다(이슈 #12)", async () => {
+  const field = (id: number, attrs: string): string =>
+    `<hp:ctrl><hp:fieldBegin id="${id}" ${attrs} fieldid="1"/></hp:ctrl><hp:t>안내</hp:t><hp:ctrl><hp:fieldEnd beginIDRef="${id}" fieldid="1"/></hp:ctrl>`;
+  const body = field(1, 'type="click_here" name="가"') + field(2, 'name="나"') + field(3, 'type="" name="다"') + field(4, 'type="Date" name="라"');
+  writeFileSync(p("field-types.hwpx"), buildHwpx([`<hp:p id="1" paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0">${body}</hp:run></hp:p>`]));
+  const r = await cli("inspect", p("field-types.hwpx"), "--json");
+  assert.equal(r.code, 0, r.err);
+  const summary = JSON.parse(r.out) as { fields: { name: string; type: string }[]; fieldsWithoutType: number };
+  assert.deepEqual(summary.fields.map((f) => [f.name, f.type]), [["가", "CLICK_HERE"], ["나", "UNKNOWN"], ["다", "UNKNOWN"], ["라", "Date"]]);
+  assert.equal(summary.fieldsWithoutType, 2);
+  const text = await cli("inspect", p("field-types.hwpx"));
+  assert.equal(text.code, 0, text.err);
+  assert.match(text.out, /누름틀·필드 4개\(type 없음 2개는 자리로 세지 않음\)/);
+  assert.match(text.out, /\[누름틀\] 가\[0\]/);
+  assert.match(text.out, /\[type 없음\] 나\[0\]/);
+  // type 없는 필드가 없으면 수는 0이고 글에는 덧붙이지 않는다
+  const plain = await cli("inspect", p("hancom-field-states.hwpx"), "--json");
+  assert.equal((JSON.parse(plain.out) as { fieldsWithoutType: number }).fieldsWithoutType, 0);
+  assert.doesNotMatch((await cli("inspect", p("hancom-field-states.hwpx"))).out, /type 없음/);
 });
 
 test("G5 candidates: 후보 자리 목록(텍스트·--json), 종료 코드 0", async () => {

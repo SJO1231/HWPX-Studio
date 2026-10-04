@@ -40,6 +40,23 @@ function intAttr(el: XElement | undefined, name: string, fallback: number): numb
   return Number(v);
 }
 
+/** 엔진이 종류로 가리는 필드 `type` 값(대문자로 바꾼 값 → 종류). 한컴은 대문자로 쓰지만 다른 도구 산출물은 소문자·밑줄 없는 꼴을 쓸 수 있다. */
+const FIELD_TYPES = new Map([
+  ["CLICK_HERE", "CLICK_HERE"],
+  ["CLICKHERE", "CLICK_HERE"],
+  ["MAILMERGE", "MAILMERGE"],
+  ["HYPERLINK", "HYPERLINK"],
+]);
+
+/**
+ * 필드 시작 요소(`fieldBegin`)의 `type` 속성 값으로 정한 종류. 위 목록의 것은 대소문자를 무시해 그 종류로(`click_here`·`clickhere` → `CLICK_HERE`,
+ * `mailmerge` → `MAILMERGE`), 목록 밖의 값은 그대로, 속성이 없거나 비면 `UNKNOWN`이다.
+ */
+export function fieldTypeOf(type: string | undefined): string {
+  if (type === undefined || type === "") return "UNKNOWN";
+  return FIELD_TYPES.get(type.toUpperCase()) ?? type;
+}
+
 /** 메일 머지 필드 시작 요소(`fieldBegin`)의 키: `parameters`의 `stringParam name="FieldValue"` 글. 없거나 비면 undefined. */
 function mergeKeyOf(begin: XElement): string | undefined {
   const parameters = childEl(begin, "paragraph", "parameters");
@@ -176,7 +193,7 @@ export function parseParagraph(element: XElement, path: number[]): ParagraphNode
           if (name !== undefined) mark.name = name;
           if (type !== undefined) mark.type = type;
           if (dirty !== undefined) mark.dirty = dirty;
-          const mergeKey = type === "MAILMERGE" ? mergeKeyOf(c) : undefined;
+          const mergeKey = fieldTypeOf(type) === "MAILMERGE" ? mergeKeyOf(c) : undefined;
           if (mergeKey !== undefined) mark.mergeKey = mergeKey;
           fieldMarks.push(mark);
         } else if (elIs(c, "paragraph", "fieldEnd")) {

@@ -1,6 +1,6 @@
 import { HwpxError } from "../errors.ts";
 import { listFields } from "../model/fields.ts";
-import { walkParagraphs } from "../model/paragraph.ts";
+import { fieldTypeOf, walkParagraphs } from "../model/paragraph.ts";
 import type { Bookmark, FieldInfo, FieldMark, FieldShape, HwpxDocument, ParagraphNode, RunNode, SectionModel } from "../model/types.ts";
 import { declsOf, wrapXml } from "../table/wrap.ts";
 import { attrNode, elIs, walkElements } from "../xml/tree.ts";
@@ -46,7 +46,7 @@ export function collectFields(doc: HwpxDocument): FieldTarget[] {
     const key = `${info.sectionIndex}:${info.path.join(".")}`;
     const nth = perParagraph.get(key) ?? 0;
     perParagraph.set(key, nth + 1);
-    const begin = paragraph.fieldMarks.filter((m) => m.kind === "begin" && (m.type ?? "") !== "HYPERLINK")[nth];
+    const begin = paragraph.fieldMarks.filter((m) => m.kind === "begin" && fieldTypeOf(m.type) !== "HYPERLINK")[nth];
     if (begin === undefined || (begin.name ?? "") !== info.name) continue;
     const from = paragraph.fieldMarks.indexOf(begin);
     let endParagraph: ParagraphNode | null = null;
@@ -299,7 +299,7 @@ function planSpanFill(ctx: Ctx, target: FieldTarget, endParagraph: ParagraphNode
   if (endParagraph !== par) {
     // 구간 안에 통째로 든 누름틀·메일 머지 필드가 아닌 필드와 책갈피(`fieldFillBlock`이 짝이 끊기는 필드를 이미 거른다)
     for (const m of marksBetween(section, beginPiece.end, endPiece.start)) {
-      if (m.kind === "begin" && m.type !== "CLICK_HERE" && m.type !== "MAILMERGE") removed.push({ kind: "field", name: m.name !== undefined && m.name !== "" ? m.name : (m.type ?? "") });
+      if (m.kind === "begin" && !["CLICK_HERE", "MAILMERGE"].includes(fieldTypeOf(m.type))) removed.push({ kind: "field", name: m.name !== undefined && m.name !== "" ? m.name : (m.type ?? "") });
     }
     for (const b of bookmarksOf(section)) if (b.element.start >= beginPiece.end && b.element.end <= endPiece.start) removed.push({ kind: "bookmark", name: b.name });
   }
