@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { stripTypeScriptTypes } from 'node:module';
 import { cleanPath, resolveShared, HostError } from '../../../packages/viewer/src/host/index.ts';
 import { createQuick } from './quick-api.ts';
+import { createLibrary } from './library.ts';
 import { plainOf } from './quick-messages.ts';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, mkdirSync } from 'node:fs';
@@ -20,6 +21,7 @@ export function createApp(database=':memory:') {
   db.exec('CREATE TABLE IF NOT EXISTS project_revision (id INTEGER PRIMARY KEY, name TEXT NOT NULL, document TEXT NOT NULL, saved_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)');
   const g2b=createG2B(db);
   const quick=createQuick();
+  const library=createLibrary(db);
   const server=createServer(async(req,res)=>{
     const send=(status:number,body:unknown,type='application/json; charset=utf-8',headers:Record<string,string>={})=>{
       const data=body instanceof Uint8Array ? body : type.startsWith('application/json') ? JSON.stringify(body) : String(body);
@@ -34,6 +36,23 @@ export function createApp(database=':memory:') {
       if(req.method==='GET') {
         const result=quick.get(path,url.searchParams);
         if(result)return send(200,result.body,'application/vnd.hancom.hwpx',result.name?{'Content-Disposition':`attachment; filename="document.hwpx"; filename*=UTF-8''${encodeURIComponent(result.name)}`}:{});
+        if(path==='/api/library/generations')return send(200,library.generations());
+        if(path==='/api/library/generation') {
+          const saved=library.generation(Number(url.searchParams.get('id')));
+          if(url.searchParams.get('output')==='1')return send(200,saved.output,saved.kind==='md'?'text/markdown; charset=utf-8':'application/vnd.hancom.hwpx',{'Content-Disposition':`attachment; filename="document.${saved.kind==='md'?'md':'hwpx'}"`});
+          const {output,...metadata}=saved;return send(200,metadata);
+        }
+        if(path==='/api/library/cases')return send(200,library.cases());
+        if(path==='/api/library/case')return send(200,library.case(Number(url.searchParams.get('id'))));
+        if(path==='/api/library/templates')return send(200,library.templates());
+        if(path==='/api/library/datasets')return send(200,library.datasets());
+        if(path==='/api/library/template')return send(200,library.template(url.searchParams.get('id')??'',Number(url.searchParams.get('version'))));
+        if(path==='/api/library/dataset') {
+          const d=library.dataset(url.searchParams.get('id')??'',Number(url.searchParams.get('version')));
+          return send(200,{id:d.id,version:d.version,name:d.name,document:d.document,sha:d.sha,records:d.records.length});
+        }
+        if(path==='/api/library/source')return send(200,library.source(url.searchParams.get('id')??'',Number(url.searchParams.get('version'))),'application/octet-stream');
+        if(path==='/api/library/preview')return send(200,library.preview(url.searchParams.get('id')??'',Number(url.searchParams.get('version')),url.searchParams.get('dataset')??'',Number(url.searchParams.get('dataVersion')),Number(url.searchParams.get('row')),url.searchParams.has('case')?Number(url.searchParams.get('case')):undefined));
         if(path==='/api/health')return send(200,{ok:true});
         if(path==='/api/g2b/profiles')return send(200,{profiles:g2b.profiles()});
         if(path==='/api/projects')return send(200,db.prepare('SELECT name, MAX(id) AS id, MAX(saved_at) AS saved_at FROM project_revision GROUP BY name ORDER BY id DESC').all());
@@ -43,7 +62,7 @@ export function createApp(database=':memory:') {
         }
         if(path==='/api/demo')return send(200,demo());
         if(path==='/api/demo-sources')return send(200,demoSources);
-        const files:Record<string,string>={'/':'web/quick.html','/template':'web/index.html','/quick.js':'web/quick.js','/quick.css':'web/quick.css','/app.js':'web/app.js','/style.css':'web/style.css','/rhwp.js':'vendor/rhwp/rhwp.js','/rhwp_bg.wasm':'vendor/rhwp/rhwp_bg.wasm'};
+        const files:Record<string,string>={'/':'web/quick.html','/template':'web/index.html','/quick.js':'web/quick.js','/quick.css':'web/quick.css','/library':'web/library.html','/library.js':'web/library.js','/app.js':'web/app.js','/style.css':'web/style.css','/rhwp.js':'vendor/rhwp/rhwp.js','/rhwp_bg.wasm':'vendor/rhwp/rhwp_bg.wasm'};
         const shared=cleanPath(path);
         const sharedFile=shared===undefined?undefined:resolveShared(shared);
         if(sharedFile){
@@ -62,6 +81,20 @@ export function createApp(database=':memory:') {
       const chunks:Buffer[]=[];let size=0;
       for await(const chunk of req){size+=chunk.length;if(size>32*1024*1024)return send(413,{error:'요청은 32MB 이내여야 합니다.'});chunks.push(chunk);}
       const input=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      if(path.startsWith('/api/library/')) {
+        assert(input&&typeof input==='object'&&!Array.isArray(input),'보관함 요청을 확인하세요.');
+        if(path==='/api/library/save')return send(200,library.save(input));
+        if(path==='/api/library/data')return send(200,library.saveDataset(input));
+        if(path==='/api/library/case')return send(200,library.saveCase(input));
+        if(path==='/api/library/generate') {
+          assert(typeof input.id==='string'&&typeof input.dataset==='string','템플릿과 데이터를 선택하세요.');
+          const result=library.generate(input.id,Number(input.version),input.dataset,Number(input.dataVersion),Number(input.row),input.case===undefined?undefined:Number(input.case));
+          if(!result.ok||result.dryRun)return send(422,{error:'선택 또는 연결을 확인한 뒤 다시 생성하세요.',code:result.report.issues.find(i=>i.severity==='error')?.code,report:result.report});
+          const isText=typeof result.output==='string';
+          return send(200,isText?new TextEncoder().encode(result.output as string):result.output,isText?'text/markdown; charset=utf-8':'application/vnd.hancom.hwpx',{'Content-Disposition':`attachment; filename="document.${isText?'md':'hwpx'}"`,'X-Generation-Id':String(result.generationId)});
+        }
+        return send(404,{error:'없는 보관함 요청입니다.'});
+      }
       if(path.startsWith('/api/quick/'))return send(200,quick.post(path,input));
       if(path==='/api/g2b/profiles') {
         if(!req.headers.origin)return send(403,{error:'생성 프로필은 Studio의 Helper 연결 화면에서 설정하세요.'});
