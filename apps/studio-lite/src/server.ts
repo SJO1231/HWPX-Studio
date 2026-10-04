@@ -3,11 +3,12 @@ import { stripTypeScriptTypes } from 'node:module';
 import { cleanPath, resolveShared, HostError } from '../../../packages/viewer/src/host/index.ts';
 import { createQuick } from './quick-api.ts';
 import { plainOf } from './quick-messages.ts';
+import {previewMapping,updateMapping} from './mapping.ts';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve, extname } from 'node:path';
-import { analyze, assert, checkProject, checkRecords, confirmFields, md, parseCsv, parseXlsx, schemaFrom, sourceLines } from './core.ts';
+import { analyze, assert, checkProject, checkRecords, confirmFields, md, parseCsv, importXlsx, listXlsxSheets, schemaFrom, sourceLines } from './core.ts';
 import { applyProject, markdownHwpx } from './hwpx.ts';
 import { demo, demoSources } from './demo.ts';
 import { createG2B, G2BRequestError } from './g2b.ts';
@@ -43,7 +44,7 @@ export function createApp(database=':memory:') {
         }
         if(path==='/api/demo')return send(200,demo());
         if(path==='/api/demo-sources')return send(200,demoSources);
-        const files:Record<string,string>={'/':'web/quick.html','/template':'web/index.html','/quick.js':'web/quick.js','/quick.css':'web/quick.css','/app.js':'web/app.js','/style.css':'web/style.css','/rhwp.js':'vendor/rhwp/rhwp.js','/rhwp_bg.wasm':'vendor/rhwp/rhwp_bg.wasm'};
+        const files:Record<string,string>={'/':'web/quick.html','/mapping':'web/mapping.html','/mapping.js':'web/mapping.js','/template':'web/index.html','/quick.js':'web/quick.js','/quick.css':'web/quick.css','/app.js':'web/app.js','/style.css':'web/style.css','/rhwp.js':'vendor/rhwp/rhwp.js','/rhwp_bg.wasm':'vendor/rhwp/rhwp_bg.wasm'};
         const shared=cleanPath(path);
         const sharedFile=shared===undefined?undefined:resolveShared(shared);
         if(sharedFile){
@@ -62,15 +63,26 @@ export function createApp(database=':memory:') {
       const chunks:Buffer[]=[];let size=0;
       for await(const chunk of req){size+=chunk.length;if(size>32*1024*1024)return send(413,{error:'요청은 32MB 이내여야 합니다.'});chunks.push(chunk);}
       const input=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      if(path.startsWith('/api/mapping/')) {
+        assert(input&&typeof input==='object'&&!Array.isArray(input),'연결 입력을 확인하세요.');
+        if(path==='/api/mapping/preview')return send(200,previewMapping(input));
+        if(path==='/api/mapping/update')return send(200,updateMapping(input));
+        return send(404,{error:'없는 연결 요청입니다.'});
+      }
       if(path.startsWith('/api/quick/'))return send(200,quick.post(path,input));
       if(path==='/api/g2b/profiles') {
         if(!req.headers.origin)return send(403,{error:'생성 프로필은 Studio의 Helper 연결 화면에서 설정하세요.'});
         return send(200,{profile:g2b.saveProfile(input)});
       }
       if(path==='/api/g2b/generate')return send(200,await g2b.generate(input));
+      if(path==='/api/xlsx-sheets') {
+        assert(typeof input.content==='string'&&typeof input.name==='string'&&/\.xlsx$/i.test(input.name),'Excel 파일을 선택하세요.');
+        return send(200,{sheets:listXlsxSheets(Buffer.from(input.content,'base64'))});
+      }
       if(path==='/api/import-data') {
         assert(typeof input.content==='string' && typeof input.name==='string','파일 형식을 확인하세요.');
-        const records=/\.xlsx$/i.test(input.name)?parseXlsx(Buffer.from(input.content,'base64')):/\.csv$/i.test(input.name)?parseCsv(input.content):JSON.parse(input.content);
+        if(/\.xlsx$/i.test(input.name))return send(200,importXlsx(Buffer.from(input.content,'base64'),input.sheetIndex));
+        const records=/\.csv$/i.test(input.name)?parseCsv(input.content):JSON.parse(input.content);
         checkRecords(records);return send(200,{records});
       }
       if(path==='/api/demo-native') {
