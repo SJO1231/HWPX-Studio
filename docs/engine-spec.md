@@ -713,7 +713,7 @@ type InsertPoint = { sectionIndex: number; parentPath: number[]; index: number; 
 - 쓰임: 자리 목록·화면의 후보 제목 표시(#5), 같은 유형 일괄 제안(#20의 `suggestSimilar`가 `body` 패턴의 범위 계산에 `headingRangeOf`를 쓴다), 공용 블록의 슬롯 앵커(#21).
 - 수용(검증 기준 23절): 합성 문서에서 꼴 11종·다단·표 안 제목 탐지 100%와 범위 경계(다음 제목·부모 끝·표 포함) 일치, 흔한 위계 `1. > 가. > 1) > 가) > (1) > (가) > ① > □ > ○ > -`가 모두 다른 단계, 실제 공고서(16건)에서 번호 글자로 시작하는 문단의 탐지율 문서별 70% 이상과 제목 사이 범위 조각 교체 게이트 통과(17절의 30/30 유지), 원본에 앞 문단 삽입·제목 글 변경·범위 글 변경 뒤 relocated·notFound·changed 판정, `range` 앵커와의 결과 바이트 동일, 결정성. CLI `hwpx headings <파일> [--json]`이 탐지 결과를 낸다(8.4).
 
-**패턴** (#20) **[계약]** **[미구현]**
+**패턴** (#20) **[계약]** **[구현 #20]**
 
 같은 유형 항목(예: 같은 단계의 제목)을 한꺼번에 제안하는 도구다. 패턴은 앵커를 만들지 않는다. 사용자가 확인한 제안만 앵커가 된다.
 
@@ -724,12 +724,13 @@ type InsertPoint = { sectionIndex: number; parentPath: number[]; index: number; 
 | `char` | `{ bold, height, print }`. 굵기, 글자 크기(HWPUNIT), 글자모양 지문(7.4) |
 | `para` | `{ print, align }`. 문단모양 지문, 정렬 |
 | `place` | `body`(본문 문단), `cell`(표 셀 안 문단), `labelCell`(짧은 글 라벨 셀), `labelColon`(`라벨:` 꼴 글). 제안은 같은 `place`에서만 한다. 라벨 규칙은 8.3의 후보 자리와 같다 |
-| `match[]` | 일치 판정에 쓰는 항목: `marker`·`bold`·`height`·`print`(글자모양 지문)·`paraPrint`(문단모양 지문)·`align`. `marker`는 항상 포함(끌 수 없음). 기본은 `marker`·`bold`·`height`·`print`가 켬이고 `paraPrint`·`align`은 끔. 켜고 끄는 것은 사용자(화면) 몫이고 엔진은 `match`대로만 판정한다 |
+| `match[]` | 일치 판정에 쓰는 항목: `marker`·`bold`·`height`·`print`(글자모양 지문)·`paraPrint`(문단모양 지문)·`align`. `marker`는 항상 포함(끌 수 없음). 기본은 `marker`·`bold`·`height`가 켬이고 `print`·`paraPrint`·`align`은 끔(실제 공고서에서 글자모양 지문은 같은 단계 제목의 대부분을 걸러 내므로 사용자가 켤 때만 쓴다. 2026-10-04 #20). 켜고 끄는 것은 사용자(화면) 몫이고 엔진은 `match`대로만 판정한다 |
 | `rejected[]` | 사용자가 해제한 제안의 위치 지문 `{ text, sha256 }`(첫 문단 글 앞 40자와 글 해시). 다시 제안하지 않는다. 판정은 글 해시로 하므로 같은 글은 함께 제외된다 |
 
-- `patternOf(doc, at): Pattern`: 문단 하나(`at`은 `line` 앵커의 주소꼴)에서 패턴을 만든다. 번호 글자는 문단 글의 머리에서 읽고, 굵기·크기·글자모양 지문은 첫 글 run에서, 문단모양 지문·정렬은 문단에서 읽는다. `id`·`name`·`rejected`는 호출자가 채운다.
-- `suggestSimilar(doc, pattern): DraftedAnchor[]`: `match`의 켠 항목이 모두 같은 문단을 같은 `place`에서 찾는다. 결과는 앵커 초안(`draftAnchors`와 같은 꼴, id 없음)이고 문서 순서로 결정적이다. `body` 패턴은 `range` 초안(범위 계산은 #19의 제목 탐지 규칙), 그 밖은 그 문단·셀을 가리키는 `line`·`cell` 초안이다. 이미 `anchors[]`에 든 범위와 `rejected`에 든 위치는 뺀다. 제안은 저장하지 않는다.
+- `patternOf(doc, at, opts?): Pattern | undefined`: 문단 하나(`at`은 `line` 앵커의 주소꼴 `{ sectionIndex, path }`)에서 패턴을 만든다. `marker`는 `detectHeadings`(위 `headingRange`)의 같은 판독·단계 규칙으로 읽고(`opts.order` 적용), 제목으로 탐지되지 않는 문단(번호 글자 없음·굵지 않음·문장 끝맺음·41자 이상)은 `{ form: "none", level: 0 }`이다(`level` 0은 "제목 아님". 굵은 짧은 글 제목 `none`·1단계 이상과 섞이지 않고, 목록이 달라도 라벨 패턴이 서로 맞는다). 라벨 자리(`labelCell`·`labelColon`)에서는 번호 글자 없는 문단이 굵고 짧아 `none` 제목으로 탐지되더라도 `{ none, 0 }`으로 본다(목록마다 다른 단계가 되어 라벨끼리 맞지 않는 것을 막는다). 기본 `match`는 `marker`·`bold`·`height`다. 굵기·크기·글자모양 지문은 공백 아닌 첫 글 run에서, 문단모양 지문·정렬은 문단에서 읽는다. `place`는 문단의 위치로 정한다(최상위와 표 칸이 아닌 하위 목록(머리말·글상자) → `body`, 표 칸 안 → 그 칸이 8.3의 라벨 셀 규칙에 맞으면 `labelCell`, 아니면 `cell`; 글이 `라벨:` 꼴이면 `labelColon`이 `body`·`cell`보다 앞선다).  문단이 없으면 `undefined`. `id`·`name`·`rejected`는 호출자가 채운다(`id`·`name`은 빈 글로 돌려준다). 패턴에는 만든 문단의 주소가 없으므로(2판 스키마는 모르는 키를 거절) 자신을 제외하려면 `suggestSimilar`의 `opts.origin`에 그 주소를 준다.
+- `suggestSimilar(doc, pattern, opts?): Suggestion[]`: `match`의 켠 항목이 모두 같은 문단을 같은 `place`에서 찾는다(`marker`는 form·level 모두 같아야 하고, `height`는 같은 값, `print`·`paraPrint`는 지문 일치, `align`은 같은 값). 결과는 문서 순서로 결정적이다. `Suggestion = { at: { sectionIndex, path }, text(앞 40자), sha256, draft }`이고 `draft`는 앵커 초안(id 없음): `body` 패턴은 `headingRange` 초안(`makeHeadingRangeAnchor`. 제목으로 탐지되지 않는 `none` 문단은 `line` 초안), `cell`은 그 칸의 `cell` 초안(지문 포함. 한 칸에서 여러 문단이 맞으면 첫 문단 하나만. 첫 문단이 해제·제외되거나 `origin`이 그 칸이면 칸 전체가 빠진다), `labelCell`은 라벨 칸의 **오른쪽 값 칸**(8.3 `emptyCell` 규칙. 없으면 제안하지 않음)의 `cell` 초안(값 칸을 가리키는 cell 앵커가 `exclude`에 있으면 그 라벨도 빠진다), `labelColon`은 쌍점 뒤 공백 구간의 `word` 초안(뒤에 글자가 없으면 `line`. 판정 규칙은 8.3 후보 자리와 같고 초안 종류는 다르다), 그 밖은 `line` 초안. 중첩 표(최상위 표 안의 표)의 칸은 `cell` 앵커가 없으므로 `line` 초안이고, 라벨 칸이면 값 칸 첫 문단의 `line` 초안을 하나만 낸다. `opts.exclude`(이미 `anchors[]`에 든 앵커 배열. 앵커에 적힌 주소를 그대로 쓰며 `headingRange`는 `index`~`index+count−1`, `range`·`cell`은 그 목록의 문단만, `field`·`mergeField`·`object`는 무시)가 가리키는 문단·범위, `pattern.rejected`의 글 해시가 맞는 문단(복제 포함), `opts.origin` 문단은 뺀다. `opts.order`는 단계 계산과 `headingRange` 초안의 `order`에 쓴다. 제안은 저장하지 않는다.
 - 확인한 제안만 id를 받아 `anchors[]`에 들어가고, 그 앵커의 `pattern`이 패턴 id를 가진다. 패턴은 1차에서 템플릿 안(`patterns[]`)에만 둔다(템플릿 사이 공유는 뒤로 미룬다).
+- `rejectSuggestion(pattern, suggestion): Pattern`은 `rejected`에 `{ text, sha256 }`을 더한 새 패턴을 돌려준다(입력 불변. 같은 해시가 이미 있으면 그대로). 수용(검증 기준 24절): 합성 문서에서 같은 꼴·단계·굵기의 제목만 제안되고 다른 단계·굵기 다름·`rejected`·`exclude`·자신은 빠짐, `match` 항목을 끄고 켤 때 결과 변화, 결정성, 실제 공고서(16건)에서 제목 하나를 고른 뒤 제안 수가 같은 꼴·단계의 제목 수와 같고 `rejected` 뒤 나머지 유지, 제안을 `redraftAnchor`/`anchors[]`에 넣어 2판 왕복.
 - 원본이 바뀌어 앵커를 다시 지정할 때도 같은 패턴의 후보를 보이는 데 쓴다(8.8.13).
 
 **`cell`·`object` 선택 지문** **[계약]** **[구현 #30]**
