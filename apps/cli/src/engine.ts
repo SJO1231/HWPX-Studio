@@ -18,6 +18,7 @@ export {
 export {
   generate,
   generateBatch,
+  generateFromTemplate,
   planBatchNames,
   findCandidates,
   compileDocument,
@@ -28,9 +29,12 @@ export {
   type GateMode,
   type GenerateResult,
   type MergeFieldsMode,
+  type StudioGenerateResult,
 } from "../../../packages/hwpx-engine/src/fill/index.ts";
 export {
   readTemplate,
+  readStudioTemplate,
+  readCase,
   readDataset,
   readBatchRecords,
   emptyTemplate,

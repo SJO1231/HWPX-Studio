@@ -15,7 +15,7 @@ const TABLE: Readonly<Record<string, string>> = {
   QUICK_NO_RECORDS: "데이터에 만들 건이 없습니다(빈 배열입니다).",
   QUICK_TOO_MANY_RECORDS: "한 번에 만들 수 있는 건수를 넘었습니다. 데이터를 나누어 올려 주세요.",
   QUICK_NO_DATA: "데이터를 먼저 올려 주세요.",
-  QUICK_TOO_LARGE: "결과가 너무 커서 한 번에 만들 수 없습니다. 건수를 줄여 다시 시도해 주세요.",
+  QUICK_TOO_LARGE: "결과 용량 한도를 넘어 이 건부터 만들지 않았습니다. 앞서 성공한 결과는 내려받을 수 있습니다. 나머지는 나누어 다시 시도해 주세요.",
   QUICK_MULTILINE: "값에 줄바꿈·탭이 있어 문단을 나누지 않고 같은 문단 안의 줄바꿈·탭으로 넣었습니다.",
   QUICK_GENERATE_FAILED: "문서를 만들지 못했습니다.",
   QUICK_RESULT_NOT_FOUND: "그 결과가 없습니다(실패한 건은 파일이 없습니다).",

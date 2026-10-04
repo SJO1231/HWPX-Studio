@@ -1,4 +1,4 @@
-import { existsSync, rmSync, statSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { flag, intValue, need, parse, parseAddress, str, type Parsed } from "./args.ts";
@@ -15,6 +15,7 @@ import {
   fragmentPaths,
   generate,
   generateBatch,
+  generateFromTemplate,
   generateText,
   listFields,
   listTables,
@@ -26,8 +27,10 @@ import {
   planBatchNames,
   readArchive,
   readBatchRecords,
+  readCase,
   readDataset,
   readEntry,
+  readStudioTemplate,
   readTemplate,
   serializeFragment,
   validateDocument,
@@ -40,6 +43,7 @@ import {
   type Issue,
   type MergeFieldsMode,
   type MissingPolicy,
+  type StudioGenerateResult,
   type TextKind,
   type TextResult,
 } from "./engine.ts";
@@ -423,11 +427,18 @@ export async function fill(args: string[], out: Out): Promise<number> {
       "fill-in-code": { type: "boolean" },
       batch: { type: "boolean" },
       name: { type: "string" },
+      case: { type: "string" },
+      blobs: { type: "string" },
     },
     { min: 1, max: 1 },
     usage,
   );
   const file = p.positionals[0] ?? "";
+  const templatePath = str(p, "template");
+  // 2판 템플릿(template@2)이면 2단계 생성으로 간다. 1판(@1)·읽을 수 없는 파일은 아래 기존 경로가 그대로 처리한다
+  const studioText = templatePath === undefined ? undefined : studioTemplateText(templatePath);
+  if (templatePath !== undefined && studioText !== undefined) return fillStudio(p, file, templatePath, studioText, out);
+  if (str(p, "case") !== undefined || str(p, "blobs") !== undefined) throw new UsageError(`--case·--blobs는 2판 템플릿(hwpx-studio/template@2)에만 씁니다.\n사용법: ${usage}`);
   const dryRun = flag(p, "dry-run");
   const overwrite = flag(p, "overwrite");
   const textKind = textKindOf(file);
@@ -454,7 +465,6 @@ export async function fill(args: string[], out: Out): Promise<number> {
   if (missingText !== undefined && missingText !== "error" && missingText !== "empty" && missingText !== "keep") {
     throw new UsageError(`--missing은 error·empty·keep 가운데 하나여야 합니다: ${missingText}`);
   }
-  const templatePath = str(p, "template");
   const reportPath = str(p, "report");
   const inputs = [file, dataPath, ...(templatePath === undefined ? [] : [templatePath])];
   if (output !== undefined && !batch) checkOutputPath(output, inputs, overwrite);
@@ -489,6 +499,100 @@ export async function fill(args: string[], out: Out): Promise<number> {
   }
   const result = await runGenerate(file, readBytes(file, "입력 파일"), template, dataset, { mode, dryRun, fragments, reissueInternal: flag(p, "reissue-internal"), ...missing });
   return finishGenerate(out, result, output, allInputs, overwrite, reportPath);
+}
+
+/** 템플릿 파일이 2판 이상(`hwpx-studio/template@N`, N ≠ 1)이면 그 글. 읽을 수 없거나 JSON이 아니거나 1판이면 undefined(기존 경로가 처리한다) */
+function studioTemplateText(path: string): string | undefined {
+  let text: string;
+  let raw: unknown;
+  try {
+    text = readFileSync(path, "utf8");
+    raw = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  const schema = typeof raw === "object" && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>)["schema"] : undefined;
+  const m = typeof schema === "string" ? /^hwpx-studio\/template@(\d+)$/.exec(schema) : null;
+  return m !== null && m[1] !== "1" ? text : undefined;
+}
+
+/**
+ * `fill --template t2.json`: 2판 템플릿의 2단계 생성(엔진 `generateFromTemplate`, 명세 8.8.12·8.4). 데이터는 한 건(객체)이고, `--case`는 이번 건,
+ * `--blobs`는 조각 덩어리를 `<sha256>.json`으로 담은 폴더다(받은 바이트의 해시는 엔진이 대조한다). 덩어리 파일도 입력이라 출력 경로로 덮어쓸 수 없다.
+ * 앱과 같은 함수를 같은 인자로 부르므로 같은 바이트를 낸다. 종료 코드: 0 성공, 1 생성·게이트 실패, 2 사용법·읽을 수 없는 입력.
+ */
+function fillStudio(p: Parsed, file: string, templatePath: string, templateText: string, out: Out): number {
+  const usage = "hwpx fill <파일.hwpx|.md> --template t2.json --data 한건.json [--case c.json] [--blobs 폴더] -o 출력 [--dry-run] [--report r.json] [--overwrite]";
+  for (const name of ["batch", "name", "mode", "missing", "reissue-internal", "fill-in-code"]) {
+    if (p.values[name] !== undefined) throw new UsageError(`--${name}은(는) 2판 템플릿(template@2)과 함께 쓸 수 없습니다.\n사용법: ${usage}`);
+  }
+  if (!/\.(hwpx|md)$/i.test(file)) throw new UsageError(`2판 템플릿의 원본은 .hwpx나 .md 파일입니다: ${file}\n사용법: ${usage}`);
+  const dryRun = flag(p, "dry-run");
+  const overwrite = flag(p, "overwrite");
+  const dataPath = need(p, "data", usage);
+  const output = str(p, "output");
+  if (output === undefined && !dryRun) throw new UsageError(`-o 출력 경로가 필요합니다(모의 실행은 --dry-run).\n사용법: ${usage}`);
+  const casePath = str(p, "case");
+  const blobDir = str(p, "blobs");
+  const reportPath = str(p, "report");
+  if (blobDir !== undefined && !(existsSync(resolve(blobDir)) && statSync(resolve(blobDir)).isDirectory())) throw new UsageError(`--blobs 폴더가 없습니다: ${blobDir}`);
+  /** 덩어리 파일 경로(없으면 undefined) */
+  const blobFile = (sha: string): string | undefined => {
+    const f = blobDir === undefined ? undefined : join(blobDir, `${sha}.json`);
+    return f !== undefined && existsSync(f) && statSync(f).isFile() ? f : undefined;
+  };
+  const read = guard(() => readStudioTemplate(templateText, { hasBlob: (sha) => blobFile(sha) !== undefined }), templatePath);
+  if (read.schema !== "hwpx-studio/template@2") throw new InputError(`${templatePath}: 2판 템플릿이 아닙니다.`);
+  const t = read;
+  const dataText = readText(dataPath, "데이터 파일");
+  if (guard(() => readBatchRecords(dataText), dataPath) !== undefined) throw new UsageError(`2판 템플릿은 데이터 한 건(JSON 객체)만 받습니다(--batch는 쓸 수 없습니다): ${dataPath}\n사용법: ${usage}`);
+  const record = guard(() => readDataset(dataText), dataPath).data;
+  const c = casePath === undefined ? undefined : guard(() => readCase(readText(casePath, "이번 건 파일"), t), casePath);
+  const hashes = new Set([...t.blocks.map((b) => b.content), ...Object.values(c?.blockEdits ?? {})].flatMap((x) => ("fragment" in x ? [x.fragment] : [])));
+  const blobFiles = [...hashes].flatMap((sha) => blobFile(sha) ?? []);
+  const inputs = [file, dataPath, templatePath, ...(casePath === undefined ? [] : [casePath]), ...blobFiles];
+  if (output !== undefined) checkOutputPath(output, inputs, overwrite);
+  if (reportPath !== undefined) checkOutputPath(reportPath, [...inputs, ...(output === undefined ? [] : [output])], overwrite);
+
+  const bytes = readBytes(file, "입력 파일");
+  const loadBlob = (sha: string): Uint8Array | undefined => {
+    const f = blobFile(sha);
+    return f === undefined ? undefined : readBytes(f, "조각 덩어리");
+  };
+  let result: StudioGenerateResult;
+  try {
+    result = generateFromTemplate(bytes, t, record, c, loadBlob, { dryRun });
+  } catch (e) {
+    if (e instanceof HwpxError) throw new InputError(`입력 파일을 처리할 수 없습니다: ${file} (${e.code}: ${e.message})`);
+    throw e;
+  }
+  if (reportPath !== undefined) {
+    const body = { ok: result.ok, dryRun: result.ok ? result.dryRun : false, report: result.report, ...("ledger" in result && result.ledger !== undefined ? { ledger: result.ledger } : {}) };
+    writeSafely(reportPath, json(body), inputs, overwrite);
+  }
+  printStudio(out, result);
+  if (!result.ok) {
+    out.err("검증을 통과하지 못해 출력 파일을 만들지 않았습니다.");
+    return 1;
+  }
+  if (result.dryRun) return 0;
+  if (output === undefined) throw new UsageError("-o 출력 경로가 필요합니다.");
+  writeSafely(output, result.output, inputs, overwrite);
+  out.log(`저장했습니다: ${output} (${typeof result.output === "string" ? Buffer.byteLength(result.output) : result.output.length}바이트)`);
+  return 0;
+}
+
+/** 2판 생성 결과를 사람이 읽을 글로 출력한다(값 원문은 없다). */
+function printStudio(out: Out, result: StudioGenerateResult): void {
+  const r = result.report;
+  out.log(`2판 템플릿 생성(${r.kind})${r.dryRun ? " (모의 실행)" : ""}`);
+  for (const s of r.selections) out.log(`슬롯 ${s.slot}: ${s.block ?? "-"} (${s.state}${s.differs === true ? ", 조건과 다름" : ""})`);
+  if (r.stage1 !== null) out.log(`1단계(구조): 액션 ${r.stage1.plan.actions.length}개, 이동표 ${r.moves.length}건`);
+  if (r.stage2 !== null) out.log(`2단계(값): 액션 ${r.stage2.plan.actions.length}개, 건너뜀 ${r.skipped.length}, 버림 ${r.stage2.plan.dropped.length}`);
+  for (const d of r.dropped) out.log(`빠진 자리 [${d.code}] ${d.message}`);
+  for (const s of r.skipped) out.log(`건너뜀 [${s.code}] ${s.ruleId} ${s.anchor}: ${s.message}`);
+  if (r.postprocess.unwrapped > 0 || r.postprocess.preview) out.log(`후처리: 필드 표식 풀기 ${r.postprocess.unwrapped}개, 미리보기 글 ${r.postprocess.preview ? "다시 씀" : "그대로"}`);
+  printIssues(out, r.issues);
 }
 
 /** `--name "{{경로}}"`의 경로. 표기 하나가 글 전체여야 한다(앞뒤 공백은 허용). */

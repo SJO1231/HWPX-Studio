@@ -166,6 +166,8 @@ DataNode     = { part: "data" | "derived", depth, key, path: string | null, type
 
 **호스트 API**: `POST /api/quick/template`(.hwpx → 세션, 자리 목록), `POST /api/quick/data`(.json → 키 목록과 대조표), `POST /api/quick/generate`(`{ missing }` → 건별 결과), `GET /api/quick/result/:id/:index`(내려받기), `POST /api/quick/open-folder`. 세션은 메모리, 개수·바이트 상한. 오류는 `{ error: { code, message, plain } }`. 자리 목록의 누름틀 항목은 `{ name, count, usable, fillable, merging, unfillable: [{ shape, count, reasons? }] }`이다(`fillable`은 엔진이 채울 수 있는 곳 수(`simple`·`empty`·`inline`·건너뛰지 않는 `crossParagraph`), `unfillable`은 `object`·`crossContainer`·`unpaired`·`crossBlocked`(모양은 `crossParagraph`지만 엔진이 건너뛰는 곳. 사유 문구 `reasons`)별 곳 수, `merging`은 채울 수 있는 곳 가운데 `crossParagraph`인 수(채우면 사이 문단이 합쳐짐). 채울 수 있는지는 엔진의 `fieldFillBlock`으로 판정해 생성 결과와 어긋나지 않게 한다. 2026-10-04부터 `inline`·`crossParagraph`는 채울 수 있다. 누름틀(`CLICK_HERE`, 이름)과 키가 있는 메일 머지 필드(`MAILMERGE`, 키)를 센다). 대조표 상태는 `ok | missing | notScalar | rejected | badKey | unfillable`이고, 데이터 응답에는 객체가 아닌 건의 수 `invalidRecords`가 있다(그 건은 건수 판정에서 뺀다). 서버 껍데기의 거절(Host·Origin·크기)도 `plain`을 갖는다(2026-10-03 독립 검증 반영).
 
+**결과 용량**(2026-10-04, #13): 빠른 생성은 건수×원본 크기로 미리 가늠하지 않고, 성공 출력의 실제 바이트 총합이 512 MiB를 넘는 건부터 `QUICK_TOO_LARGE`로 실패시키고 이후 엔진 생성을 중단한다. 앞선 성공 결과와 엔진 실패 보고·파일 이름은 유지되며 내려받을 수 있다. 상한은 보관하는 성공 출력 바이트 합이고, 순간 프로세스 메모리는 보장하지 않는다.
+
 **수용 조건**
 
 | ID | 조건 |

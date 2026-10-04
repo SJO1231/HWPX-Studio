@@ -19,6 +19,7 @@ export { canonicalJson, sha256Hex } from "./hash.ts";
 export * from "./studio-types.ts";
 export { readStudioTemplate, readCase, readBlockProto } from "./studio-read.ts";
 export { writeStudioTemplate, writeCase, writeBlockProto, templateSha256, caseSha256, contentSha256 } from "./studio-write.ts";
+export { canonicalStudioJson } from "./studio-write.ts";
 export { bindValues, type BindOptions } from "./studio-bind.ts";
 export { selectSlots } from "./studio-select.ts";
 export { listProtoUsage, planProtoUpdate } from "./studio-proto.ts";
