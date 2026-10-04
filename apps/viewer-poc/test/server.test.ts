@@ -305,7 +305,7 @@ test("위치 변환: 확인할 런(shown)이 없거나 글이 다르면 문단 �
   }
 });
 
-test("위치 변환: 끌기 범위(같은 문단)는 범위 word 초안, 여러 문단은 받지 않는다", async () => {
+test("위치 변환: 끌기 범위(같은 문단)는 범위 word 초안, 같은 부모의 여러 문단은 문단 범위 range 초안", async () => {
   const session = await openFixture("hancom/ph-single");
   const doc = await viewOf(session);
   try {
@@ -320,11 +320,11 @@ test("위치 변환: 끌기 범위(같은 문단)는 범위 word 초안, 여러 
     // 두 위치를 뒤집어 보내도 같다
     const swapped = await locate(session, { from: to, to: from });
     assert.deepEqual(swapped.range, r.range);
-    // 다른 문단
+    // 다른 문단(둘 다 구역 최상위의 문단 1·2): 문단 범위와 range 초안
     const other = runWith(doc, "기간");
     const far = clickOn(other, "기");
     const multi = await locate(session, { from, to: far });
-    assert.deepEqual([multi.precision, multi.reason], ["none", "RANGE_PARAGRAPHS_DIFFER"]);
+    assert.deepEqual([multi.precision, multi.reason, multi.span, multi.drafts.map((d) => d.anchor.kind)], ["paragraph", undefined, { sectionIndex: 0, parentPath: [], from: 1, to: 2 }, ["range"]]);
   } finally {
     doc.free();
   }

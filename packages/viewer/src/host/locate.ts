@@ -1,6 +1,6 @@
 // 위치 요청 하나를 엔진 주소와 앵커 초안, 강조 구간으로 바꾼다. 문서(`HwpxDocument`)는 부르는 쪽 호스트가 갖는다.
-import { draftAnchors, type AnchorDraft, type DraftedAnchor, type HwpxDocument } from "../../../hwpx-engine/src/index.ts";
-import { locateInCell, locatePicked, type LocateEdge, type Located, type Unlocated } from "../map/index.ts";
+import { draftAnchors, makeHeadingRangeAnchor, makeRangeAnchor, type AnchorDraft, type DraftedAnchor, type HwpxDocument } from "../../../hwpx-engine/src/index.ts";
+import { locateInCell, locatePicked, type LocateEdge, type Located, type PickedPoint, type Unlocated } from "../map/index.ts";
 import { sameParagraph } from "../rhwp/layout.ts";
 import { HostError } from "./errors.ts";
 import { markOf, resolveDrafts } from "./marks.ts";
@@ -48,8 +48,41 @@ function respond(doc: HwpxDocument, result: Result, edge: LocateEdge, range?: { 
 }
 
 /**
+ * 여러 문단에 걸친 끌기. 두 끝을 각각 문단으로 풀어, 같은 구역·같은 부모(둘 다 구역 최상위이거나 둘 다 같은 표 칸·글상자의 하위 목록)이면
+ * 문서 순서로 앞 문단부터 뒤 문단까지의 `range` 초안과, 앞 문단이 제목이면 그 제목의 `headingRange` 초안(둘째)을 낸다(`paragraph`, `span`).
+ * 어느 한 끝이라도 문단을 찾지 못하면 그 끝의 결과(`none`)이고, 부모가 다르면(다른 표 칸·목록에 걸친 끌기) `none`(`RANGE_PARAGRAPHS_DIFFER`)이다.
+ */
+function locateSpan(doc: HwpxDocument, from: PickedPoint, to: PickedPoint): LocateResponse {
+  const a = locatePicked(doc, from, "start");
+  if (a.precision === "none") return respond(doc, a, "start");
+  const b = locatePicked(doc, to, "start");
+  if (b.precision === "none") return respond(doc, b, "start");
+  const { sectionIndex } = a.address;
+  const parentPath = a.address.path.slice(0, -1);
+  const other = b.address.path;
+  if (b.address.sectionIndex !== sectionIndex || other.length !== parentPath.length + 1 || parentPath.some((v, i) => other[i] !== v)) {
+    return { precision: "none", reason: "RANGE_PARAGRAPHS_DIFFER", trail: [], edge: "start", drafts: [] };
+  }
+  const i = a.address.path[parentPath.length] ?? 0;
+  const j = other[parentPath.length] ?? 0;
+  const [first, start, end] = i <= j ? [a, i, j] : [b, j, i];
+  const drafts: DraftView[] = [];
+  for (const anchor of [makeRangeAnchor(doc, sectionIndex, parentPath, start, end), makeHeadingRangeAnchor(doc, sectionIndex, parentPath, start)]) {
+    if (anchor !== undefined) drafts.push({ anchor });
+  }
+  return {
+    precision: "paragraph",
+    address: { sectionIndex, path: [...parentPath, start] },
+    trail: first.trail,
+    span: { sectionIndex, parentPath, from: start, to: end },
+    edge: "start",
+    drafts,
+  };
+}
+
+/**
  * 위치 요청(`LocateRequest`)을 푼다. 본문이 틀리면 `HostError`(400)다.
- * 표 칸의 빈 곳이면 칸을 엔진 표·행·열로 찾고, 같은 문단 안 범위(`to`)이면 범위 `word` 초안을 낸다. 여러 문단에 걸친 선택은 받지 않는다.
+ * 표 칸의 빈 곳이면 칸을 엔진 표·행·열로 찾고, 같은 문단 안 범위(`to`)이면 범위 `word` 초안을, 여러 문단에 걸친 범위이면 `range`(·`headingRange`) 초안을 낸다(`locateSpan`).
  */
 export function locate(doc: HwpxDocument, body: unknown): LocateResponse {
   if (!isObj(body) || !isObj(body["from"])) throw new HostError(400, "BAD_REQUEST", "본문은 { from: { position? 또는 cell, shown?, guide?, limit?, reason? }, to? }이어야 합니다.");
@@ -62,10 +95,8 @@ export function locate(doc: HwpxDocument, body: unknown): LocateResponse {
   const to = body["to"] === undefined ? undefined : parsePoint(body["to"]).point;
   if (body["to"] !== undefined && to === undefined) throw new HostError(400, "BAD_POSITION", "to에는 위치(position)가 있어야 합니다.");
 
-  // 같은 문단 안의 범위만 받는다(여러 문단에 걸친 선택은 이 시험 구현의 범위 밖)
-  if (to !== undefined && !sameParagraph(from.position, to.position)) {
-    return { precision: "none", reason: "RANGE_PARAGRAPHS_DIFFER", trail: [], edge: "start", drafts: [] };
-  }
+  // 여러 문단에 걸친 범위는 문단 범위로 푼다
+  if (to !== undefined && !sameParagraph(from.position, to.position)) return locateSpan(doc, from, to);
   // 안내문을 눌렀거나 끝이 없으면 한 점이다
   if (to === undefined || from.guide !== undefined || to.guide !== undefined) {
     const edge: LocateEdge = from.guide !== undefined ? "guide" : from.trailing === true ? "trail" : "start";
