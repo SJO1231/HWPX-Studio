@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  compareToBaseline, emptyTemplate, generate, makeWordAnchor, openPackage,
-  parseDocument, readDataset, readEntry, readTemplate, validateDocument, walkParagraphs,
+  applyPlan, charDelta, compareToBaseline, compileDocument, emptyTemplate, generate, listFields, makeWordAnchor, openPackage,
+  parseDocument, planApplyCharFormat, readDataset, readEntry, readTemplate, validateDocument, walkParagraphs,
 } from '@hwpx-studio/engine';
 import { buildHwpx, mutateEntryText, readFixture } from '../../../packages/hwpx-engine/test/helpers.ts';
 import { gridTable, tableParagraph, textPara } from '../../../packages/hwpx-engine/test/table-helpers.ts';
 import { createWorkbench } from '../src/workbench.ts';
 import { createApp } from '../src/server.ts';
 
-type Row = { id: string; sectionIndex: number; path: number[]; text: string; editable: boolean; reason?: string };
+type Row = { id: string; sectionIndex: number; path: number[]; text: string; editable: boolean; rangeEditable: boolean; reason?: string };
 type Open = { session: string; paragraphs: Row[]; sourceUrl: string };
 type Work = { index: number; edits: {id:string;text:string}[]; headings: {id:string;level:1|2}[]; blocks: {id:string;from:string;to:string;text:string;alias:string}[] };
 const blank = (): Work => ({index:0,edits:[],headings:[],blocks:[]});
@@ -169,6 +169,10 @@ test('linked workspace HTTP: editor/static routes, same-origin, stable row selec
     const made=await send('generate',{session:opened.session,...blank(),edits:[{id,text:'바뀐 문장'}]});assert.equal(made.status,200);
     const result=await made.json() as any,download=await fetch(base+result.outputUrl);assert.equal(download.status,200);assert.match(download.headers.get('content-disposition')!,/attachment/);
     assert(texts(new Uint8Array(await download.arrayBuffer())).includes('바뀐 문장'));
+    const compiled=await send('template',{session:opened.session,...blank(),edits:[{id,text:'서식 {{title}}'}]});assert.equal(compiled.status,200);
+    const fieldResult=await compiled.json() as any;assert.equal(fieldResult.template,true);assert.equal(fieldResult.promoted,1);
+    const templateDownload=await fetch(base+fieldResult.outputUrl);assert.equal(templateDownload.headers.get('content-type'),'application/vnd.hancom.hwpx');
+    assert.deepEqual(listFields(parseDocument(openPackage(new Uint8Array(await templateDownload.arrayBuffer())))).map(f=>[f.type,f.name,f.valueText]),[['CLICK_HERE','title','{{title}}']]);
     assert.equal((await send('invalidate',{session:opened.session})).status,200);assert.equal((await fetch(base+result.outputUrl)).status,404);
     assert.deepEqual(Buffer.from(await (await fetch(base+opened.sourceUrl)).arrayBuffer()),Buffer.from(source));
   } finally {await new Promise<void>((done,fail)=>server.close(e=>e?fail(e):done()));}
@@ -246,4 +250,152 @@ test('linked workspace: exporting work after generation keeps the same downloada
   const saved=post(app,opened.session,'save',work) as {workspace:string};
   assert.equal(JSON.parse(saved.workspace).edits[0].text,'새 본문');
   assert.deepEqual(output(app,opened.session),before);
+});
+
+function mixedSource() {
+  let bytes=denseSource();
+  const doc=parseDocument(openPackage(bytes));
+  const targets=doc.sections.flatMap(s=>[...walkParagraphs(s.paragraphs)].filter(p=>/^(BODY_|CELL_|HEADER_EDIT)/.test(p.logicalText)).map(p=>({sectionIndex:s.index,path:p.path,end:p.logicalText.indexOf('_')+1})));
+  for(const target of targets) {
+    const pkg=openPackage(bytes),d=parseDocument(pkg);
+    bytes=applyPlan(pkg,planApplyCharFormat(d,{...target,start:0},charDelta(d,{bold:true})));
+  }
+  return bytes;
+}
+
+test('linked workspace mixed formatting: a changed span retains adjacent runs; insertion, deletion, Unicode and bold-only edits work; cross-style/range replacement stays blocked',()=>{
+  const source=mixedSource(),app=api(),opened=open(app,source),target=row(opened,'BODY_0');
+  assert.equal(target.editable,true);assert.equal(target.rangeEditable,false);assert.equal(target.reason,'FILL_MIXED_FORMAT');
+  const sourceDoc=parseDocument(openPackage(source)),original=sourceDoc.sections[0]!.paragraphs[target.path[0]!]!;
+  const firstRun=sourceDoc.sections[0]!.text.slice(original.runs[0]!.element.start,original.runs[0]!.element.end);
+  for(const text of ['BODY_새 문장','BODY_앞0','BODY_0뒤','BODY_','BODY_😀e\u0301','**BODY_**0']) {
+    post(app,opened.session,'generate',{...blank(),edits:[{id:target.id,text}]});
+    const bytes=output(app,opened.session),doc=parseDocument(openPackage(bytes)),p=doc.sections[0]!.paragraphs[target.path[0]!]!;
+    assert.equal(p.logicalText,text.replaceAll('**',''));
+    assert.equal(doc.sections[0]!.text.slice(p.runs[0]!.element.start,p.runs[0]!.element.end),firstRun);
+    assert.equal(compareToBaseline(validateDocument(source),validateDocument(bytes)).newErrors.length,0);
+  }
+  for(const text of ['전부 바꿈','BODY새값','BODYX새']) {
+    wrong(()=>post(app,opened.session,'generate',{...blank(),edits:[{id:target.id,text}]}),'FILL_MIXED_FORMAT');
+    wrong(()=>output(app,opened.session),'WORKBENCH_RESULT');
+  }
+  post(app,opened.session,'data',{name:'data.json',content:'{"unrelated":1}'});
+  post(app,opened.session,'generate',{...blank(),edits:[{id:target.id,text:'BODY_**0**'}]});
+  assert(texts(output(app,opened.session)).includes('BODY_0'));
+  wrong(()=>post(app,opened.session,'generate',{...blank(),blocks:[{id:'blocked',from:target.id,to:target.id,text:'전체',alias:'범위'}]}),'WORKBENCH_READONLY');
+  const unicode=buildHwpx([textPara('앞').replace('</hp:p>','<hp:run charPrIDRef="1"><hp:t>e\u0301😀끝</hp:t></hp:run></hp:p>')]);
+  const openedUnicode=open(app,unicode);
+  for(const text of ['앞e\u0308😀끝','앞e\u0301😄끝','앞e\u0301😀새끝']) {
+    post(app,openedUnicode.session,'generate',{...blank(),edits:[{id:openedUnicode.paragraphs[0]!.id,text}]});
+    assert.equal(texts(output(app,openedUnicode.session))[0],text);
+  }
+  assert.deepEqual(app.get('/api/workbench/source',new URLSearchParams({session:opened.session}))!.body,source);
+});
+
+test('linked workspace real fields: 25 mixed body/cell/header locations plus a 2-line block; 50 seeded work files x2 compile/reopen/fill, exact values, determinism and ZIP preservation',t=>{
+  let source=mixedSource();
+  const beforeFields=parseDocument(openPackage(source));
+  source=mutateEntryText(source,beforeFields.sections[0]!.entryName,x=>x.replace('</hs:sec>',textPara('KEEP {{untouched}}')+textPara('{{existing}}')+'</hs:sec>'));
+  const withKeys=parseDocument(openPackage(source)),existing=withKeys.sections[0]!.paragraphs.at(-1)!;
+  const oldField=compileDocument(source,{anchors:[{sectionIndex:0,path:existing.path,start:0,end:12,name:'existing'}]});assert(oldField.ok);source=oldField.output;
+  const sourceCopy=Buffer.from(source),pkg=openPackage(source),baseline=validateDocument(source),app=api(),opened=open(app,source);
+  assert.equal(baseline.errors.length,0);
+  const targets=opened.paragraphs.filter(r=>/^(BODY_|CELL_|HEADER_EDIT)/.test(r.text));assert.equal(targets.length,25);assert(targets.every(r=>r.editable&&!r.rangeEditable));
+  let seed=0x731bc015,compiled=0,filled=0;
+  const random=()=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed;};
+  for(let i=0;i<50;i++) {
+    const key='v'+i,value=('긴 문장을 안전한 한 서식 안에 넣습니다. '+random()+' / ').repeat(14)+'\n& < > 😀\t**원래 값** {{literal}}';
+    assert(value.length>400);
+    const dataset={record:{[key]:value},identifier:'00'+String(random()%1000000).padStart(6,'0'),flag:i%2===0?false:true,existing:'기존 누름틀 값',untouched:'원래 문자 키 값'};
+    const dataText=JSON.stringify(dataset);post(app,opened.session,'data',{name:'values.json',content:dataText});
+    const state={...blank(),edits:targets.map(r=>({id:r.id,text:r.text.slice(0,r.text.indexOf('_')+1)+'{{record.'+key+'}}'})),
+      blocks:[{id:'new-fields',from:row(opened,'RANGE_START').id,to:row(opened,'RANGE_END').id,alias:'작성한 구간',text:'번호 {{identifier}}\n확인 {{flag}}'}]};
+    let first:Uint8Array|undefined;
+    for(let repeat=0;repeat<2;repeat++) {
+      const result=post(app,opened.session,'template',state) as any;assert.equal(result.template,true);assert.equal(result.kind,'hwpx');assert.equal(result.promoted,27);assert.equal(result.filled,0);
+      const bytes=output(app,opened.session);if(first)assert.deepEqual(bytes,first);else first=bytes;
+      const doc=parseDocument(openPackage(bytes)),fields=listFields(doc);
+      assert.equal(fields.length,28);assert(fields.every(f=>f.type==='CLICK_HERE'&&f.dirty==='1'&&f.shape==='simple'));
+      assert.equal(fields.filter(f=>f.name==='record.'+key&&f.valueText==='{{record.'+key+'}}').length,25);
+      assert.deepEqual(fields.filter(f=>f.name==='existing').map(f=>f.valueText),['{{existing}}']);
+      assert.equal(fields.filter(f=>f.name==='untouched').length,0);assert(texts(bytes).includes('KEEP {{untouched}}'));
+      assert.equal(compareToBaseline(baseline,validateDocument(bytes)).newErrors.length,0);
+      assert.equal(outside(bytes),outside(source));
+      const nextPkg=openPackage(bytes);
+      for(const entry of pkg.archive.entries.filter(e=>!pkg.sectionEntries.includes(e.name)&&!e.name.startsWith('Preview/')))
+        assert.deepEqual(readEntry(nextPkg.archive,bytes,entry.name),readEntry(pkg.archive,source,entry.name),entry.name);
+      const reopenedApp=api(),reopened=open(reopenedApp,bytes);
+      assert(reopened.paragraphs.filter(r=>r.text.includes('{{record.')).every(r=>!r.editable&&!r.rangeEditable));
+      post(reopenedApp,reopened.session,'data',{name:'next.json',content:dataText});
+      post(reopenedApp,reopened.session,'generate',blank());
+      const final=output(reopenedApp,reopened.session),actual=listFields(parseDocument(openPackage(final)));
+      assert.equal(actual.filter(f=>f.name==='record.'+key&&f.valueText===value).length,25);
+      assert.deepEqual(actual.filter(f=>f.name==='identifier'||f.name==='flag').map(f=>[f.name,f.valueText]),[['identifier',dataset.identifier],['flag',String(dataset.flag)]]);
+      assert.equal(actual.find(f=>f.name==='existing')?.valueText,dataset.existing);
+      assert(texts(final).includes('KEEP '+dataset.untouched));
+      assert.equal(compareToBaseline(baseline,validateDocument(final)).newErrors.length,0);
+      const direct=generate(bytes,emptyTemplate(),readDataset(dataset),{missing:'error',mode:'baseline'});assert(direct.ok&&!direct.dryRun);assert.deepEqual(final,direct.output);
+      compiled++;filled+=actual.length;
+    }
+    const saved=post(app,opened.session,'save',state) as {workspace:string};
+    const restoredApp=api(),restored=restoredApp.post('/api/workbench/restore',{workspace:saved.workspace}) as Open;
+    post(restoredApp,restored.session,'template',state);assert.deepEqual(output(restoredApp,restored.session),first);
+    assert.equal(JSON.stringify(dataset),dataText);
+  }
+  assert.equal(compiled,100);assert.equal(filled,2800);assert.deepEqual(Buffer.from(source),sourceCopy);
+  t.diagnostic('seed=0x731bc015; mixed_targets=25; new_fields=27; templates=100; deterministic_pairs=50; saved_restore_pairs=50; reopen_fill=100; direct_pairs=100; field_values=2800; new_errors=0; source/data/untouched ZIP unchanged');
+});
+
+test('linked workspace template: preserves source keys/fields, remaps bold block positions, rejects partial compile, malformed names, read-only targets and TXT; failures remove old result',()=>{
+  const source=simple('KEEP {{old}}','range A','range B','after','OUTSIDE_FIXED'),app=api(),opened=open(app,source);
+  post(app,opened.session,'data',{name:'values.json',content:'{"old":"must stay a key","new":"must stay a key","block":"must stay a key"}'});
+  const state={...blank(),edits:[{id:row(opened,'KEEP {{old}}').id,text:'바뀐 앞 {{old}} 뒤 {{new}}'},{id:row(opened,'after').id,text:'뒤 **{{new}}**'}],
+    blocks:[{id:'shift',from:row(opened,'range A').id,to:row(opened,'range B').id,alias:'구간',text:'**{{block}}**\n둘째\n셋째'}]};
+  const made=post(app,opened.session,'template',state) as any;assert.equal(made.promoted,3);
+  const result=output(app,opened.session),fields=listFields(parseDocument(openPackage(result)));
+  assert.deepEqual(fields.map(f=>f.name),['new','block','new']);assert.equal(fields.at(-1)!.path[0],5);
+  assert(texts(result).map(s=>s.replaceAll('\uFFFC','')).includes('바뀐 앞 {{old}} 뒤 {{new}}'));
+  assert.equal(compareToBaseline(validateDocument(source),validateDocument(result)).newErrors.length,0);
+  const saved=post(app,opened.session,'save',state) as any;assert.deepEqual(output(app,opened.session),result);
+  wrong(()=>app.post('/api/workbench/restore',{workspace:{...JSON.parse(saved.workspace),edits:[{id:'p:99:99',text:'{{new}}'}]}}),'WORKBENCH_POSITION');
+  wrong(()=>post(app,opened.session,'template',{...blank(),edits:[{id:row(opened,'KEEP {{old}}').id,text:'앞 {{old}} 뒤'}]}),'WORKBENCH_NO_NEW_FIELDS');
+  wrong(()=>output(app,opened.session),'WORKBENCH_RESULT');
+  wrong(()=>post(app,opened.session,'template',{...blank(),edits:[{id:row(opened,'after').id,text:'{{bad key}}'}]}),'WORKBENCH_FIELD_NAME');
+  wrong(()=>post(app,opened.session,'template',{...blank(),edits:[{id:row(opened,'after').id,text:'{{good}} {{\tsplitKey}}'}]}),'WORKBENCH_TEMPLATE_INCOMPLETE');
+  wrong(()=>output(app,opened.session),'WORKBENCH_RESULT');
+  wrong(()=>post(app,opened.session,'template',{...blank(),blocks:[{...state.blocks[0]!,text:'{{good}}\n{{\nsplitKey}}'}]}),'WORKBENCH_TEMPLATE_INCOMPLETE');
+  wrong(()=>output(app,opened.session),'WORKBENCH_RESULT');
+  const fieldsApp=api(),fieldsOpened=open(fieldsApp,result),readonly=fieldsOpened.paragraphs.find(p=>!p.editable&&p.text.includes('{{new}}'))!;assert(readonly);
+  wrong(()=>post(fieldsApp,fieldsOpened.session,'template',{...blank(),edits:[{id:readonly.id,text:'{{unsafe}}'}]}),'WORKBENCH_READONLY');
+  const txt=app.post('/api/workbench/open',{name:'synthetic.txt',content:Buffer.from('원본').toString('base64')}) as Open;
+  post(app,txt.session,'generate',blank());
+  wrong(()=>post(app,txt.session,'template',{...blank(),edits:[{id:txt.paragraphs[0]!.id,text:'{{key}}'}]}),'WORKBENCH_TEMPLATE_HWPX');
+  wrong(()=>output(app,txt.session),'WORKBENCH_RESULT');
+});
+
+
+test('linked workspace TXT: no-data edits and blocks keep keys; later data fills once and missing keys invalidate old output',()=>{
+  const source=Buffer.from('\ufeff원본 **문자**\r\n값: {{value}}\r\n블록 시작\r\n블록 끝\r\n고정 {{flag}}\r\n'),app=api();
+  const opened=app.post('/api/workbench/open',{name:'synthetic.txt',content:source.toString('base64')}) as Open;
+  const state={...blank(),edits:[{id:row(opened,'값: {{value}}').id,text:'수정 **{{value}}**'}],blocks:[{id:'txt-block',alias:'본문',from:row(opened,'블록 시작').id,to:row(opened,'블록 끝').id,text:'번호 {{id}}\n확인 {{flag}}'}]};
+  const made=post(app,opened.session,'generate',state) as any;
+  assert.equal(made.template,true);assert.equal(made.unresolved,4);assert.equal(made.filled,0);assert.equal(made.changed,2);
+  const expected='\ufeff원본 **문자**\r\n수정 {{value}}\r\n번호 {{id}}\n확인 {{flag}}\r\n고정 {{flag}}\r\n';
+  assert.equal(made.text,expected);assert.deepEqual(Buffer.from(output(app,opened.session)),Buffer.from(expected));
+  const saved=post(app,opened.session,'save',state) as any;
+  const restored=app.post('/api/workbench/restore',{workspace:saved.workspace}) as Open;
+  assert.equal((post(app,restored.session,'generate',state) as any).unresolved,4);
+  post(app,restored.session,'data',{name:'data.json',content:JSON.stringify({value:'**literal** {{unparsed}}',id:'00001',flag:false})});
+  const filled=post(app,restored.session,'generate',state) as any;
+  assert.equal(filled.template,undefined);assert.equal(filled.unresolved,undefined);assert.equal(filled.filled,4);
+  assert.equal(filled.text,'\ufeff원본 **문자**\r\n수정 **literal** {{unparsed}}\r\n번호 00001\n확인 false\r\n고정 false\r\n');
+  post(app,restored.session,'data',{name:'missing.json',content:'{"value":0,"flag":false}'});
+  assert.throws(()=>post(app,restored.session,'generate',state),(e:any)=>/id/.test(e.message)&&!e.message.includes('00001'));
+  wrong(()=>output(app,restored.session),'WORKBENCH_RESULT');
+  wrong(()=>post(app,opened.session,'generate',{...blank(),edits:[{id:row(opened,'값: {{value}}').id,text:'{{invalid name}}'}]}),'WORKBENCH_FIELD_NAME');
+  wrong(()=>output(app,opened.session),'WORKBENCH_RESULT');
+  const plain=app.post('/api/workbench/open',{name:'plain.txt',content:Buffer.from('원본').toString('base64')}) as Open;
+  const done=post(app,plain.session,'generate',{...blank(),edits:[{id:plain.paragraphs[0]!.id,text:'수정'}]}) as any;
+  assert.equal(done.template,undefined);assert.equal(done.text,'수정');assert.equal(done.filled,0);
+  assert.deepEqual(Buffer.from(app.get('/api/workbench/source',new URLSearchParams({session:opened.session}))!.body),source);
 });

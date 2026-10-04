@@ -46,12 +46,13 @@ function controls() {
   $('#result-view').disabled = !state.output || state.busy;
   for (const id of ['scale', 'zoom-in', 'zoom-out']) $('#' + id).disabled = !(state.view || (state.kind === 'text' && state.session)) || state.busy;
   $('#copy-body').disabled = state.busy || typeof state.output?.text !== 'string';
-  $('#key-select').disabled = !available || !state.keys.some((key) => key.usable);
+  $('#key-select').disabled = !available;
+  $('#make-template').disabled = !available || state.kind !== 'hwpx';
   for (const button of document.querySelectorAll('[data-action]')) {
     const action = button.dataset.action;
     button.disabled = !(action === 'heading1' || action === 'heading2' || action === 'anchor' ? available && Boolean(item)
       : action === 'copyKey' ? available && Boolean($('#key-select').value)
-      : action === 'key' ? canEdit && Boolean($('#key-select').value) : canEdit);
+      : action === 'rangeStart' || action === 'rangeEnd' ? canEdit && item.rangeEditable !== false : canEdit);
   }
   $('#confirm-block').disabled = !available || !state.range?.from || !state.range?.to;
   $('#block-text').disabled = !state.range?.to || state.busy;
@@ -74,7 +75,7 @@ async function api(path, body) {
   const result = await response.json();
   if (!response.ok) {
     const error = result.error;
-    throw new Error(result.plain ?? (typeof error === 'string' ? error : error?.message)
+    throw new Error((typeof error === 'string' ? error : error?.message) ?? result.plain
       ?? result.message ?? '작업을 마치지 못했습니다.');
   }
   return result;
@@ -117,12 +118,12 @@ function updateRow(id) {
   entry.article.setAttribute('aria-current', state.chosen === id ? 'true' : 'false');
   const number = state.paragraphs.indexOf(item) + 1;
   entry.label.textContent = '문단 ' + number;
-  entry.state.textContent = block ? block.alias : state.edits.has(id) ? '편집됨' : level ? '제목 ' + level : !item.editable ? '읽기 전용' : '';
+  entry.state.textContent = block ? block.alias : state.edits.has(id) ? '편집됨' : level ? '제목 ' + level : !item.editable ? '읽기 전용' : item.rangeEditable === false ? '일부 글 수정' : '클릭해서 편집';
   entry.reset.hidden = !state.edits.has(id) && !state.headings.has(id); entry.reset.disabled = state.busy || Boolean(block);
   entry.input.readOnly = state.busy || !editable(item);
   entry.input.setAttribute('aria-label', '문단 ' + number + (block ? ' · 구간에 포함됨' : !item.editable ? ' · 읽기 전용' : ' 편집'));
-  entry.reason.hidden = (item.editable && !block) || state.chosen !== id;
-  const reason = block ? '확정한 구간에 포함되어 있습니다.' : !item.editable ? reasonOf(item.reason) : '';
+  entry.reason.hidden = (item.editable && item.rangeEditable !== false && !block) || state.chosen !== id;
+  const reason = block ? '확정한 구간에 포함되어 있습니다.' : !item.editable ? reasonOf(item.reason) : item.rangeEditable === false ? '서식이 같은 부분의 글을 고칠 수 있습니다. 서로 다른 서식에 걸친 변경은 적용할 때 알려드립니다.' : '';
   entry.reason.textContent = reason; entry.state.title = reason; entry.input.title = !item.editable || block ? reason : '';
   if (entry.input.value !== displayText(item)) entry.input.value = displayText(item);
   autosize(entry.input);
@@ -152,7 +153,7 @@ function renderParagraphs() {
     const reason = document.createElement('p'); reason.className = 'paragraph-reason';
     meta.append(label, marker, reset); article.append(meta, input, reason); container.append(article);
     rowElements.set(item.id, {article, input, label, state: marker, reset, reason});
-    input.addEventListener('focus', () => { selectRow(item.id, {scroll: false}); saveCaret(input, item.id); });
+    input.addEventListener('focus', () => { if (state.chosen !== item.id) selectRow(item.id, {scroll: false}); saveCaret(input, item.id); });
     for (const event of ['select', 'keyup', 'mouseup']) input.addEventListener(event, () => saveCaret(input, item.id));
     input.addEventListener('input', () => {
       if (state.busy || !editable(item)) return;
@@ -196,7 +197,7 @@ function clearSelection() {
   picks.cancel(); hideMenu(); const old = state.chosen;
   state.chosen = undefined; state.selection = undefined; state.caret = undefined; updateRow(old); state.view?.setMarks([]);
   highlightTextRow(undefined);
-  $('#selection-info').textContent = '문서의 글을 클릭하면 연결된 문단을 선택합니다.'; controls();
+  $('#selection-info').textContent = '왼쪽 글을 누르면 오른쪽에서 내용을 수정할 수 있습니다.'; controls();
 }
 function requestOf(event) {
   const from = event.cell ? {cell: event.cell} : {position: event.hit.position};
@@ -243,6 +244,15 @@ async function selectPicked(event, options = {}) {
     state.selection = result.location;
     state.marks.set(result.id, marksOf(result.location, result.id));
     selectRow(result.id, {...options, fromPick: true});
+    const entry = rowElements.get(result.id), item = paragraph(result.id);
+    if (entry && editable(item)) {
+      const selected = result.location.drafts.find(draft => draft.anchor?.kind === 'word' && !draft.blocked)?.anchor;
+      const prefix = prefixOf(result.id).length;
+      const caret = !state.edits.has(result.id) && selected ? {start: prefix + selected.start, end: prefix + selected.end}
+        : state.caret?.id === result.id ? state.caret : {start: entry.input.value.length, end: entry.input.value.length};
+      entry.input.focus({preventScroll: true}); entry.input.setSelectionRange(caret.start, caret.end); saveCaret(entry.input, result.id);
+      status('오른쪽에서 선택한 글을 고치거나 필드 이름을 넣으세요.');
+    } else if (item) status(reasonOf(item.reason), 'error');
     return true;
   } catch (error) {
     if (picks.current(ticket) && session === state.session) { clearSelection(); status(errorMessage(error), 'error'); }
@@ -321,8 +331,7 @@ function updateData(info) {
   }
   if (!Number.isInteger(state.index) || state.index < 0 || state.index >= count) state.index = 0;
   records.value = String(state.index);
-  const keys = $('#key-select'); keys.replaceChildren();
-  const placeholder = document.createElement('option'); placeholder.value = ''; placeholder.textContent = '연결할 키'; keys.append(placeholder);
+  const keys = $('#data-keys'); keys.replaceChildren(); $('#key-select').value = '';
   for (const key of state.keys.filter((item) => item.usable)) {
     const option = document.createElement('option'); option.value = key.path; option.textContent = key.path; keys.append(option);
   }
@@ -426,18 +435,20 @@ async function saveWork() {
   } catch (error) { status(errorMessage(error), 'error'); }
   finally { setBusy(false); }
 }
-async function generate() {
+async function generate(asTemplate = false) {
   if (!state.session || state.busy) return;
   hideMenu(); closeMenus(); invalidateOutput(); const revision = state.revision, session = state.session;
-  setBusy(true, '편집과 데이터를 적용하는 중입니다.');
+  setBusy(true, asTemplate ? '누름틀 서식을 만드는 중입니다.' : '편집과 데이터를 적용하는 중입니다.');
   try {
-    await state.invalidations; const result = await api('generate', snapshot());
+    await state.invalidations; const result = await api(asTemplate ? 'template' : 'generate', snapshot());
     if (revision !== state.revision || session !== state.session) return;
     state.output = result;
-    $('#download').download = state.name.replace(/\.(hwpx|txt)$/i, '') + '-결과.' + (state.kind === 'text' ? 'txt' : 'hwpx');
+    const textTemplate = state.kind === 'text' && result.template === true;
+    $('#download').download = state.name.replace(/\.(hwpx|txt)$/i, '') + (asTemplate ? '-서식.hwpx' : textTemplate ? '-서식.txt' : '-결과.' + (state.kind === 'text' ? 'txt' : 'hwpx'));
+    $('#download-label').textContent = asTemplate ? '서식 HWPX 저장' : textTemplate ? '서식 TXT 저장' : state.kind === 'text' ? 'TXT 저장' : 'HWPX 저장';
     $('#body-text').value = result.text ?? ''; $('#body-result-panel').hidden = typeof result.text !== 'string';
     $('#body-result').open = state.kind === 'text';
-    $('#output-info').textContent = result.changed + '개 편집 · ' + result.filled + '곳 채움';
+    $('#output-info').textContent = asTemplate ? '누름틀 ' + result.promoted + '개 생성' : textTemplate ? '서식 반영 · 미연결 ' + result.unresolved + '곳' : result.changed + '개 편집 · ' + result.filled + '곳 채움';
     try {
       if (state.kind === 'text') renderTextDocument('result');
       else await openViewer(result.outputUrl, 'result', state.openTicket);
@@ -447,7 +458,7 @@ async function generate() {
       status('생성은 완료됐지만 화면 표시가 어렵습니다. 내려받기로 확인해주세요. ' + errorMessage(error), 'error'); return;
     }
     const notes = Array.isArray(result.notes) && result.notes.length ? ' · ' + result.notes.join(' · ') : '';
-    status('생성 완료 · ' + result.changed + '개 편집, ' + result.filled + '곳 채움' + notes, 'success');
+    status(asTemplate ? '누름틀 ' + result.promoted + '개를 만들었습니다. 서식 HWPX 저장을 누르세요.' : textTemplate ? '글을 반영했습니다. 미연결 ' + result.unresolved + '곳은 {{키}}로 남겼습니다. 데이터를 연결하면 값을 채울 수 있습니다.' : '생성 완료 · ' + result.changed + '개 편집, ' + result.filled + '곳 채움' + notes, 'success');
   } catch (error) {
     state.output = undefined; disposeResult(); $('#output-info').textContent = ''; status(errorMessage(error), 'error');
   } finally { setBusy(false); }
@@ -477,7 +488,7 @@ function renderRange() {
   controls();
 }
 function startRange(id) {
-  const item = paragraph(id); if (!editable(item)) return;
+  const item = paragraph(id); if (!editable(item) || item.rangeEditable === false) return;
   state.range = {from: id}; state.rangeEditing = undefined;
   $('#block-alias').value = '구간' + (state.blocks.length + 1); $('#block-text').value = '';
   renderRange(); status('구간의 끝 문단을 선택한 뒤 구간 끝을 누르세요.');
@@ -488,7 +499,7 @@ function endRange(id) {
   if (!to || !from || !sameParent(from, to)) { status('같은 본문 또는 같은 표 칸 안의 문단끼리 선택해주세요.', 'error'); return; }
   const candidate = {from: from.id, to: to.id}, items = rangeItems(candidate);
   if (!items.length) { status('끝 문단은 시작 문단보다 뒤에 있어야 합니다.', 'error'); return; }
-  if (items.some((item) => !item.editable || (coveredBy(item.id) && coveredBy(item.id).id !== state.rangeEditing))) {
+  if (items.some((item) => !item.editable || item.rangeEditable === false || (coveredBy(item.id) && coveredBy(item.id).id !== state.rangeEditing))) {
     status('직접 편집할 수 없는 문단이나 다른 구간이 포함되어 있습니다.', 'error'); return;
   }
   state.range = candidate; $('#block-text').value = items.map((item) => textOf(item)).join('\n');
@@ -545,10 +556,14 @@ function replaceSelected(value) {
   changed(); updateRow(id); input.focus(); input.setSelectionRange(start + value.length, start + value.length); saveCaret(input, id);
 }
 function insertKey() {
-  const key = $('#key-select').value;
-  if (!key || !editable(paragraph(state.chosen))) { status('데이터의 키와 편집할 문단을 선택해주세요.'); return; }
+  const input = $('#key-select'), key = input.value.trim();
+  if (!editable(paragraph(state.chosen))) { status('먼저 바꿀 글이나 문단을 선택해주세요.'); return; }
+  if (!key || !/^[\p{L}\p{N}_-]+(?:\.[\p{L}\p{N}_-]+)*$/u.test(key)) {
+    input.focus(); status('필드 이름을 입력하세요. 글자·숫자·밑줄·하이픈을 사용할 수 있습니다.', 'error'); return;
+  }
+  input.value = key;
   replaceSelected('{{' + key + '}}');
-  status('데이터 키를 삽입했습니다. 적용할 때 선택한 행의 값으로 채웁니다.');
+  status('데이터 자리를 넣었습니다. 누름틀 서식으로 저장하거나 데이터를 연결해 생성할 수 있습니다.');
 }
 function makeBold() {
   const id = state.chosen, entry = rowElements.get(id), item = paragraph(id);
@@ -561,9 +576,9 @@ function makeBold() {
   replaceSelected(replacement); status('선택한 글의 굵기 표시를 바꿨습니다. 적용하면 반영됩니다.');
 }
 async function copyKey() {
-  const key = $('#key-select').value; if (!key || state.busy) return;
+  const key = $('#key-select').value.trim(); if (!key || state.busy) return;
   const text = '{{' + key + '}}', session = state.session, revision = state.revision, ticket = keyCopies.begin();
-  const current = () => keyCopies.current(ticket) && session === state.session && revision === state.revision && key === $('#key-select').value;
+  const current = () => keyCopies.current(ticket) && session === state.session && revision === state.revision && key === $('#key-select').value.trim();
   try {
     if (!navigator.clipboard?.writeText) throw new Error('clipboard');
     await navigator.clipboard.writeText(text);
@@ -645,11 +660,13 @@ $('#data-file').addEventListener('change', async (event) => {
 });
 $('#load-data-text').addEventListener('click', () => loadData('data.json', $('#data-text').value));
 $('#save-work').addEventListener('click', saveWork);
-$('#generate').addEventListener('click', generate);
+$('#generate').addEventListener('click', () => generate());
+$('#make-template').addEventListener('click', () => generate(true));
 $('#cancel-selection').addEventListener('click', clearSelection);
 $('#cancel-range').addEventListener('click', cancelRange);
 $('#confirm-block').addEventListener('click', confirmRange);
-$('#key-select').addEventListener('change', () => { $('#copy-fallback').hidden = true; controls(); });
+$('#key-select').addEventListener('input', () => { $('#copy-fallback').hidden = true; controls(); });
+$('#key-select').addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); insertKey(); } });
 $('#record-select').addEventListener('change', () => {
   if (state.busy) return; state.index = Number($('#record-select').value); changed();
   status((state.index + 1) + '행을 선택했습니다. 적용하면 해당 행의 값으로 채웁니다.');
