@@ -3,11 +3,11 @@ import { parseDocument } from "../model/document.ts";
 import type { InheritedProblems } from "../fragment/types.ts";
 import { openPackage } from "../package/open.ts";
 import { canonicalJson, sha256Hex } from "../template/hash.ts";
-import type { Dataset, FillReport, Template } from "../template/types.ts";
+import type { Dataset, Template } from "../template/types.ts";
 import { compareToBaseline, validateDocument, type ValidationIssue, type ValidationReport } from "../validate/index.ts";
 import { executeFillPlan, type ExecuteHooks } from "./execute.ts";
 import { explainInherited, noInherited, splitTolerated } from "./inherited.ts";
-import { buildFillPlan, type FillOptions } from "./plan.ts";
+import { buildFillPlan, type FillOptions, type PlanReport } from "./plan.ts";
 import { verifyChain } from "./verify.ts";
 
 export type GateMode = "baseline" | "strict" | "repair";
@@ -44,8 +44,8 @@ export type InheritedReport = InheritedProblems & { errors: ValidationIssue[] };
 export type GenerateReport = {
   mode: GateMode;
   dryRun: boolean;
-  /** 채움 계획 보고서(값 원문 없음) */
-  plan: FillReport;
+  /** 채움 계획 보고서(값 원문 없음). 이동표 `moves`(7.10)를 포함한다 */
+  plan: PlanReport;
   /** 상속한 문제와 그것으로 설명되는 검사 오류(`validation.newErrors`에는 들어 있지 않다) */
   inherited: InheritedReport;
   /** 검사 결과 요약과 기준선 대조(계획 단계에서 막혔으면 비어 있다) */
@@ -113,7 +113,7 @@ export function generate(bytes: Uint8Array, template: Template, dataset: Dataset
   const report: GenerateReport = {
     mode,
     dryRun,
-    plan: { actions: [], skipped: [], dropped: [], relocated: [], kept: [], requiredPaths: [], missingPaths: [], inactiveRules: [], expected: {}, tableChanges: [], issues: [] },
+    plan: { actions: [], skipped: [], dropped: [], relocated: [], kept: [], requiredPaths: [], missingPaths: [], inactiveRules: [], expected: {}, tableChanges: [], issues: [], moves: [] },
     inherited: { ...noInherited(), errors: [] },
     validation: null,
     repaired: null,

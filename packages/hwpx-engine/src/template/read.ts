@@ -135,30 +135,91 @@ export function readAnchor(v: unknown, index: number): Anchor {
       };
     }
     case "cell": {
-      onlyKeys(a, ["id", "kind", "table", "row", "col"], where, "TPL_ANCHOR");
+      onlyKeys(a, ["id", "kind", "table", "row", "col", "print"], where, "TPL_ANCHOR");
       const table = obj(a["table"], `${where}.table`, "TPL_ANCHOR");
       onlyKeys(table, ["sectionIndex", "ordinal"], `${where}.table`, "TPL_ANCHOR");
-      return {
+      const cell: Anchor = {
         id,
         kind,
         table: { sectionIndex: int(table, "sectionIndex", `${where}.table`, "TPL_ANCHOR"), ordinal: int(table, "ordinal", `${where}.table`, "TPL_ANCHOR") },
         row: int(a, "row", where, "TPL_ANCHOR"),
         col: int(a, "col", where, "TPL_ANCHOR"),
       };
+      // 선택 지문(7.10): 표 모양(행·열 수), 첫 행 글들의 해시, 그 셀 글의 해시
+      if (a["print"] !== undefined) {
+        const print = obj(a["print"], `${where}.print`, "TPL_ANCHOR");
+        onlyKeys(print, ["rows", "cols", "head", "text"], `${where}.print`, "TPL_ANCHOR");
+        cell.print = {
+          rows: int(print, "rows", `${where}.print`, "TPL_ANCHOR", 1),
+          cols: int(print, "cols", `${where}.print`, "TPL_ANCHOR", 1),
+          head: hash(print, "head", `${where}.print`),
+          text: hash(print, "text", `${where}.print`),
+        };
+      }
+      return cell;
     }
     case "object": {
-      onlyKeys(a, ["id", "kind", "objectType", "sectionIndex", "ordinal"], where, "TPL_ANCHOR");
-      return {
+      onlyKeys(a, ["id", "kind", "objectType", "sectionIndex", "ordinal", "print"], where, "TPL_ANCHOR");
+      const object: Anchor = {
         id,
         kind,
         objectType: str(a, "objectType", where, "TPL_ANCHOR"),
         sectionIndex: int(a, "sectionIndex", where, "TPL_ANCHOR"),
         ordinal: int(a, "ordinal", where, "TPL_ANCHOR"),
       };
+      // 선택 지문(7.10): 종류, 크기(HWPUNIT), 수량
+      if (a["print"] !== undefined) {
+        const print = obj(a["print"], `${where}.print`, "TPL_ANCHOR");
+        onlyKeys(print, ["objectType", "width", "height", "count"], `${where}.print`, "TPL_ANCHOR");
+        const objectType = str(print, "objectType", `${where}.print`, "TPL_ANCHOR");
+        if (objectType !== object.objectType) fail("TPL_ANCHOR", "print.objectType이 앵커의 objectType과 다릅니다.", where);
+        object.print = { objectType };
+        for (const key of ["width", "height", "count"] as const) if (print[key] !== undefined) object.print[key] = int(print, key, `${where}.print`, "TPL_ANCHOR");
+      }
+      return object;
+    }
+    case "range": {
+      // 같은 부모 안의 연속 문단(7.10). parentPath는 [문단, 하위목록, ...] 짝이고 빈 배열이면 구역 최상위다
+      onlyKeys(a, ["id", "kind", "at", "from", "to", "print"], where, "TPL_ANCHOR");
+      const at = obj(a["at"], `${where}.at`, "TPL_ANCHOR");
+      onlyKeys(at, ["sectionIndex", "parentPath"], `${where}.at`, "TPL_ANCHOR");
+      const parentPath = at["parentPath"];
+      if (!Array.isArray(parentPath) || parentPath.length % 2 !== 0 || !parentPath.every((n) => typeof n === "number" && Number.isInteger(n) && n >= 0)) {
+        fail("TPL_ANCHOR", "parentPath는 [문단, 하위목록, ...] 짝(짝수 길이, 빈 배열은 구역 최상위)의 0 이상 정수 배열이어야 합니다.", `${where}.at`);
+      }
+      const from = int(a, "from", where, "TPL_ANCHOR");
+      const to = int(a, "to", where, "TPL_ANCHOR");
+      if (to < from) fail("TPL_ANCHOR", "to가 from보다 작습니다.", where);
+      const print = obj(a["print"], `${where}.print`, "TPL_ANCHOR");
+      onlyKeys(print, ["first", "last", "count", "sha256"], `${where}.print`, "TPL_ANCHOR");
+      const count = int(print, "count", `${where}.print`, "TPL_ANCHOR", 1);
+      if (count !== to - from + 1) fail("TPL_ANCHOR", "print.count가 from~to의 문단 수와 다릅니다.", where);
+      return {
+        id,
+        kind,
+        at: { sectionIndex: int(at, "sectionIndex", `${where}.at`, "TPL_ANCHOR"), parentPath: parentPath as number[] },
+        from,
+        to,
+        print: { first: paragraphPrint(print["first"], `${where}.print.first`), last: paragraphPrint(print["last"], `${where}.print.last`), count, sha256: hash(print, "sha256", `${where}.print`) },
+      };
     }
     default:
-      return fail("TPL_ANCHOR", `알 수 없는 앵커 종류 ${JSON.stringify(kind)}입니다(field·word·line·cell·object).`, where);
+      return fail("TPL_ANCHOR", `알 수 없는 앵커 종류 ${JSON.stringify(kind)}입니다(field·word·line·cell·object·range).`, where);
   }
+}
+
+/** 지문의 sha256(16진 64자). 소문자로 돌려준다. */
+function hash(o: Obj, key: string, where: string): string {
+  const v = str(o, key, where, "TPL_ANCHOR");
+  if (!/^[0-9a-f]{64}$/i.test(v)) fail("TPL_ANCHOR", `${key}가 sha256(16진 64자)이 아닙니다.`, where);
+  return v.toLowerCase();
+}
+
+/** range 앵커 지문의 첫·끝 문단: 글 앞 40자(빈 글 가능)와 문단 글 해시 */
+function paragraphPrint(v: unknown, where: string): { text: string; sha256: string } {
+  const p = obj(v, where, "TPL_ANCHOR");
+  onlyKeys(p, ["text", "sha256"], where, "TPL_ANCHOR");
+  return { text: str(p, "text", where, "TPL_ANCHOR", false), sha256: hash(p, "sha256", where) };
 }
 
 // ── 조건 ────────────────────────────────────────────────────────
@@ -377,7 +438,7 @@ function readRepeat(a: Obj, where: string, anchor: string): RepeatAction {
 }
 
 const FILL_KINDS = ["field", "word", "line", "cell"];
-const DELETE_KINDS = ["line", "object", "cell"];
+const DELETE_KINDS = ["line", "object", "cell", "range"];
 
 function readAction(v: unknown, where: string, kinds: Map<string, string>, objectTypes: Map<string, string>): Action {
   const a = obj(v, where, "TPL_RULE");
@@ -404,7 +465,7 @@ function readAction(v: unknown, where: string, kinds: Map<string, string>, objec
     }
     case "inject": {
       onlyKeys(a, ["type", "anchor", "position", "fragment", "fitTable"], where, "TPL_RULE");
-      need(["line"]);
+      need(["line", "range"]);
       const fragment = a["fragment"];
       if (!(typeof fragment === "string" && fragment !== "") && !isObj(fragment)) {
         fail("TPL_RULE", "fragment는 조각 JSON 경로(문자열)나 조각 객체여야 합니다.", where);
@@ -428,7 +489,7 @@ function readAction(v: unknown, where: string, kinds: Map<string, string>, objec
     }
     case "insertText":
       onlyKeys(a, ["type", "anchor", "position", "value", "style"], where, "TPL_RULE");
-      need(["line"]);
+      need(["line", "range"]);
       return {
         type,
         anchor,

@@ -8,6 +8,9 @@ import type {
   Rule,
   WordAnchor,
 } from "./types.ts";
+import type { CellPrint, ObjectPrint, ParagraphPrint, RangeAnchor } from "../fill/anchor-types.ts";
+// 같은 선언을 다시 내보낸다(`fill/index.ts`와 같은 선언이라 겹치지 않는다).
+export type { CellPrint, ObjectPrint, RangeAnchor, RangePrint } from "../fill/anchor-types.ts";
 
 // 2판 템플릿 계약(엔진 명세 8.8). 이 폴더는 문서 형식을 모른다(8.5).
 
@@ -17,24 +20,10 @@ export const BLOCK_PROTO_SCHEMA = "hwpx-studio/block-proto@1";
 
 // ── 앵커 ────────────────────────────────────────────────────────
 
-/** `cell` 앵커의 선택 지문: 표 모양(행 수·열 수), 첫 행 글들의 해시, 그 셀 글의 해시(7.10) */
-export type CellPrint = { rows: number; cols: number; head: string; text: string };
-/** `object` 앵커의 선택 지문: 종류, 크기(HWPUNIT), 수량(7.10) */
-export type ObjectPrint = { objectType: string; width?: number; height?: number; count?: number };
-/** `range` 앵커의 첫·끝 문단 지문: 글 앞 40자와 문단 글 해시 */
-export type RangeEndPrint = { text: string; sha256: string };
-export type RangePrint = { first: RangeEndPrint; last: RangeEndPrint; count: number; sha256: string };
+// range·cell·object 지문과 range 앵커의 형은 `fill/anchor-types.ts`가 정본이다(7.10. 문서 모델을 가져오지 않는 순수 형이라 8.5를 지킨다).
+/** `range` 앵커의 첫·끝 문단 지문: 글 앞 40자와 문단 글 해시(= `ParagraphPrint`) */
+export type RangeEndPrint = ParagraphPrint;
 
-/** 같은 부모 안의 연속 문단(7.10). from~to는 0부터 세는 포함 범위, parentPath가 빈 배열이면 구역 최상위 문단 */
-export type RangeAnchor = {
-  id: string;
-  kind: "range";
-  at: { sectionIndex: number; parentPath: number[] };
-  from: number;
-  to: number;
-  print: RangePrint;
-  pattern?: string;
-};
 /** 메일머지(MAILMERGE) 필드를 FieldValue 인자로 가리킨다(7.10). occurrence는 같은 키 안의 순번 */
 export type MergeFieldAnchor = { id: string; kind: "mergeField"; key: string; occurrence?: number; pattern?: string };
 
@@ -45,7 +34,7 @@ export type StudioAnchor =
   | (LineAnchor & { pattern?: string })
   | (CellAnchor & { pattern?: string; print?: CellPrint })
   | (ObjectAnchor & { pattern?: string; print?: ObjectPrint })
-  | RangeAnchor
+  | (RangeAnchor & { pattern?: string })
   | MergeFieldAnchor;
 
 // ── 패턴(형만. 판정은 #20) ──────────────────────────────────────

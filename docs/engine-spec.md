@@ -658,9 +658,9 @@ type InsertPoint = { sectionIndex: number; parentPath: number[]; index: number; 
 
 - 근거: 이슈 #4 설계안(독립 설계자) + 총괄 임시 선택. 관련 이슈: #18(메일머지), #19(제목 범위), #20(같은 유형 일괄 앵커).
 - 소유: 엔진 = Claude.
-- 상태 표기: **[계약]** 이 절에서 정한 것. **[미구현]** 2026-10-04 기준 아래는 전부 미구현이다. 1판 앵커 5종(8.2)과 그 동작은 바꾸지 않고 더하기만 한다.
+- 상태 표기: **[계약]** 이 절에서 정한 것. **[구현 #30]** 2026-10-04 #30에서 구현(`range`·액션·이동표·`cell`/`object` 지문. 검증은 [검증 기준](validation.md) 19절). **[미구현]** 아직 없는 것. 1판 앵커 5종(8.2)과 그 동작은 바꾸지 않고 더하기만 한다.
 
-**범위 앵커 `range`** **[계약]** **[미구현]**
+**범위 앵커 `range`** **[계약]** **[구현 #30]**
 
 ```json
 { "id": "a1", "kind": "range", "at": { "sectionIndex": 0, "parentPath": [] }, "from": 18, "to": 21,
@@ -670,11 +670,12 @@ type InsertPoint = { sectionIndex: number; parentPath: number[]; index: number; 
 
 - 대상은 같은 부모 안의 연속 문단이다(7.2의 조각 선택과 같은 꼴). `parentPath`가 빈 배열이면 구역 최상위 문단, 아니면 그 주소의 하위 목록(표 셀 등) 안이다. `from`~`to`는 0부터 세는 포함 범위다.
 - 지문 `print`: `first`·`last`는 첫·끝 문단의 `{ text(글 앞 40자), sha256(문단 글 해시) }`, `count`는 문단 수, `sha256`은 범위 전체의 글 해시(문단 논리 텍스트를 줄바꿈 하나로 이은 것의 해시)다. 문단 글 해시는 `line` 앵커(8.2)와 같은 방식이다.
-- `makeRangeAnchor(doc, selection)`: 7.2의 `FragmentSelection`을 받아 지문까지 채운 앵커를 돌려준다.
+- `makeRangeAnchor(doc, selection)`: 7.2의 `FragmentSelection`을 받아 지문까지 채운 앵커 초안을 돌려준다. `makeRangeAnchor(doc, sectionIndex, parentPath, from, to)`도 같다. 초안은 id가 없는 `RangeDraft`(호출자가 id를 붙인다)이고, 범위가 문서에 없으면 `undefined`다. `makeCellAnchor`·`makeObjectAnchor`(아래)도 같은 꼴이다(기존 `makeLineAnchor`·`makeWordAnchor`는 id를 받는다. 통일은 뒤로 미룬다).
 - 거절: 범위 안 문단에 구역 설정이 있으면 삭제·교체가 `FILL_SECTION_PROPS`, 부모의 문단을 전부 지우면 `FILL_LAST_PARAGRAPH`(8.3과 같다). 범위가 누름틀의 시작과 끝 사이를 자르면 `FRAG_SPLITS_FIELD`(7.2와 같다).
-- 해석은 `resolveAnchors`와 같은 방식이다. 주소의 범위가 `print`와 모두 맞으면 exact다. 안 맞으면 같은 구역·같은 부모에서 `first`·`last`·`count`·`sha256`이 모두 맞는 범위를 찾는다. 상태 이름과 코드 대응은 8.8.13이 정한다.
+- 해석은 `resolveAnchors`와 같은 방식이다(`locateRange(doc, a)`가 판정을 돌려준다). 주소의 범위가 `print`와 모두 맞으면 exact다. 안 맞으면 **같은 구역의 모든 문단 목록**(최상위와 표 칸 안 전부)에서 `first`·`last`·`count`·`sha256`이 모두 맞는 범위를 찾는다(같은 부모로 한정하지 않는 이유: 앞에 표가 끼면 칸 안 범위의 `parentPath`가 바뀐다). 한 곳이면 relocated(`ANCHOR_RELOCATED` 경고), 여럿이면 `ANCHOR_AMBIGUOUS`, 없으면 `ANCHOR_NOT_FOUND`다. 전체가 맞는 곳이 없고 첫 문단만 맞을 때, 첫 문단을 포함해 길이 `2×count` 안에서 끝 문단 해시가 찾아지면 changed(`ANCHOR_CHANGED`, 오류)다(count 4면 안쪽 4문단 추가는 changed, 5문단 추가는 notFound). 문단 하나짜리 범위는 changed가 될 수 없다. 한계: 양 끝이 빈 문단인 범위를 통째로 지우면 다른 곳의 빈 문단 두 개 때문에 notFound 대신 changed가 날 수 있다(둘 다 생성을 막는 오류라 결과는 같고 안내만 다르다). 상태 이름과 코드 대응은 8.8.13이 정한다.
+- 1판 `readTemplate`도 `range` 앵커를 받는다(더하기. 모양이 틀리면 `TPL_ANCHOR`). 텍스트 어댑터(md·txt, 8.5)에서 `range` 앵커는 `ANCHOR_NOT_FOUND`다.
 
-**range를 받는 액션** **[계약]** **[미구현]**
+**range를 받는 액션** **[계약]** **[구현 #30]**
 
 | 액션 | range 앵커의 뜻 |
 | --- | --- |
@@ -683,15 +684,17 @@ type InsertPoint = { sectionIndex: number; parentPath: number[]; index: number; 
 | `delete` | 범위의 문단 전부를 지운다. `scope`는 주지 않는다 |
 | `fill`·`tableProps`·`resize`·`repeat` | 받지 않는다(`TPL_RULE`) |
 
-- 같은 범위에 `replace`·`delete`가 둘 이상이거나, 범위가 겹치는 range 앵커에 교체·삭제가 있으면 `TPL_CONFLICT`다.
+- 같은 범위에 `replace`·`delete`가 둘 이상이거나, 범위가 겹치는 range 앵커에 교체·삭제가 있으면 `TPL_CONFLICT`다. 같은 범위에 `insertText`의 `replace`와 다른 삽입(`before`·`after`·`inject before`)을 함께 쓰는 것도 `TPL_CONFLICT`다(글 교체가 범위를 먼저 지워 삽입 자리를 잃는다). `inject`의 `replace`와 `before`·`after`, `insertText`의 `before`·`after`와 `inject replace`는 함께 쓸 수 있다. 같은 범위에 `delete`와 `before`·`after` 삽입을 함께 쓰면 삽입이 `dropped`로 빠지고 생성은 된다(8.3의 2단계 규칙). 같은 경계에 두 삽입(앞 범위의 `after`와 다음 범위의 `before`)이 모이면 출력 순서는 규칙 순서다(line 앵커와 같다). 교체되는 범위 안의 `{{ }}`·누름틀·메일머지 필드 자리는 `dropped`다(교체 값이 비어 교체를 건너뛰면 범위는 남고 그 안의 자리는 정상 채움). 범위와 겹치는 누름틀·표 앵커의 규칙은 `TPL_CONFLICT`다(여러 문단 누름틀의 구간 치환과 같은 규칙, 8.3). 범위 안 표의 칸 채움 규칙은 8.3의 순서대로 `FILL_HAS_OBJECT` 등 칸 검사가 먼저 걸릴 수 있다(어느 쪽이든 출력은 없다).
 
-**이동표 `moves`** **[계약]** **[미구현]**
+**이동표 `moves`** **[계약]** **[구현 #30]**
 
-- 보고서(`report`)에 `moves`를 더한다. 항목은 구조 변경 하나당 `{ sectionIndex, parentPath, from, to, count }`이고 문서 순서의 원본 좌표다. 뜻: 그 부모의 `from`~`to` 문단이 `count`개 문단으로 바뀐다.
-  - 삭제는 `count = 0`이다.
+- 보고서(`report.plan`, 형 `PlanReport = FillReport & { moves }`)에 `moves`를 더한다. 항목은 구조 변경 하나당 `{ sectionIndex, parentPath, from, to, count, delta }`이고 문서 순서의 원본 좌표다. 뜻: 그 부모의 `from`~`to` 문단이 `count`개 문단으로 바뀐다. `delta = count − (to − from + 1)`.
+  - 삭제는 `count = 0`이다. `range` 교체·삭제는 범위 하나가 항목 하나, `line`·`object` 삭제는 문단마다 항목 하나다.
   - 삽입은 덮이는 문단이 없는 빈 범위(`to = from − 1`)로 적는다. `before`는 앵커 범위 첫 문단 번호를 `from`으로, `after`는 끝 문단 번호 + 1을 `from`으로 쓴다.
-- 변환: 같은 구역·같은 부모의 문단 번호 `i`는 `i < from`이면 그대로, `i > to`이면 `i + (count − (to − from + 1))`, `from ≤ i ≤ to`이면 덮인 것(주소가 없어짐)이다. 그 문단 아래(표 셀 등) 경로는 첫 번호만 바꾸고 나머지는 둔다. 항목이 여럿이면 앞 항목의 이동을 누적해 적용한다.
-- 쓰임: 8.8.12의 2단계가 word·line·cell 자리의 주소를 1단계 뒤 좌표로 옮긴다. 덮인 자리는 `dropped`(`PLACE_COVERED`)다.
+  - 여러 문단 누름틀의 합침(8.3 `FIELD_PARAGRAPHS_MERGED`)도 항목이다(시작 + 1 ~ 끝, `count = 0`). 끝 문단 뒤의 글은 실제로는 시작 문단에 합쳐지지만 이동표에서는 덮인 것으로 본다.
+- 변환(`remapAddress(moves, address)`): 같은 구역·같은 부모의 문단 번호 `i`는 `i < from`이면 그대로, `i > to`이면 `i + delta`, `from ≤ i ≤ to`이면 덮인 것(주소가 없어짐, `undefined`)이다. 그 문단 아래(표 셀 등) 경로는 단계마다 같은 식으로 옮긴다(그 단계의 상위 주소가 같은 항목만 본다). 항목이 여럿이면 `i`보다 앞에서 끝나는 항목의 `delta`를 모두 더한다.
+- 쓰임: 보고용과 8.8.12의 2단계(word·line·cell 자리의 주소를 1단계 뒤 좌표로 옮긴다. 덮인 자리는 `dropped`(`PLACE_COVERED`)). 한 계획 안의 다른 규칙은 원본 좌표로 적용되므로 이동표를 쓰지 않는다.
+- 범위(#30에서 확정): 이동표는 **문단 목록의 변경만** 담는다. 표 행 삭제(`delete scope: row`)·행 반복(`repeat`)으로 바뀌는 칸(하위 목록) 번호는 담지 않으므로, `remapAddress`는 그런 표 안의 칸 주소를 옛 번호로 돌려준다. 8.8.12의 2단계(#31)는 행 규칙이 적용된 표 안의 `cell`·`word`·`line` 자리를 이동표로 옮기지 않고 지문(`cell.print`)으로 다시 찾거나, 지문이 없으면 `PLACE_COVERED`로 떨어뜨린다(결정은 #31에서, 필요하면 행 항목을 더한다).
 
 **메일머지 앵커 `mergeField`** (#18) **[계약]** **[미구현]**
 
@@ -724,13 +727,14 @@ type InsertPoint = { sectionIndex: number; parentPath: number[]; index: number; 
 - 확인한 제안만 id를 받아 `anchors[]`에 들어가고, 그 앵커의 `pattern`이 패턴 id를 가진다. 패턴은 1차에서 템플릿 안(`patterns[]`)에만 둔다(템플릿 사이 공유는 뒤로 미룬다).
 - 원본이 바뀌어 앵커를 다시 지정할 때도 같은 패턴의 후보를 보이는 데 쓴다(8.8.13).
 
-**`cell`·`object` 선택 지문** **[계약]** **[미구현]**
+**`cell`·`object` 선택 지문** **[계약]** **[구현 #30]**
 
-- 1판의 `cell`·`object` 앵커(8.2)는 서수만 보고 지문이 없다([스튜디오 명세](studio-spec.md) 2절의 S2가 필요한 이유). 2판에서 선택 필드 `print`를 더한다. 없으면 1판처럼 서수만 보고 상태는 `unverified`다(8.8.13).
-- `cell.print = { rows, cols, head, text }`: 표 모양(행 수·열 수), 첫 행 글들의 해시(`head`), 그 셀 글의 해시(`text`).
-- `object.print = { objectType, width?, height?, count? }`: 종류, 크기(HWPUNIT), 수량(표는 셀 수. 그 밖은 생략).
+- 1판의 `cell`·`object` 앵커(8.2)는 서수만 보고 지문이 없다([스튜디오 명세](studio-spec.md) 2절의 S2가 필요한 이유). 선택 필드 `print`를 더한다. 없으면 1판처럼 서수만 보고 상태는 `unverified`다(8.8.13).
+- `cell.print = { rows, cols, head, text }`: 표 모양(행 수·열 수), 첫 행 글들의 해시(`head`: 첫 행 칸 글의 배열을 JSON으로 만든 것의 sha256), 그 셀 글의 해시(`text`). `cellPrintOf(table, row, col)`.
+- `object.print = { objectType, width?, height?, count? }`: 종류, 크기(HWPUNIT), 수량(표는 셀 수. 그 밖은 생략). `objectPrintOf(object)`.
+- `makeCellAnchor(doc, sectionIndex, ordinal, row, col)`·`makeObjectAnchor(doc, objectType, sectionIndex, ordinal)`은 지문을 채운 id 없는 초안을 돌려준다. `draftAnchors`·`findCandidates`의 cell 초안에는 아직 `print`를 넣지 않는다(후속).
 - 해석: 서수의 개체가 지문과 맞으면 exact다. 안 맞으면 같은 구역에서 지문이 맞는 개체를 찾는다(유일하면 relocated, 여럿이면 ambiguous, 없으면 notFound). `cell`은 표를 `rows`·`cols`·`head`로 찾은 뒤 `row`·`col`의 셀 글 해시를 대조한다.
-- `template@1`에는 `print`를 더하지 않는다(모르는 키로 거절한다. 8.8.11).
+- 1판 `readTemplate`도 선택 필드 `print`를 받는다(#30에서 더함. 모양 검사만. 8.8.11). 없는 템플릿의 읽기 결과는 바뀌지 않는다.
 - 이 절의 수용 조건은 8.8.16(W5·W7·W8)이 소유한다.
 
 ## 8. S3 — 검사·채움·템플릿·CLI
@@ -955,7 +959,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | `hwpx inspect <파일> [--json] [--model 출력.json]` | 구역·문단·표·누름틀·`{{}}`·자원 수 요약. `--model`은 모델 JSON 저장 |
 | `hwpx candidates <파일> [--json]` | 후보 자리 목록 |
 | `hwpx fragment extract <파일> --section N --from A --to B [--parent 주소] -o 조각.json` | 조각 추출 |
-| `hwpx fragment import <대상> <조각.json> --section N --index I [--parent 주소] [--before] -o 출력.hwpx` | 조각 가져오기(게이트 포함) |
+| `hwpx fragment import <대상> <조각.json> (--section N --index I [--before] \| --range 구역:시작-끝) [--parent 주소] -o 출력.hwpx` | 조각 가져오기(게이트 포함). `--range`는 그 범위의 문단을 지우고 그 자리에 넣는다(7.10의 `range` 교체. `--section`·`--index`·`--before`와 함께 쓸 수 없다. 2026-10-04 #30) |
 | `hwpx fill <파일> --data d.json [--template t.json] -o 출력 [--mode baseline\|strict\|repair] [--missing error\|empty\|keep] [--dry-run] [--report r.json] [--overwrite]` | 생성. 템플릿 없이도 `{{}}`와 누름틀을 채운다 |
 | `hwpx fill <파일> --data 배열.json --batch -o <폴더> [--name "{{경로}}"] [--dry-run] [--report r.json] [--overwrite]` | 여러 건 생성(8.36). 한 건이 실패해도 나머지는 만들고 종료 코드 1. 폴더가 없거나 같은 이름 파일이 있으면 2 |
 | `hwpx fill <파일> --template t2.json --case c.json --data 한건.json --blobs <폴더> -o 출력 [--report r.json] [--overwrite]` | **[계약]** **[미구현]** 2판 템플릿(`template@2`, 8.8) 생성. `--data`는 한 건(객체), `--case`는 이번 건(`case@1`, 없으면 선택을 전부 계산), `--blobs`는 조각 덩어리를 `<sha256>.json`으로 담은 폴더(받은 바이트의 해시를 대조한다). 앱과 같은 바이트를 낸다(8.8.12). `--template`이 `@1`이면 위 `fill` 동작 그대로이고 `--case`·`--blobs`는 종료 코드 2. 덩어리 파일은 입력이라 출력 경로로 덮어쓸 수 없다. 종료 코드는 아래와 같다 |
@@ -1367,7 +1371,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 - `template@1`의 `readTemplate`·`generate`·CLI 동작은 바꾸지 않는다. 옛 엔진은 `@2`를 `TPL_SCHEMA`로 거절한다(1판 읽기의 기존 동작).
 - `readStudioTemplate`는 `@1`을 읽어 `anchors`·`rules`·`options`만 가진 승계 템플릿(1판 `Template` 객체. `readTemplate` 결과와 같다. `slots`·`places` 필드 자체가 없다)으로 돌려준다. 승계 템플릿의 생성은 기존 `generate`(8.3) 한 번이라 1판 경로와 바이트가 같다. `{{경로}}` 암묵 채움(8.3)도 승계 템플릿에서만 유지된다.
 - `rules[]`는 승계 전용이다. 2판 템플릿에서 `slots`·`places`와 함께 쓰면 `TPL_MIXED_RULES`다(1차 금지). 2판 템플릿은 암묵 채움을 하지 않고 등록된 자리만 채운다(8.8.12).
-- 엔진 내부 `Template`의 앵커에 `range`·`mergeField`를 더한다(더하기만). `cell`·`object`의 선택 `print`는 2판 템플릿에서만 받는다(7.10).
+- 엔진 내부 `Template`의 앵커에 `range`·`mergeField`를 더한다(더하기만). `range` 앵커와 `cell`·`object`의 선택 `print`는 1판 `readTemplate`도 받는다(#30에서 더함. 7.10). 기존 1판 템플릿의 읽기 결과는 바뀌지 않는다.
 
 #### 8.8.12 컴파일·2단계 생성·게이트·원장·원본 해시
 
