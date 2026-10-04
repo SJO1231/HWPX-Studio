@@ -1,0 +1,103 @@
+{
+  "schema": "hwpx-studio/template@1",
+  "source": {
+    "sha256": "6e078c16df664ee0d9ec2973b4844997c78a6fd546f32f4f455ad0b2b29c08cb"
+  },
+  "anchors": [
+    {
+      "id": "a1",
+      "kind": "field",
+      "name": "성명"
+    },
+    {
+      "id": "a2",
+      "kind": "word",
+      "at": {
+        "sectionIndex": 0,
+        "path": [
+          3
+        ]
+      },
+      "start": 5,
+      "end": 12,
+      "print": {
+        "text": "대상 글",
+        "before": "앞 24자",
+        "after": "뒤 24자"
+      }
+    },
+    {
+      "id": "a3",
+      "kind": "line",
+      "at": {
+        "sectionIndex": 0,
+        "path": [
+          7
+        ]
+      },
+      "print": {
+        "text": "문단 글 앞 40자",
+        "sha256": "8df82e3a491ad69b733788fd89bdb4054d9995ba62b0e20da7b1f4361607031f"
+      }
+    },
+    {
+      "id": "a4",
+      "kind": "cell",
+      "table": {
+        "sectionIndex": 0,
+        "ordinal": 1
+      },
+      "row": 2,
+      "col": 1
+    },
+    {
+      "id": "a5",
+      "kind": "object",
+      "objectType": "tbl",
+      "sectionIndex": 0,
+      "ordinal": 0
+    }
+  ],
+  "rules": [
+    {
+      "id": "r1",
+      "do": {
+        "type": "fill",
+        "anchor": "a1",
+        "value": {
+          "path": "applicant.name"
+        }
+      }
+    },
+    {
+      "id": "r2",
+      "when": {
+        "path": "contract.type",
+        "op": "eq",
+        "value": "용역"
+      },
+      "do": {
+        "type": "inject",
+        "anchor": "a3",
+        "position": "after",
+        "fragment": "fragments/service-terms.json"
+      }
+    },
+    {
+      "id": "r3",
+      "when": {
+        "not": {
+          "path": "attachments",
+          "op": "exists"
+        }
+      },
+      "do": {
+        "type": "delete",
+        "anchor": "a5"
+      }
+    }
+  ],
+  "options": {
+    "missing": "error"
+  }
+}

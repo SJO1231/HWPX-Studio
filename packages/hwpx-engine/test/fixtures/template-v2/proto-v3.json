@@ -1,0 +1,17 @@
+{
+  "schema": "hwpx-studio/block-proto@1",
+  "id": "k7d20a4e1",
+  "version": 3,
+  "name": "참가자격(직접생산)",
+  "content": {
+    "fragment": "408d2074d39c5a8c1d8aa419f2e10ec55c8b674225e8402a2caf6e8c2b294283"
+  },
+  "keys": [
+    "사업명"
+  ],
+  "previous": {
+    "version": 2,
+    "content": "25b1b391bb8498d6574e89613df1d283d1e87a6aa478c832f946ecc4555d8f48"
+  },
+  "note": "규정 개정 반영(시험)"
+}
