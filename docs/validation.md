@@ -453,3 +453,17 @@ M1(값의 줄바꿈·탭, 여러 건 생성, 빠른 생성 화면 `apps/studio`,
 반영: 명세 7.10(`headingRange` 계약 전체·패턴 `marker.form` 11종), 8.4(`hwpx headings`), 8.8 표(`headingRange` 구현), 8.8.13 `found`, CLI 안내.
 
 남은 것: 패턴·같은 유형 일괄 제안(#20)에서의 `headingRangeOf` 사용, 화면의 후보 제목 표시(Codex), 구역 2개 이상 문서, 로마 숫자 ASCII(`I.`)·㈀ 같은 드문 꼴, 한글 화면 육안. 범위 밖 관측: `npm test`가 `apps/studio-lite/artifacts/`(gitignore)를 다시 쓴다(Codex 영역, "OS 임시 폴더만" 규칙과 어긋남 → #48 등록).
+
+## 25. 뷰어 여러 문단 끌기 → range·headingRange 초안 (2026-10-04, 이슈 #53, PR #54)
+
+뷰어 명세 4절. `locate`가 같은 구역·같은 부모의 다른 문단 끌기를 `precision: "paragraph"`·`span`·`range` 초안(시작이 제목이면 `headingRange` 초안 둘째)으로 내고, `defaultDraftIndex`가 range를 우선 고른다. 부모가 다르면 `RANGE_PARAGRAPHS_DIFFER` 유지. Codex #50(편집 작업공간)의 선행 과제라 구현자 시험과 총괄 검토로 수용했다(독립 검증 생략. 엔진은 공개 API만 사용).
+
+| 검사 | 결과 |
+| --- | --- |
+| 끌기 7경우 | 두 문단·열 문단·표 문단·조문 장 제목·칸 안·복사본 칸: range 초안의 `at`·`from`·`to`·`print`가 `makeRangeAnchor`와 동일, 역순·다른 글자로 끌어도 동일, 제목 시작 3건은 headingRange 초안 포함, 기본 선택 range |
+| 거절·회귀 | 부모 다름 5쌍 양방향 `RANGE_PARAGRAPHS_DIFFER`, 한 끝 못 찾음 5건은 그 끝의 사유, 같은 문단 끌기는 기존 `word` 범위 |
+| 생성 동치 | 초안으로 1판 `inject replace`·`delete` 4건 → `makeRangeAnchor` 직접 결과와 바이트 동일, 게이트·새 오류 0. 2판 `redraftAnchor` 2건(range→range exact, range←headingRange exact·kindChanged) |
+| 무작위 | 60회(시드 53): range 41·heading 8·differ 19, 긴 값 생성 41건 새 오류 0, 결정성·역순 동일 |
+| 회귀 | 형 검사 0. 1,673/1,612/0/61(main 1,666/1,605/0/61). lite 시험 기대값 1줄을 새 동작으로 바꿈(통합 수정. lite `assign`은 range 초안을 `TPL_RULE`로 거절하므로 임의 자리 연결 불가는 유지) |
+
+남은 것: 여러 문단 범위의 화면 강조(`mark`는 한 문단 구간만), 브라우저 실제 끌기·한글 열기, 범위 연결 화면(#50).
