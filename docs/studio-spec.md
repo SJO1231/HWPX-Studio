@@ -91,6 +91,8 @@ node apps/cli/src/main.ts fill templates/<tid>/source.hwpx --data datasets/<did>
 
 **호스트 API** (오류는 `{ error: { code, message } }`)
 
+**결과 용량**(2026-10-04, #13): 빠른 생성은 건수×원본 크기로 미리 가늠하지 않고, 성공 출력의 실제 바이트 총합이 512 MiB를 넘는 건부터 `QUICK_TOO_LARGE`로 실패시키고 이후 엔진 생성을 중단한다. 앞선 성공 결과와 엔진 실패 보고·파일 이름은 유지되며 내려받을 수 있다. 상한은 보관하는 성공 출력 바이트 합이고, 순간 프로세스 메모리는 보장하지 않는다.
+
 | 경로 | 요청 → 응답 |
 | --- | --- |
 | `GET /api/workspace` | → `{ templates[], datasets[] }` |
