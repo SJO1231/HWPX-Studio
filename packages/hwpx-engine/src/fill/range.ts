@@ -86,7 +86,8 @@ export function makeRangeAnchor(doc: HwpxDocument, a: FragmentSelection | number
   };
 }
 
-const samePrint = (a: RangePrint, b: RangePrint): boolean =>
+/** 두 범위 지문이 모두 같은가(첫·끝 문단, 문단 수, 전체 글 해시) */
+export const samePrint = (a: RangePrint, b: RangePrint): boolean =>
   a.count === b.count && a.first.text === b.first.text && a.first.sha256 === b.first.sha256 && a.last.text === b.last.text && a.last.sha256 === b.last.sha256 && a.sha256 === b.sha256;
 
 /** 양 끝이 어긋난 범위를 `changed`로 보는 길이의 한도: 원래 문단 수의 2배(안쪽 문단이 늘고 줄어든 경우까지) */

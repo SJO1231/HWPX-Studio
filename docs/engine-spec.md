@@ -702,11 +702,16 @@ type InsertPoint = { sectionIndex: number; parentPath: number[]; index: number; 
 - 필드 안 표시 글(`{{키}}`나 옛 값)은 이 앵커의 자리(`mailMerge`, 8.8.5)가 맡는다. 채움은 필드 표식과 인자를 보존하고 표시 글만 값으로 바꾼다.
 - 1판의 누름틀 암묵 채움(8.3)은 이 필드를 건드리지 않는다. 템플릿 없는 빠른 생성은 #18에 따라 키가 경로 꼴이 아니면 건너뜀으로 보고한다.
 
-**제목 범위 `headingRange`** (#19) **[계약: 정의만]** **[미구현]**
+**제목 범위 `headingRange`** (#19) **[계약]** **[구현 #19]**
 
-- 이름만 예약한다. 뜻: 제목 문단 하나를 가리키면 그 제목부터 같은 단계 이상의 다음 제목 앞까지를 한 범위로 보는 앵커다. 해석 결과는 `range`와 같은 지문을 쓴다.
-- 제목 탐지 규칙(번호 글자·굵기·크기·표 안 제목)과 필드는 이슈 #19가 정한다. 그때까지 `readStudioTemplate`는 이 종류를 `TPL_ANCHOR`로 거절한다.
-- 같은 탐지 규칙이 `suggestSimilar`의 범위 계산에도 쓰인다(아래 패턴).
+- 뜻: 제목 문단 하나를 가리키면 그 제목부터 "같은 단계 이상의 다음 제목" 앞까지를 한 범위로 보는 앵커다. 해석 결과는 `range`와 같은 꼴(같은 부모의 연속 문단)이고 같은 지문을 쓴다. 근거: 사전 측정(검증 기준 17절)에서 실제 공고서의 제목은 스타일·개요 번호로는 0~0.9%만 구분되고, 번호 글자 또는 굵기·크기로 93.6~100% 잡힌다.
+- 앵커: `{ id, kind: "headingRange", at: { sectionIndex, parentPath }, index, marker: { form, level }, heading: { text, sha256 }, print: RangePrint }`. `index`는 제목 문단 번호(0부터), `heading`은 제목 문단 글의 앞 40자와 글 해시, `print`는 해석된 범위의 지문(7.10 `range`와 같음). 1판 `readTemplate`·2판 `readStudioTemplate` 모두 받는다(모양이 틀리면 `TPL_ANCHOR`).
+- 제목 탐지 `detectHeadings(doc, opts?): Heading[]`: 문단마다 글의 머리(공백과 개체 자리 글자 U+FFFC는 건너뜀)에서 번호 글자를 읽어 `form`을 정한다. 꼴 11종: `article`(`제N조`·`제N장`·`제N절`·`제N항`·`제N호`, 선택적 `의N`), `roman`(유니코드 로마 숫자 Ⅰ~Ⅻ + 점·공백. ASCII `I.`는 받지 않음), `digitDot`(`1.` `1.1.` `1.1` 등 1~3자리 숫자 마디(점으로 이은 다단 포함)와 점. 마디 뒤에 점이 반드시 있어야 하고(`1 `처럼 숫자+공백만은 번호 아님), 점 바로 뒤에 숫자가 이어지면(`1.5배`) 번호가 아니며(`2024.`는 4자리라 걸러진다), 번호 뒤의 글이 `숫자.`로 시작하면(`10. 4.(금)` 같은 날짜) 번호가 아님), `hangulDot`(`가.`: 가나다라마바사아자차카타파하 14자+점), `digitParen`(`1)`), `hangulParen`(`가)`), `digitParens`(`(1)`), `hangulParens`(`(가)`. `(주)` 같은 약칭은 14자 제한으로 걸러진다), `circled`(①~⑳·⑴~⒇·㉠~㉭·㉮~㉻·➀~➉·❶~❿), `box`(□ ■ ○ ● ◇ ◆ ◎ ◈ ▣ ▪ ▫ ◦ • ▶ ▷ ► ▸ ☞ ★ ☆ ◯ ❍ ➢ ➤ ∙ ‧ ・ ㆍ ※ 등 기호 머리. `-`·대시·`ㅇ`은 뒤에 공백이 있을 때만), `none`(번호 글자 없음. 공백 아닌 첫 글 조각의 run이 굵고(`bold` 요소) U+FFFC와 앞뒤 공백을 뺀 글이 40자 이하이며 문장 끝 기호(`.` `다` `요`)로 끝나지 않을 때만 제목으로 본다). 번호 글자 뒤 글이 비면 제목이 아니다. 표 칸 안 문단도 같은 규칙으로 탐지한다(결과의 `parentPath`가 칸 주소). `Heading = { at: { sectionIndex, parentPath }, index, text(U+FFFC를 뺀 글의 앞 40자), sha256, marker: { form, level }, bold, height? }`. 글 원문은 앞 40자만 담는다(앵커의 `heading.text`·`print.first.text`는 `line` 지문과 같은 규칙으로 U+FFFC를 포함한 앞 40자이고 해시는 같다).
+- 단계 `level`(1부터): 기본 서열은 `article`(장 > 절 > 조 > 항 > 호) → `roman` → `digitDot`(단일) → `digitDot`(다단. 마디 수 − 1만큼 아래. `1.1`과 `1.1.`은 같은 단계) → `hangulDot` → `digitParen` → `hangulParen` → `digitParens` → `hangulParens` → `circled` → `box`(기호별로 다른 단계. 같은 부모 안에서 처음 나온 기호가 높고 뒤에 처음 나온 기호가 한 단계 아래) → `none`이다. 같은 부모 안에서 실제로 나타난 꼴만 번호를 매겨 빈 단계를 두지 않는다(예: `1.`와 `가.`만 있으면 1·2). `opts.order`(`HeadingForm[]`. 앞이 높은 단계, 빠진 꼴은 뒤에 기본 서열대로, 모르는 값은 무시)로 서열을 바꿀 수 있고, 기본과 다른 서열로 만든 앵커는 `order` 필드에 그 서열을 저장해 해석·재지정도 같은 서열로 계산한다.
+- 범위 계산 `headingRangeOf(doc, at, index, opts?): { from, to } | undefined`: 제목 문단 `index`부터, 같은 부모에서 다음에 나오는 `level`이 같거나 높은(숫자가 작거나 같은) 제목의 앞 문단까지다. 사이의 표·개체를 담은 문단은 범위에 들어간다(표 안 문단은 통째로, 칸 안 제목은 범위를 끊지 않는다). 다음 제목이 없으면 부모의 끝 문단까지다. 그 문단이 제목이 아니면 `undefined`. `makeHeadingRangeAnchor(doc, sectionIndex, parentPath, index, opts?)`는 지문까지 채운 id 없는 초안(`HeadingRangeDraft`)을 돌려준다. `heading`은 `print.first`와 같은 값이지만 읽기 쉬우라고 둔다.
+- 해석(`resolveAnchors`·`checkAnchors`): 주소 `index`의 문단이 `heading` 지문과 맞고 다시 판독한 꼴이 `marker.form`과 같으면(`level`은 보지 않음) 범위를 다시 계산해 `print`와 대조한다. 전부 맞으면 exact, 범위 글만 다르면 changed(`ANCHOR_CHANGED`, 7.10 `range`와 같음). 주소에 없으면 같은 구역의 모든 문단 목록에서 `heading` 지문이 맞는 제목을 찾는다: 한 곳이면 relocated(범위 재계산 뒤 `print` 대조. 다르면 changed), 여럿이면 각 후보의 범위를 다시 계산해 `print`가 맞는 곳이 하나뿐일 때만 그곳을 relocated로 택하고 그 밖은 `ANCHOR_AMBIGUOUS`, 없으면 `ANCHOR_NOT_FOUND`. `planRelocation`은 새 위치에서 `marker`를 다시 계산한다. 재지정은 제목 문단의 `line` 초안을 받아 `headingRange`로 만든다(제목이 아니면 `FILL_DRAFT_ADDRESS`). 해석 결과는 `ResolvedAnchor`의 `range`로 돌아가므로 액션·이동표·`dropped`·충돌 규칙은 위 `range`와 같다(`plan.ts`는 바뀌지 않는다). 한계: 주소의 제목이 맞으면 다른 곳을 찾지 않으므로, 제목 문단만 복제해 원래 제목 바로 앞에 끼우면 같은 범위의 `range` 앵커는 relocated인데 headingRange는 changed가 된다(둘 다 생성을 막는 쪽이라 결과가 틀리지는 않는다). md 원본에서는 `TPL_ANCHOR`(2판 읽기)·`ANCHOR_NOT_FOUND`(텍스트 어댑터).
+- 쓰임: 자리 목록·화면의 후보 제목 표시(#5), 같은 유형 일괄 제안(#20의 `suggestSimilar`가 `body` 패턴의 범위 계산에 `headingRangeOf`를 쓴다), 공용 블록의 슬롯 앵커(#21).
+- 수용(검증 기준 23절): 합성 문서에서 꼴 11종·다단·표 안 제목 탐지 100%와 범위 경계(다음 제목·부모 끝·표 포함) 일치, 흔한 위계 `1. > 가. > 1) > 가) > (1) > (가) > ① > □ > ○ > -`가 모두 다른 단계, 실제 공고서(16건)에서 번호 글자로 시작하는 문단의 탐지율 문서별 70% 이상과 제목 사이 범위 조각 교체 게이트 통과(17절의 30/30 유지), 원본에 앞 문단 삽입·제목 글 변경·범위 글 변경 뒤 relocated·notFound·changed 판정, `range` 앵커와의 결과 바이트 동일, 결정성. CLI `hwpx headings <파일> [--json]`이 탐지 결과를 낸다(8.4).
 
 **패턴** (#20) **[계약]** **[미구현]**
 
@@ -715,7 +720,7 @@ type InsertPoint = { sectionIndex: number; parentPath: number[]; index: number; 
 | 필드 | 뜻 |
 | --- | --- |
 | `id`, `name` | 패턴 id(8.8.3), 표시 이름 |
-| `marker` | `{ form, level }`. 필수. `form`은 `digitDot`(숫자+점), `hangulDot`(한글 음절+점), `circled`(동그라미 숫자), `paren`(괄호 번호), `box`(네모 기호), `article`(제N조 꼴), `none`(번호 글자 없음). `level`은 1부터의 단계 |
+| `marker` | `{ form, level }`. 필수. `form`은 `headingRange`의 꼴 11종(`HeadingForm`: `article`·`roman`·`digitDot`·`hangulDot`·`digitParen`·`hangulParen`·`digitParens`·`hangulParens`·`circled`·`box`·`none`. 2026-10-04 #19에서 7종을 세분화)과 같다. `level`은 1부터의 단계 |
 | `char` | `{ bold, height, print }`. 굵기, 글자 크기(HWPUNIT), 글자모양 지문(7.4) |
 | `para` | `{ print, align }`. 문단모양 지문, 정렬 |
 | `place` | `body`(본문 문단), `cell`(표 셀 안 문단), `labelCell`(짧은 글 라벨 셀), `labelColon`(`라벨:` 꼴 글). 제안은 같은 `place`에서만 한다. 라벨 규칙은 8.3의 후보 자리와 같다 |
@@ -958,6 +963,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | --- | --- |
 | `hwpx inspect <파일> [--json] [--model 출력.json]` | 구역·문단·표·누름틀·`{{}}`·자원 수 요약. `--model`은 모델 JSON 저장 |
 | `hwpx candidates <파일> [--json]` | 후보 자리 목록 |
+| `hwpx headings <파일> [--json]` | 탐지한 제목 목록(7.10 `headingRange`. 2026-10-04 #19): 줄마다 `구역:상위주소:문단 번호  단계  꼴  글 앞 40자`(상위 주소는 `문단.하위목록`, 최상위는 `-`). 글은 U+FFFC를 빼고 줄바꿈·탭을 공백으로 바꿔 한 줄로 낸다. JSON은 `Heading[]` |
 | `hwpx fragment extract <파일> --section N --from A --to B [--parent 주소] -o 조각.json` | 조각 추출 |
 | `hwpx fragment import <대상> <조각.json> (--section N --index I [--before] \| --range 구역:시작-끝) [--parent 주소] -o 출력.hwpx` | 조각 가져오기(게이트 포함). `--range`는 그 범위의 문단을 지우고 그 자리에 넣는다(7.10의 `range` 교체. `--section`·`--index`·`--before`와 함께 쓸 수 없다. 2026-10-04 #30) |
 | `hwpx fill <파일> --data d.json [--template t.json] -o 출력 [--mode baseline\|strict\|repair] [--missing error\|empty\|keep] [--dry-run] [--report r.json] [--overwrite]` | 생성. 템플릿 없이도 `{{}}`와 누름틀을 채운다 |
@@ -1105,7 +1111,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | `version` | 저장 판(1부터) | 필수 | 저장된 판은 바꾸지 않고, 고치면 새 판 |
 | `meta.name` | 표시 이름 | 선택 | 참조에 쓰지 않는다 |
 | `source` | 원본 문서 `{ kind: "hwpx" 또는 "md", sha256 }` | 필수 | 파일 이름·경로는 저장하지 않는다. 생성 때 대조한다(8.8.12) |
-| `anchors[]` | 위치 기준. 1판 5종 + `range`(7.10) + `mergeField`(#18) + `headingRange`(#19 예약) | 필수(빈 배열 가능) | `cell`·`object`에 선택 `print`, 모든 앵커에 선택 `pattern`(패턴 id) |
+| `anchors[]` | 위치 기준. 1판 5종 + `range`(7.10) + `mergeField`(#18) + `headingRange`(#19 구현, 7.10) | 필수(빈 배열 가능) | `cell`·`object`에 선택 `print`, 모든 앵커에 선택 `pattern`(패턴 id) |
 | `patterns[]` | 같은 유형 항목을 일괄 제안하는 패턴(7.10) | 선택 | |
 | `values[]` | 값 `{ id, name, format: "text" 또는 "money" }` | 필수 | 값 하나를 자리 여럿과 조건이 함께 쓴다. `money`는 조건에서 숫자, 출력은 `1,234원`(8.8.4) |
 | `bindings[]` | JSON 연결 `{ value, key 또는 path, aliases? }` | 쓰이는 값마다 정확히 하나 | `key`는 열 이름 그대로(공백·점 허용), `path`는 중첩 경로. 별칭 둘 이상에 값이 있으면 `DATA_ALIAS_CONFLICT`(8.8.4) |
@@ -1431,7 +1437,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 
 - "생성에 쓸 수 있나"는 앵커 상태만 본 판정이다. 원본 해시가 다르면 상태와 무관하게 `TPL_SOURCE_MISMATCH`가 먼저 막는다(8.8.12). 그래서 원본이 바뀐 뒤에는 아래 재지정으로 새 템플릿 판(새 `source.sha256`)을 저장해야 한다.
 - 지문: `word`·`line`은 8.2, `range`·`cell`·`object`는 7.10. 지문 없는 `cell`·`object`의 서수 자리가 아예 없으면 unverified가 아니라 notFound다(`resolveAnchors`도 생성을 막는다). `cell`·`object`의 주소는 표·개체 서수라서 앞에 문단만 넣으면 exact이고, 앞에 표·개체를 넣으면 지문 있는 것은 relocated, 없는 것은 unverified다.
-- 결과 `AnchorCheck = { anchor, kind, state, found?, issues }`. `found`는 exact·relocated·unverified일 때 다시 찾은 주소(`word`는 `at`·`start`·`end`, `line`은 `at`, `range`는 `at`·`from`·`to`, `cell`은 `table`·`row`·`col`, `object`는 `objectType`·`sectionIndex`·`ordinal`)이고 `field`·`mergeField`에는 없다. `issues`에 문서 글은 넣지 않는다.
+- 결과 `AnchorCheck = { anchor, kind, state, found?, issues }`. `found`는 exact·relocated·unverified일 때 다시 찾은 주소(`word`는 `at`·`start`·`end`, `line`은 `at`, `range`는 `at`·`from`·`to`, `headingRange`는 `at`·`index`·`from`·`to`와 새 자리에서 다시 센 `marker`, `cell`은 `table`·`row`·`col`, `object`는 `objectType`·`sectionIndex`·`ordinal`)이고 `field`·`mergeField`에는 없다. `issues`에 문서 글은 넣지 않는다.
 - `planRelocation(t, checks): { anchors, changed: string[] } | undefined`: exact가 아닌 앵커가 전부 relocated(또는 unverified)일 때만 같은 id에 새 주소를 넣은 앵커 배열을 돌려준다(지문은 전체 일치라 그대로). changed·ambiguous·notFound가 하나라도 있으면 `undefined`. unverified 앵커는 그대로 둔다(서수만 보고 지문을 만들면 잘못된 표를 확정할 수 있다. 확인은 호출자 몫). 템플릿을 저장하지 않고 입력도 바꾸지 않는다.
 - `redraftAnchor(doc, old, draft): { anchor, kindChanged }`: `draftAnchors`([뷰어 명세](viewer-spec.md) 4절)의 초안에 옛 앵커의 `id`·`pattern`을 붙이고(초안의 `id`·`pattern`은 버린다), `range`·`cell`·`object`는 `doc`에서 지문을 다시 뜬다(`make*Anchor`). 종류가 바뀌면 `kindChanged: true`(허용). 옛 앵커가 `mergeField`이고 초안이 키로 가리키는 `field`이면 `mergeField`로 적는다. 초안의 `blocked`는 뺀다. 결과 앵커는 그 종류의 필드만 갖는다. 초안의 주소(문단·낱말 범위·범위·표 서수와 칸·개체 서수)가 문서에 없으면 모든 종류에서 `FILL_DRAFT_ADDRESS`.
 - 판정 순서: 주소의 지문이 맞으면 다른 곳에 같은 지문의 복제본이 있어도 exact다(exact가 ambiguous보다 앞선다). 복제가 ambiguous로 나오는 것은 원래 주소가 어긋났을 때다.

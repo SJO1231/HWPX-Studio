@@ -7,6 +7,7 @@ import {
   censusOfDoc,
   compareToBaseline,
   compileDocument,
+  detectHeadings,
   emptyTemplate,
   exportModel,
   extractFragment,
@@ -212,6 +213,28 @@ export function candidates(args: string[], out: Out): number {
   }
   out.log(`후보 자리 ${found.length}개`);
   for (const c of found) out.log(`  [${c.kind}] 구역 ${c.at.sectionIndex} 주소 [${c.at.path.join(", ")}] ${c.evidence}`);
+  return 0;
+}
+
+// ── headings ────────────────────────────────────────────────────
+
+/**
+ * 탐지한 제목(7.10): 한 줄에 `구역:상위주소:문단 번호  단계  꼴  글 앞 40자`(상위 주소는 `문단.하위목록` 짝, 구역 최상위는 `-`).
+ * 글은 `Heading.text`(개체 자리 글자를 뺀 앞 40자)에서 줄바꿈·탭을 공백으로 바꿔 한 줄을 지킨다. `--json`은 `detectHeadings` 결과 그대로의 배열.
+ */
+export function headings(args: string[], out: Out): number {
+  const usage = "hwpx headings <파일> [--json]";
+  const p = parse(args, { json: { type: "boolean" } }, { min: 1, max: 1 }, usage);
+  const file = p.positionals[0] ?? "";
+  rejectText(file, "headings");
+  const { doc } = openDocument(file);
+  const found = detectHeadings(doc);
+  if (flag(p, "json")) {
+    out.log(json(found));
+    return 0;
+  }
+  out.log(`제목 ${found.length}개`);
+  for (const h of found) out.log(`  ${h.at.sectionIndex}:${h.at.parentPath.length === 0 ? "-" : h.at.parentPath.join(".")}:${h.index}  ${h.marker.level}  ${h.marker.form}  ${h.text.replace(/[\r\n\t]/g, " ")}`);
   return 0;
 }
 

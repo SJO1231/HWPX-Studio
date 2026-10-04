@@ -187,7 +187,8 @@ function readObjectPrint(v: unknown, where: string): ObjectPrint {
   };
 }
 
-const V1_KINDS: readonly string[] = ["field", "word", "line", "cell", "object"];
+/** 1판 읽기(`readAnchor`)로 검사하는 종류: 1판 5종과 headingRange(1판도 받는다) */
+const V1_KINDS: readonly string[] = ["field", "word", "line", "cell", "object", "headingRange"];
 
 function readStudioAnchor(v: unknown, index: number): StudioAnchor {
   const where = `anchors[${index}]`;
@@ -196,9 +197,8 @@ function readStudioAnchor(v: unknown, index: number): StudioAnchor {
   const kind = a["kind"];
   if (kind === "range") return readRangeAnchor(a, where);
   if (kind === "mergeField") return readMergeFieldAnchor(a, where);
-  if (kind === "headingRange") fail(A, "headingRange는 아직 지원하지 않습니다(이름만 예약).", where);
-  if (typeof kind !== "string" || !V1_KINDS.includes(kind)) fail(A, `알 수 없는 앵커 종류 ${JSON.stringify(kind)}입니다(field·word·line·cell·object·range·mergeField).`, where);
-  // 1판 5종은 1판 읽기로 검사하고, 2판에서만 받는 pattern(모든 앵커)과 print(cell·object)는 따로 읽는다
+  if (typeof kind !== "string" || !V1_KINDS.includes(kind)) fail(A, `알 수 없는 앵커 종류 ${JSON.stringify(kind)}입니다(field·word·line·cell·object·range·headingRange·mergeField).`, where);
+  // 1판 5종과 headingRange는 1판 읽기로 검사하고, 2판에서만 받는 pattern(모든 앵커)과 print(cell·object)는 따로 읽는다
   const rest: Obj = { ...a };
   delete rest["pattern"];
   if (kind === "cell" || kind === "object") delete rest["print"];
@@ -402,6 +402,8 @@ const TOP_KEYS = ["schema", "id", "version", "meta", "source", "anchors", "patte
 /** 슬롯 앵커가 차지하는 문단 구간: 같은 구역·부모 안의 [from, to] */
 function slotSpan(a: StudioAnchor): { parent: string; from: number; to: number } | undefined {
   if (a.kind === "range") return { parent: `${a.at.sectionIndex}|${a.at.parentPath.join(",")}`, from: a.from, to: a.to };
+  // 제목 범위: 템플릿을 만들 때의 범위(제목 문단부터 지문의 문단 수만큼)
+  if (a.kind === "headingRange") return { parent: `${a.at.sectionIndex}|${a.at.parentPath.join(",")}`, from: a.index, to: a.index + a.print.count - 1 };
   if (a.kind === "line") {
     const last = a.at.path[a.at.path.length - 1] ?? 0;
     return { parent: `${a.at.sectionIndex}|${a.at.path.slice(0, -1).join(",")}`, from: last, to: last };
@@ -445,7 +447,7 @@ function checkRefs(t: StudioTemplate): void {
 
   t.anchors.forEach((a, i) => {
     if (a.pattern !== undefined && !patternIds.has(a.pattern)) fail("TPL_REF", `패턴 ${JSON.stringify(a.pattern)}가 patterns에 없습니다.`, `anchors[${i}].pattern`);
-    if (md && (a.kind === "mergeField" || a.kind === "range")) fail(A, `md 템플릿에는 ${a.kind} 앵커를 쓸 수 없습니다(표식 줄 line 등 9절의 앵커를 씁니다).`, `anchors[${i}]`);
+    if (md && (a.kind === "mergeField" || a.kind === "range" || a.kind === "headingRange")) fail(A, `md 템플릿에는 ${a.kind} 앵커를 쓸 수 없습니다(표식 줄 line 등 9절의 앵커를 씁니다).`, `anchors[${i}]`);
   });
   const bound = new Set<string>();
   t.bindings.forEach((b, i) => {
@@ -468,7 +470,7 @@ function checkRefs(t: StudioTemplate): void {
     s.anchors.forEach((id, j) => {
       const a = anchors.get(id);
       if (a === undefined) fail("TPL_REF", `슬롯이 가리키는 앵커 ${JSON.stringify(id)}가 anchors에 없습니다.`, `slots[${i}].anchors[${j}]`);
-      if (a.kind !== "range" && a.kind !== "line") fail(A, `슬롯 앵커는 range나 line이어야 합니다(앵커 ${JSON.stringify(id)}는 ${a.kind}).`, `slots[${i}].anchors[${j}]`);
+      if (a.kind !== "range" && a.kind !== "headingRange" && a.kind !== "line") fail(A, `슬롯 앵커는 range·headingRange·line이어야 합니다(앵커 ${JSON.stringify(id)}는 ${a.kind}).`, `slots[${i}].anchors[${j}]`);
     });
     if (s.parent !== null && !blocks.has(s.parent)) fail("TPL_REF", `슬롯의 부모 블록 ${JSON.stringify(s.parent)}가 blocks에 없습니다.`, `slots[${i}].parent`);
   });

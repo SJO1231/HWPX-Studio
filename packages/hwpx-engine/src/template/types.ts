@@ -1,6 +1,6 @@
 import type { Issue } from "../errors.ts";
 // 앵커 지문의 형은 `fill/anchor-types.ts`가 정의한다(문서 모델을 가져오지 않는 순수 형이다).
-import type { CellPrint, ObjectPrint, RangeAnchor } from "../fill/anchor-types.ts";
+import type { CellPrint, HeadingRangeAnchor, ObjectPrint, RangeAnchor } from "../fill/anchor-types.ts";
 
 // 이 폴더는 문서 형식을 모른다(8.5). HWPX 모델을 import하지 않는다.
 
@@ -37,7 +37,7 @@ export type CellAnchor = {
   print?: CellPrint;
 };
 export type ObjectAnchor = { id: string; kind: "object"; objectType: string; sectionIndex: number; ordinal: number; print?: ObjectPrint };
-export type Anchor = FieldAnchor | WordAnchor | LineAnchor | CellAnchor | ObjectAnchor | RangeAnchor;
+export type Anchor = FieldAnchor | WordAnchor | LineAnchor | CellAnchor | ObjectAnchor | RangeAnchor | HeadingRangeAnchor;
 export type AnchorKind = Anchor["kind"];
 
 // ── 조건 ────────────────────────────────────────────────────────
