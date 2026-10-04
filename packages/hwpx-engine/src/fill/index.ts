@@ -27,3 +27,4 @@ export { findCandidates, type Candidate, type CandidateKind, type AnchorDraft } 
 export { draftAnchors, type DraftBlock, type DraftedAnchor, type DraftRequest } from "./draft.ts";
 export { generateFromTemplate } from "./generate-studio.ts";
 export type { BlobLoader, CoveredPlace, StudioGenerateOptions, StudioGenerateReport, StudioGenerateResult, StudioLedger, StudioValueReport } from "./studio-common.ts";
+export { checkAnchors, planRelocation, redraftAnchor, type AnchorAddress, type AnchorCheck, type AnchorCheckState, type RedraftInput } from "./check-anchors.ts";
