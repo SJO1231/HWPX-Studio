@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { stripTypeScriptTypes } from 'node:module';
 import { cleanPath, resolveShared, HostError } from '../../../packages/viewer/src/host/index.ts';
 import { createQuick } from './quick-api.ts';
+import {previewSelection,generateSelection} from './selection.ts';
 import { plainOf } from './quick-messages.ts';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, mkdirSync } from 'node:fs';
@@ -43,7 +44,7 @@ export function createApp(database=':memory:') {
         }
         if(path==='/api/demo')return send(200,demo());
         if(path==='/api/demo-sources')return send(200,demoSources);
-        const files:Record<string,string>={'/':'web/quick.html','/template':'web/index.html','/quick.js':'web/quick.js','/quick.css':'web/quick.css','/app.js':'web/app.js','/style.css':'web/style.css','/rhwp.js':'vendor/rhwp/rhwp.js','/rhwp_bg.wasm':'vendor/rhwp/rhwp_bg.wasm'};
+        const files:Record<string,string>={'/':'web/quick.html','/selection':'web/selection.html','/selection.js':'web/selection.js','/template':'web/index.html','/quick.js':'web/quick.js','/quick.css':'web/quick.css','/app.js':'web/app.js','/style.css':'web/style.css','/rhwp.js':'vendor/rhwp/rhwp.js','/rhwp_bg.wasm':'vendor/rhwp/rhwp_bg.wasm'};
         const shared=cleanPath(path);
         const sharedFile=shared===undefined?undefined:resolveShared(shared);
         if(sharedFile){
@@ -62,6 +63,16 @@ export function createApp(database=':memory:') {
       const chunks:Buffer[]=[];let size=0;
       for await(const chunk of req){size+=chunk.length;if(size>32*1024*1024)return send(413,{error:'요청은 32MB 이내여야 합니다.'});chunks.push(chunk);}
       const input=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      if(path.startsWith('/api/selection/')) {
+        assert(input&&typeof input==='object'&&!Array.isArray(input),'선택 요청을 확인하세요.');
+        if(path==='/api/selection/preview')return send(200,previewSelection(input));
+        if(path==='/api/selection/generate') {
+          const result=generateSelection(input);
+          if(!result.ok||result.dryRun)return send(422,{error:'선택과 데이터 연결을 확인하세요.',code:result.report.issues.find(i=>i.severity==='error')?.code,report:result.report});
+          const isText=typeof result.output==='string';return send(200,isText?new TextEncoder().encode(result.output as string):result.output,isText?'text/markdown; charset=utf-8':'application/vnd.hancom.hwpx',{'Content-Disposition':`attachment; filename="document.${isText?'md':'hwpx'}"`});
+        }
+        return send(404,{error:'없는 선택 요청입니다.'});
+      }
       if(path.startsWith('/api/quick/'))return send(200,quick.post(path,input));
       if(path==='/api/g2b/profiles') {
         if(!req.headers.origin)return send(403,{error:'생성 프로필은 Studio의 Helper 연결 화면에서 설정하세요.'});
