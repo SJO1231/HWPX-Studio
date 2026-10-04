@@ -24,7 +24,7 @@ import { digestValue, lookupPath, resolvePathValue, resolveValue } from "../temp
 import { resolveAnchors, type ResolvedAnchor } from "./anchors.ts";
 import { addDelta, deltaOfElements, deltaRecord, scaleDelta, zeroDelta, type Delta } from "./census.ts";
 import { applyRepls, groupBy, hasSecPr, siblingsAtPath, type Repl } from "./doc.ts";
-import { collectFields, fieldFillBlock, planFieldFill, type FieldFill, type FieldTarget } from "./fields.ts";
+import { collectFields, fieldAnchorMatches, fieldFillBlock, fieldRangeIn, planFieldFill, type FieldFill, type FieldTarget } from "./fields.ts";
 import { fillFragment } from "./fragment-fill.ts";
 import { fillPlaceholders } from "./placeholders.ts";
 import { buildParagraphs, planRowDeletes, splitLines } from "./structure.ts";
@@ -101,8 +101,18 @@ type DeleteCand = {
   section: SectionModel;
 };
 
-/** 오류 메시지 앞에 붙일 이름: 규칙은 `규칙 r1`, 문서 안 `{{경로}}` 자리는 그 표기. */
-const labelOf = (id: string): string => (id.startsWith("{{") ? id : id.startsWith("field:") ? `누름틀 ${id.slice("field:".length)}` : `규칙 ${id}`);
+/** 오류 메시지 앞에 붙일 이름: 규칙은 `규칙 r1`, 문서 안 `{{경로}}` 자리는 그 표기, 암묵 채움의 필드는 `누름틀 이름`·`메일 머지 키`. */
+const labelOf = (id: string): string =>
+  id.startsWith("{{") ? id : id.startsWith("field:") ? `누름틀 ${id.slice("field:".length)}` : id.startsWith("merge:") ? `메일 머지 ${id.slice("merge:".length)}` : `규칙 ${id}`;
+
+/** 암묵 채움이 맡는 필드: 누름틀(`CLICK_HERE`)과 키가 있는 메일 머지 필드(`MAILMERGE`). 다른 종류의 필드(책갈피·날짜 등)와 키 없는 메일 머지 필드는 채우지 않고 보고에도 넣지 않는다. */
+const isImplicitKind = (t: FieldTarget): boolean => t.info.type === "CLICK_HERE" || (t.info.type === "MAILMERGE" && t.info.mergeKey !== undefined);
+/** 암묵 채움이 데이터 경로로 보는 값: 누름틀은 이름, 메일 머지 필드는 키. */
+const pathOfField = (t: FieldTarget): string => (t.info.type === "MAILMERGE" ? (t.info.mergeKey ?? "") : t.info.name);
+/** 암묵 채움의 보고·메시지에 쓰는 자리 이름: 누름틀은 `field:이름`, 메일 머지 필드는 `merge:키`. */
+const fieldIdOf = (t: FieldTarget): string => `${t.info.type === "MAILMERGE" ? "merge" : "field"}:${pathOfField(t)}`;
+/** 문장 주어로 쓰는 필드 이름(조사 포함): 누름틀은 `누름틀 이름이`, 메일 머지 필드는 키 끝 글자와 상관없는 `메일 머지 필드(키 …)가`. */
+const subjectOf = (t: FieldTarget): string => (t.info.type === "MAILMERGE" ? `메일 머지 필드(키 ${pathOfField(t)})가` : `${labelOf(fieldIdOf(t))}이`);
 const issueFor = (code: string, message: string, id: string): Issue => makeIssue("error", code, `${labelOf(id)}: ${message}`, id);
 
 function isOnlyObject(par: ParagraphNode, obj: ObjectNode): boolean {
@@ -521,14 +531,14 @@ export function buildFillPlan(
     if (sp.merge !== undefined) {
       const { between, tables } = sp.merge;
       issues.push(
-        makeIssue("warning", "FIELD_PARAGRAPHS_MERGED", `누름틀 ${target.info.name}이 걸친 문단 ${between + 2}개를 합쳤고 사이의 문단 ${between}개를 지웠습니다(그 안의 표 ${tables}개 포함).`, label),
+        makeIssue("warning", "FIELD_PARAGRAPHS_MERGED", `${subjectOf(target)} 걸친 문단 ${between + 2}개를 합쳤고 사이의 문단 ${between}개를 지웠습니다(그 안의 표 ${tables}개 포함).`, label),
       );
     }
     // 구간 안에 통째로 들어 함께 지워지는 다른 종류의 필드(하이퍼링크·날짜 등)와 책갈피
     const removed = new Map<string, number>();
     for (const x of sp.removed) removed.set(`${x.kind}:${x.name}`, (removed.get(`${x.kind}:${x.name}`) ?? 0) + 1);
     for (const [anchor, n] of removed) {
-      report.dropped.push({ ruleId: "implicit", anchor, reason: `누름틀 ${target.info.name}이 지우는 구간 안에 있어 함께 지웠습니다${n > 1 ? `(${n}곳)` : ""}.` });
+      report.dropped.push({ ruleId: "implicit", anchor, reason: `${subjectOf(target)} 지우는 구간 안에 있어 함께 지웠습니다${n > 1 ? `(${n}곳)` : ""}.` });
     }
   };
   /** 이 누름틀이 삭제·교체되는 문단 안인가 */
@@ -563,19 +573,28 @@ export function buildFillPlan(
   /** 삭제·교체되는 문단 안이거나 반복할 원형 행 안이거나 다른 누름틀의 구간 치환으로 지워지는 누름틀 */
   const implicitGone = (target: FieldTarget): boolean =>
     fieldDeleted(target) || fieldSpanOver(target) !== undefined || repeatRows.some((x) => within(x.range, rangeOf(target.section, target.paragraph.element)));
-  const isClaimed = (target: FieldTarget): boolean => claimed.some((a) => a.name === target.info.name && (a.occurrence === undefined || a.occurrence === target.info.occurrence));
-  const implicitTargets = collectFields(doc).filter((t) => t.info.type === "CLICK_HERE" && !isClaimed(t));
+  const isClaimed = (target: FieldTarget): boolean => claimed.some((a) => fieldAnchorMatches(a, target.info));
+  const allFields = collectFields(doc);
+  const implicitTargets = allFields.filter((t) => isImplicitKind(t) && !isClaimed(t));
   const implicitPlans = new Map<FieldTarget, FieldFill>();
   for (const target of implicitTargets) {
-    const { name } = target.info;
+    const name = pathOfField(target);
     if (!hasSpan(target) || !isValidPath(name) || fieldFillBlock(target) !== undefined || implicitGone(target)) continue;
     const value = resolvePathValue(dataset, name, policy);
     if (value.kind === "error" || value.kind === "keep") continue;
-    const fill = planFieldFill(ctxOf(target.section), target, value.kind === "text" ? value.text : "", `누름틀 ${name} 채움`);
+    const fill = planFieldFill(ctxOf(target.section), target, value.kind === "text" ? value.text : "", `${labelOf(fieldIdOf(target))} 채움`);
     if ("fail" in fill) continue;
     implicitPlans.set(target, fill);
-    registerSpan(target, fill, `field:${name}`);
+    registerSpan(target, fill, fieldIdOf(target));
   }
+  // 메일 머지 필드의 표시 글(`{{키}}`나 옛 값)은 필드 자리가 맡는다: 규칙이 가리키는 필드이거나 암묵 채움이 채울 수 있는 필드면, 그 글 안의 `{{경로}}` 자리는 채우지 않고 버린다(3b).
+  const mergeOwned = allFields.filter((t) => t.info.type === "MAILMERGE" && (isClaimed(t) || (isValidPath(pathOfField(t)) && fieldFillBlock(t) === undefined && !implicitGone(t))));
+  /** 문단 `par`의 논리 구간 `[start, end)`이 메일 머지 필드가 맡는 표시 글에 걸치는가 */
+  const mergeOwnedAt = (par: ParagraphNode, start: number, end: number): boolean =>
+    mergeOwned.some((t) => {
+      const r = fieldRangeIn(t, par);
+      return r !== undefined && start < r.until && end > r.from;
+    });
 
   const insertEdits: SpanEdit[] = [];
   let insertDelta = zeroDelta();
@@ -913,8 +932,8 @@ export function buildFillPlan(
       mixed,
       (par, start, end) => {
         const r = rangeOf(section, par.element);
-        // 문단 전체가 삭제·교체·구간 치환의 구간 안이거나, 구간 치환이 지우는 문단 일부(시작 문단의 표식 뒤, 끝 문단의 표식 앞)에 자리가 걸친다
-        return isDeleted(r) || isReplaced(r) || goneOver(par, start, end) !== undefined;
+        // 문단 전체가 삭제·교체·구간 치환의 구간 안이거나, 구간 치환이 지우는 문단 일부(시작 문단의 표식 뒤, 끝 문단의 표식 앞)에 자리가 걸치거나, 메일 머지 필드가 맡는 표시 글 안이다
+        return isDeleted(r) || isReplaced(r) || goneOver(par, start, end) !== undefined || mergeOwnedAt(par, start, end);
       },
       (par, path) => {
         const r = rangeOf(section, par.element);
@@ -946,27 +965,33 @@ export function buildFillPlan(
     report.actions.push({ ruleId: "implicit", type: "fill", anchor: `{{${path}}}`, targets: x.count, value: x.value });
   }
   for (const [path, n] of [...implicitDropped].sort(([a], [b]) => (a < b ? -1 : 1))) {
-    report.dropped.push({ ruleId: "implicit", anchor: `{{${path}}}`, reason: `삭제·교체되는 범위 안의 자리 ${n}곳을 버렸습니다.` });
+    report.dropped.push({ ruleId: "implicit", anchor: `{{${path}}}`, reason: `삭제·교체되는 범위나 메일 머지 필드가 맡는 표시 글 안의 자리 ${n}곳을 버렸습니다.` });
   }
 
-  // ── 3c. 누름틀 암묵 채움 ────────────────────────────────────
-  // `type="CLICK_HERE"`인 필드(누름틀)만 대상이다. 책갈피·날짜·메일 머지 같은 다른 종류의 필드는 채우지 않고 보고(`skipped`·`required`·`dropped`)에도 넣지 않는다.
-  // 템플릿이 없거나 템플릿에 그 누름틀을 가리키는 규칙(조건이 거짓인 것도)이 없으면, 이름이 데이터 경로 문법에 맞는 누름틀은 "이름 = 데이터 경로"로 채운다
-  // (`{{}}`의 암묵 채움과 같은 누락 정책·보고). 같은 이름의 누름틀은 전부 같은 값이다. 규칙이 가리키는 필드는(type과 무관하게) 그 규칙이 맡는다.
+  // ── 3c. 누름틀·메일 머지 필드 암묵 채움 ──────────────────────
+  // `type="CLICK_HERE"`인 필드(누름틀)와 `type="MAILMERGE"`인 필드(메일 머지 필드)만 대상이다. 책갈피·날짜 같은 다른 종류의 필드는 채우지 않고 보고(`skipped`·`required`·`dropped`)에도 넣지 않는다.
+  // 템플릿이 없거나 템플릿에 그 필드를 가리키는 규칙(조건이 거짓인 것도)이 없으면, 이름(메일 머지 필드는 키)이 데이터 경로 문법에 맞는 필드는 "이름 = 데이터 경로"로 채운다
+  // (`{{}}`의 암묵 채움과 같은 누락 정책·보고). 같은 이름(키)의 필드는 전부 같은 값이다. 규칙이 가리키는 필드는(type과 무관하게) 그 규칙이 맡는다.
+  // 메일 머지 필드는 누름틀과 같은 코드(`fieldFillBlock`·`planFieldFill`·구간 치환)로 채운다. 필드의 매개변수·type·그 밖의 속성은 건드리지 않고(`dirty`는 누름틀과 같게 "1"), 보고에는 `field:` 대신 `merge:`를 쓴다.
   const implicitFields = new Map<string, { count: number; value: ValueDigest }>();
   const implicitFieldDropped = new Map<string, number>();
   const bumpName = (m: Map<string, number>, name: string): void => void m.set(name, (m.get(name) ?? 0) + 1);
   for (const target of implicitTargets) {
-    const { name } = target.info;
-    const id = `field:${name}`;
+    const name = pathOfField(target);
+    const id = fieldIdOf(target);
+    const merge = target.info.type === "MAILMERGE";
     const where = `${target.section.entryName} [${target.paragraph.path.join(", ")}]`;
     // 다른 누름틀의 구간 치환이 지우는 구간 안의 누름틀은 이름·모양과 상관없이 함께 사라진다
     if (fieldSpanOver(target) !== undefined) {
-      bumpName(implicitFieldDropped, name);
+      bumpName(implicitFieldDropped, id);
       continue;
     }
     if (!isValidPath(name)) {
-      report.skipped.push({ ruleId: "implicit", anchor: id, code: "FIELD_NAME_NOT_PATH", message: "누름틀 이름이 데이터 경로(글자·숫자·_·-를 .으로 이은 꼴)가 아니라 채우지 않고 그대로 둡니다.", where });
+      if (merge) {
+        report.skipped.push({ ruleId: "implicit", anchor: id, code: "MERGE_KEY_NOT_PATH", message: `메일 머지 필드의 키 '${name}'이(가) 데이터 경로(글자·숫자·_·-를 .으로 이은 꼴)가 아니라 채우지 않고 그대로 둡니다.`, where });
+      } else {
+        report.skipped.push({ ruleId: "implicit", anchor: id, code: "FIELD_NAME_NOT_PATH", message: "누름틀 이름이 데이터 경로(글자·숫자·_·-를 .으로 이은 꼴)가 아니라 채우지 않고 그대로 둡니다.", where });
+      }
       continue;
     }
     const block = fieldFillBlock(target);
@@ -976,7 +1001,7 @@ export function buildFillPlan(
     }
     // 삭제·교체되는 문단 안이거나 반복할 원형 행 안의 누름틀, 다른 누름틀의 구간 치환으로 지워지는 누름틀은 채우지 않는다
     if (implicitGone(target)) {
-      bumpName(implicitFieldDropped, name);
+      bumpName(implicitFieldDropped, id);
       continue;
     }
     required.add(name);
@@ -992,19 +1017,19 @@ export function buildFillPlan(
     }
     if (value.kind === "empty") missingPaths.add(name);
     const text = value.kind === "text" ? value.text : "";
-    const fill = implicitPlans.get(target) ?? planFieldFill(ctxOf(target.section), target, text, `누름틀 ${name} 채움`);
+    const fill = implicitPlans.get(target) ?? planFieldFill(ctxOf(target.section), target, text, `${labelOf(id)} 채움`);
     if ("fail" in fill) {
       issues.push(issueFor(fill.fail.code, fill.fail.message, id));
       continue;
     }
     commitField(id, target, fill);
-    implicitFields.set(name, { count: (implicitFields.get(name)?.count ?? 0) + 1, value: digestValue(text) });
+    implicitFields.set(id, { count: (implicitFields.get(id)?.count ?? 0) + 1, value: digestValue(text) });
   }
-  for (const [name, x] of [...implicitFields].sort(([a], [b]) => (a < b ? -1 : 1))) {
-    report.actions.push({ ruleId: "implicit", type: "fill", anchor: `field:${name}`, targets: x.count, value: x.value });
+  for (const [id, x] of [...implicitFields].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    report.actions.push({ ruleId: "implicit", type: "fill", anchor: id, targets: x.count, value: x.value });
   }
-  for (const [name, n] of [...implicitFieldDropped].sort(([a], [b]) => (a < b ? -1 : 1))) {
-    report.dropped.push({ ruleId: "implicit", anchor: `field:${name}`, reason: `삭제·교체되는 범위나 반복할 원형 행 안의 누름틀 ${n}곳을 채우지 않았습니다.` });
+  for (const [id, n] of [...implicitFieldDropped].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    report.dropped.push({ ruleId: "implicit", anchor: id, reason: `삭제·교체되는 범위나 반복할 원형 행 안의 ${id.startsWith("merge:") ? "메일 머지 필드" : "누름틀"} ${n}곳을 채우지 않았습니다.` });
   }
 
   // ── 4. 같은 자리 충돌과 중복 정리 ───────────────────────────

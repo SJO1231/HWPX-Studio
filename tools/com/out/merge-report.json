@@ -1,0 +1,710 @@
+{
+  "merge-fields": {
+    "hancom_version": "13, 0, 0, 711",
+    "reopen": {
+      "ok": true,
+      "page_count": 1
+    },
+    "structure": {
+      "file": "merge-fields.hwpx",
+      "bytes": 36277,
+      "sha256": "0b9366743a7e5f8475ad539bb645b482f376c1497747a7fea33f1f28726ec030",
+      "sections": 1,
+      "top_level_paragraphs": 17,
+      "paragraph_texts": [
+        "합성 공고서 서식 (시험용)",
+        "사업명: 예전 값 123 입니다.",
+        "기관 {{기관명}} 은(는) {{사업명}} 을(를) 공고합니다.",
+        "공고번호 {{공고번호}}, 시행일 2024-01-01, 접수기간 {{접수기간}}.",
+        "굵게: {{추정가격}}",
+        "담당: {{담당자}} (미정) 비고 {{참고 사항}}.",
+        "계약방법 {{계약 방법(수의)}} 이며 장소는 {{장소}} 입니다.",
+        "금액 [   ] / 예정가격 {{예정가격}} / 부가세 {{부가세}}.",
+        "재공고 {{재공고}} 사유 해당 없음.",
+        "성명: 이름을 입력",
+        "소속: 소속 입력",
+        "{{project.name}} / {{project.start}} ~ {{project.end}}.",
+        "",
+        "표 아래 문단. 담당 {{담당자}} 확인.",
+        "{{dates.start}} ~ {{dates.end}} ({{dates.days}}일).",
+        "",
+        "끝."
+      ],
+      "tables": [
+        {
+          "rows": 6,
+          "cols": 3,
+          "cell_texts": {
+            "0,0": "구분",
+            "0,1": "내용",
+            "0,2": "비고",
+            "1,0": "사업명",
+            "1,1": "{{사업명}}",
+            "1,2": "{{공고번호}}",
+            "2,0": "추정가격",
+            "2,1": "{{추정가격}}",
+            "2,2": "00,000,000",
+            "3,0": "기간",
+            "3,1": "{{접수기간}}",
+            "3,2": "{{시행일}}",
+            "4,0": "기관",
+            "4,1": "{{기관명}}",
+            "4,2": "홍길동",
+            "5,0": "연락처",
+            "5,1": "{{연락처}}",
+            "5,2": "{{장소}}"
+          }
+        },
+        {
+          "rows": 4,
+          "cols": 2,
+          "cell_texts": {
+            "0,0": "이름",
+            "0,1": "이름 입력",
+            "1,0": "직위",
+            "1,1": "직위 입력",
+            "2,0": "연락처",
+            "2,1": "{{manager.phone}}",
+            "3,0": "메일",
+            "3,1": "{{manager.email}}"
+          }
+        }
+      ],
+      "counts": {
+        "mailmerge_fields": 33,
+        "mailmerge_in_header": 2,
+        "mailmerge_in_footer": 3,
+        "mailmerge_in_body": 28,
+        "mailmerge_not_path_key": 4,
+        "mailmerge_guide_display": 8,
+        "click_here": 4,
+        "placeholders": 8
+      },
+      "fields": [
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "기관명",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "기관명"
+          },
+          "key": "기관명",
+          "display": "{{기관명}}",
+          "area": "footer",
+          "begin_run": "0"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "담당자",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "담당자"
+          },
+          "key": "담당자",
+          "display": "(입력 전)",
+          "area": "footer",
+          "begin_run": "0"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "연락처",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "연락처"
+          },
+          "key": "연락처",
+          "display": "{{연락처}}",
+          "area": "footer",
+          "begin_run": "0"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "공고번호",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "공고번호"
+          },
+          "key": "공고번호",
+          "display": "{{공고번호}}",
+          "area": "header",
+          "begin_run": "2"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "사업명",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "사업명"
+          },
+          "key": "사업명",
+          "display": "{{사업명}}",
+          "area": "header",
+          "begin_run": "2"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "사업명",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "사업명"
+          },
+          "key": "사업명",
+          "display": "예전 값 123",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "기관명",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "기관명"
+          },
+          "key": "기관명",
+          "display": "{{기관명}}",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "사업명",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "사업명"
+          },
+          "key": "사업명",
+          "display": "{{사업명}}",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "공고번호",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "공고번호"
+          },
+          "key": "공고번호",
+          "display": "{{공고번호}}",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "시행일",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "시행일"
+          },
+          "key": "시행일",
+          "display": "2024-01-01",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "접수기간",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "접수기간"
+          },
+          "key": "접수기간",
+          "display": "{{접수기간}}",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "추정가격",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "추정가격"
+          },
+          "key": "추정가격",
+          "display": "{{추정가격}}",
+          "area": "body",
+          "begin_run": "7"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "담당자",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "담당자"
+          },
+          "key": "담당자",
+          "display": "{{담당자}}",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "연락처",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "연락처"
+          },
+          "key": "연락처",
+          "display": "미정",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "참고 사항",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "참고 사항"
+          },
+          "key": "참고 사항",
+          "display": "{{참고 사항}}",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "계약 방법(수의)",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "계약 방법(수의)"
+          },
+          "key": "계약 방법(수의)",
+          "display": "{{계약 방법(수의)}}",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "장소",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "장소"
+          },
+          "key": "장소",
+          "display": "{{장소}}",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "추정가격",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "추정가격"
+          },
+          "key": "추정가격",
+          "display": "[   ]",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "예정가격",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "예정가격"
+          },
+          "key": "예정가격",
+          "display": "{{예정가격}}",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "부가세",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "부가세"
+          },
+          "key": "부가세",
+          "display": "{{부가세}}",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "재공고",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "재공고"
+          },
+          "key": "재공고",
+          "display": "{{재공고}}",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "사유 설명",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "사유 설명"
+          },
+          "key": "사유 설명",
+          "display": "해당 없음",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "CLICK_HERE",
+          "name": "성명",
+          "dirty": "0",
+          "editable": "1",
+          "params": {
+            "Prop": "9",
+            "Command": "Clickhere:set:48:Direction:wstring:6:이름을 입력 HelpState:wstring:0:  ",
+            "Direction": "이름을 입력"
+          },
+          "key": null,
+          "display": "이름을 입력",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "CLICK_HERE",
+          "name": "소속",
+          "dirty": "0",
+          "editable": "1",
+          "params": {
+            "Prop": "9",
+            "Command": "Clickhere:set:47:Direction:wstring:5:소속 입력 HelpState:wstring:0:  ",
+            "Direction": "소속 입력"
+          },
+          "key": null,
+          "display": "소속 입력",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "사업명",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "사업명"
+          },
+          "key": "사업명",
+          "display": "{{사업명}}",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "공고번호",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "공고번호"
+          },
+          "key": "공고번호",
+          "display": "{{공고번호}}",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "추정가격",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "추정가격"
+          },
+          "key": "추정가격",
+          "display": "{{추정가격}}",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "참고 사항",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "참고 사항"
+          },
+          "key": "참고 사항",
+          "display": "00,000,000",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "접수기간",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "접수기간"
+          },
+          "key": "접수기간",
+          "display": "{{접수기간}}",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "시행일",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "시행일"
+          },
+          "key": "시행일",
+          "display": "{{시행일}}",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "기관명",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "기관명"
+          },
+          "key": "기관명",
+          "display": "{{기관명}}",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "담당자",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "담당자"
+          },
+          "key": "담당자",
+          "display": "홍길동",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "연락처",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "연락처"
+          },
+          "key": "연락처",
+          "display": "{{연락처}}",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "장소",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "장소"
+          },
+          "key": "장소",
+          "display": "{{장소}}",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "MAILMERGE",
+          "name": "",
+          "dirty": "0",
+          "editable": "0",
+          "params": {
+            "Fiexde": "1",
+            "Prop": "8",
+            "Command": "담당자",
+            "FieldType": "USER_DEFINE",
+            "FieldValue": "담당자"
+          },
+          "key": "담당자",
+          "display": "{{담당자}}",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "CLICK_HERE",
+          "name": "이름",
+          "dirty": "0",
+          "editable": "1",
+          "params": {
+            "Prop": "9",
+            "Command": "Clickhere:set:47:Direction:wstring:5:이름 입력 HelpState:wstring:0:  ",
+            "Direction": "이름 입력"
+          },
+          "key": null,
+          "display": "이름 입력",
+          "area": "body",
+          "begin_run": "0"
+        },
+        {
+          "type": "CLICK_HERE",
+          "name": "직위",
+          "dirty": "0",
+          "editable": "1",
+          "params": {
+            "Prop": "9",
+            "Command": "Clickhere:set:47:Direction:wstring:5:직위 입력 HelpState:wstring:0:  ",
+            "Direction": "직위 입력"
+          },
+          "key": null,
+          "display": "직위 입력",
+          "area": "body",
+          "begin_run": "0"
+        }
+      ],
+      "privacy_clean": true,
+      "exact_text_mismatches": []
+    }
+  }
+}

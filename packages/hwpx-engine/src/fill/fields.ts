@@ -8,6 +8,7 @@ import { addDelta, deltaOfElements, type Delta } from "./census.ts";
 import { paragraphAtPath, hasSecPr, isTextPiece, nsPrefixOf, siblingsAtPath } from "./doc.ts";
 import { encodeValue, span, valueXml, type Ctx, type Fail, type TextPlan } from "./text.ts";
 import type { SpanEdit } from "../edit/plan.ts";
+import type { FieldAnchor } from "../template/types.ts";
 
 /** 누름틀 하나: 시작·끝 표식과 그 문단. */
 export type FieldTarget = {
@@ -24,7 +25,17 @@ export type FieldTarget = {
   end: FieldMark | null;
 };
 
-/** 문서의 누름틀을 `listFields`의 순서와 이름·순번 그대로, 표식과 함께 모은다. */
+/** 이 필드를 가리키는 `field` 앵커 초안(`id` 없이): 키가 있는 메일 머지 필드는 `mergeKey`, 그 밖은 `name`. 순번은 같은 이름(키) 안의 것이다. */
+export function fieldAnchorOf(info: FieldInfo): Omit<FieldAnchor, "id"> {
+  return info.mergeKey === undefined ? { kind: "field", name: info.name, occurrence: info.occurrence } : { kind: "field", mergeKey: info.mergeKey, occurrence: info.occurrence };
+}
+
+/** 이 `field` 앵커가 이 필드를 가리키는가: `mergeKey`를 주면 키가 같은 메일 머지 필드, 아니면 이름이 같은 필드. 순번을 주면 그 순번만. */
+export function fieldAnchorMatches(anchor: FieldAnchor, info: FieldInfo): boolean {
+  return (anchor.mergeKey === undefined ? info.name === anchor.name : info.mergeKey === anchor.mergeKey) && (anchor.occurrence === undefined || info.occurrence === anchor.occurrence);
+}
+
+/** 문서의 필드를 `listFields`의 순서와 이름·순번 그대로, 표식과 함께 모은다. */
 export function collectFields(doc: HwpxDocument): FieldTarget[] {
   const perParagraph = new Map<string, number>();
   const out: FieldTarget[] = [];
@@ -62,8 +73,8 @@ export type FieldSpan = {
   /** 이 치환이 더하는 수량(지워지는 문단·표·그림은 음수) */
   delta: Delta;
   /**
-   * 구간 안에 통째로 들어 함께 지워지는 `CLICK_HERE`가 아닌 필드(하이퍼링크·날짜 등)와 책갈피(문서 순서). 여러 문단에 걸칠 때만 센다.
-   * 구간 안의 누름틀(`CLICK_HERE`)은 여기에 없다(암묵 채움 대상이면 호출자가 따로 `dropped`로 보고하고, 규칙이 가리키면 충돌이다).
+   * 구간 안에 통째로 들어 함께 지워지는 누름틀·메일 머지 필드(`CLICK_HERE`·`MAILMERGE`)가 아닌 필드(하이퍼링크·날짜 등)와 책갈피(문서 순서). 여러 문단에 걸칠 때만 센다.
+   * 구간 안의 누름틀·메일 머지 필드는 여기에 없다(암묵 채움 대상이면 호출자가 따로 `dropped`로 보고하고, 규칙이 가리키면 충돌이다).
    */
   removed: { kind: "field" | "bookmark"; name: string }[];
   /** 끝 표식이 다른 문단에 있어 문단을 합칠 때만 */
@@ -286,9 +297,9 @@ function planSpanFill(ctx: Ctx, target: FieldTarget, endParagraph: ParagraphNode
         ];
   const removed: FieldSpan["removed"] = [];
   if (endParagraph !== par) {
-    // 구간 안에 통째로 든 CLICK_HERE가 아닌 필드와 책갈피(`fieldFillBlock`이 짝이 끊기는 필드를 이미 거른다)
+    // 구간 안에 통째로 든 누름틀·메일 머지 필드가 아닌 필드와 책갈피(`fieldFillBlock`이 짝이 끊기는 필드를 이미 거른다)
     for (const m of marksBetween(section, beginPiece.end, endPiece.start)) {
-      if (m.kind === "begin" && m.type !== "CLICK_HERE") removed.push({ kind: "field", name: m.name !== undefined && m.name !== "" ? m.name : (m.type ?? "") });
+      if (m.kind === "begin" && m.type !== "CLICK_HERE" && m.type !== "MAILMERGE") removed.push({ kind: "field", name: m.name !== undefined && m.name !== "" ? m.name : (m.type ?? "") });
     }
     for (const b of bookmarksOf(section)) if (b.element.start >= beginPiece.end && b.element.end <= endPiece.start) removed.push({ kind: "bookmark", name: b.name });
   }
@@ -296,7 +307,7 @@ function planSpanFill(ctx: Ctx, target: FieldTarget, endParagraph: ParagraphNode
   const plan: FieldFill = {
     edits: [span(ctx, beginPiece.end, endPiece.start, replacement, reason)],
     repls: [],
-    check: { beginStart: begin.element.start, name: info.name, value, setsDirty: value !== "" },
+    check: { beginStart: begin.element.start, name: info.mergeKey ?? info.name, value, setsDirty: value !== "" },
     span: fieldSpan,
   };
   if (endParagraph === par) {
@@ -333,7 +344,7 @@ export function planFieldFill(ctx: Ctx, target: FieldTarget, value: string, reas
   const plan: FieldFill = {
     edits: [],
     repls: [],
-    check: { beginStart: begin.element.start, name: info.name, value, setsDirty: value !== "" },
+    check: { beginStart: begin.element.start, name: info.mergeKey ?? info.name, value, setsDirty: value !== "" },
   };
   const texts = par.pieces.slice(begin.pieceIndex + 1, end.pieceIndex).filter(isTextPiece);
   const prefix = nsPrefixOf(begin.element);

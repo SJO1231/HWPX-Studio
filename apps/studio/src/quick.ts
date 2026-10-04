@@ -45,7 +45,7 @@ type FieldTally = { count: number; fillable: number; merging: number; unfillable
 
 /**
  * 문서 바이트를 열어 자리 목록을 만든다. 열 수 없으면 엔진의 `HwpxError`(`PKG_`·`XML_`·`MODEL_`)가 올라온다.
- * 누름틀은 type이 `CLICK_HERE`인 필드만 센다(엔진이 이름 = 데이터 경로로 채우는 것도 그것뿐이다. 책갈피·메일머지 같은 필드는 목록에 없다).
+ * 자리는 type이 `CLICK_HERE`인 누름틀(이름 = 키)과 키가 있는 메일 머지 필드(mergeKey = 키)다(엔진의 암묵 채움과 같은 기준. 책갈피·날짜·키 없는 메일 머지는 목록에 없다).
  * 이름의 `usable`은 엔진이 채우는 기준(`isValidPath`)과 같다. 곳마다 채울 수 있는지는 엔진의 `fieldFillBlock`(`collectFields`의 곳별 판정, 데이터와 무관하다)만 따른다:
  * 막는 사유가 없으면 `fillable`(그 가운데 여러 문단에 걸친 모양 `crossParagraph`는 `merging`에도 센다), 있으면 `unfillable`에 센다. 여러 문단에 걸친 모양인데 막힌 곳은
  * `crossBlocked`이고 엔진이 준 사유 문구를 `reasons`에 담는다. 나머지는 모양(`object`·`crossContainer`·`unpaired`)별로 센다.
@@ -56,11 +56,13 @@ export function analyzePlaces(bytes: Uint8Array): PlacesView {
   const tallies = new Map<string, FieldTally>();
   for (const target of collectFields(doc)) {
     const f = target.info;
-    if (f.type !== "CLICK_HERE") continue;
-    let tally = tallies.get(f.name);
+    // 누름틀(CLICK_HERE, 이름 = 키)과 키가 있는 메일 머지 필드(키 = 키)를 자리로 센다(엔진의 암묵 채움과 같은 기준)
+    const key = f.type === "CLICK_HERE" ? f.name : f.type === "MAILMERGE" && f.mergeKey !== undefined ? f.mergeKey : undefined;
+    if (key === undefined) continue;
+    let tally = tallies.get(key);
     if (tally === undefined) {
       tally = { count: 0, fillable: 0, merging: 0, unfillable: new Map() };
-      tallies.set(f.name, tally);
+      tallies.set(key, tally);
     }
     tally.count++;
     const block = fieldFillBlock(target);
@@ -235,7 +237,8 @@ const entry = (code: string, detail?: string, place?: string): ReportEntry => {
 /** 엔진 보고의 앵커(`{{키}}`, `field:이름`)를 사람이 읽는 자리 이름으로 바꾼다. */
 function placeOf(anchor: string): string | undefined {
   if (anchor.startsWith("{{")) return anchor;
-  return anchor.startsWith("field:") ? `누름틀 "${anchor.slice("field:".length)}"` : undefined;
+  if (anchor.startsWith("field:")) return `누름틀 "${anchor.slice("field:".length)}"`;
+  return anchor.startsWith("merge:") ? `메일 머지 "${anchor.slice("merge:".length)}"` : undefined;
 }
 
 /** 이 건에서 줄바꿈·탭이 든 값이 들어간 자리(키)의 알림. 엔진이 건너뛴 자리의 키는 뺀다. */
@@ -245,7 +248,7 @@ function multilineNotes(places: PlacesView, record: BatchRecord, item: BatchItem
   const keys = new Set([...places.fields.filter((f) => f.usable && f.fillable > 0).map((f) => f.name), ...places.placeholders.map((p) => p.key)]);
   const notes: ReportEntry[] = [];
   for (const key of keys) {
-    if (skipped.has(`{{${key}}}`) || skipped.has(`field:${key}`)) continue;
+    if (skipped.has(`{{${key}}}`) || skipped.has(`field:${key}`) || skipped.has(`merge:${key}`)) continue;
     const j = judge(record.dataset, key);
     if (j.state === "ok" && j.multiline) notes.push(entry("QUICK_MULTILINE", undefined, `키 ${key}`));
   }

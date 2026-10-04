@@ -37,6 +37,7 @@ import {
   type GateMode,
   type GenerateResult,
   type Issue,
+  type MergeFieldsMode,
   type MissingPolicy,
   type TextKind,
   type TextResult,
@@ -158,6 +159,8 @@ export function inspect(args: string[], out: Out): number {
     binaryItems: census.binaryItems,
     fields: listFields(doc).map((f) => ({
       name: f.name,
+      type: f.type,
+      ...(f.mergeKey === undefined ? {} : { mergeKey: f.mergeKey }),
       occurrence: f.occurrence,
       shape: f.shape,
       dirty: f.dirty,
@@ -176,7 +179,13 @@ export function inspect(args: string[], out: Out): number {
   }
   out.log(`파일: ${file} (${bytes.length}바이트)`);
   out.log(`구역 ${summary.sections}개, 문단 ${summary.paragraphs}개, 표 ${summary.tables}개, 그림 ${summary.pictures}개, 이진 항목 ${summary.binaryItems}개`);
-  out.log(`누름틀 ${summary.fields.length}개${summary.fields.map((f) => `\n  - ${f.name}[${f.occurrence}] ${f.shape}, dirty=${f.dirty === "" ? "(없음)" : f.dirty}, 값 길이 ${f.valueLength}`).join("")}`);
+  // 종류: 누름틀(CLICK_HERE)·메일머지(MAILMERGE, 이름이 비어 키로 가리킨다)·그 밖의 필드는 type 그대로
+  const kindOf = (f: { type: string }): string => (f.type === "CLICK_HERE" ? "누름틀" : f.type === "MAILMERGE" ? "메일머지" : f.type || "필드");
+  out.log(
+    `누름틀·필드 ${summary.fields.length}개${summary.fields
+      .map((f) => `\n  - [${kindOf(f)}] ${f.mergeKey ?? f.name}[${f.occurrence}] ${f.shape}, dirty=${f.dirty === "" ? "(없음)" : f.dirty}, 값 길이 ${f.valueLength}`)
+      .join("")}`,
+  );
   out.log(`{{}} 표기 ${summary.placeholders.length}종${summary.placeholders.map((x) => `\n  - ${x.path} x${x.count}`).join("")}`);
   out.log(`자원: ${Object.entries(summary.resources).filter(([, n]) => n > 0).map(([k, n]) => `${k} ${n}`).join(", ")}`);
   if (model !== undefined) out.log(`모델 JSON을 저장했습니다: ${model}`);
@@ -806,8 +815,18 @@ export function diff(args: string[], out: Out): number {
 // ── compile ─────────────────────────────────────────────────────
 
 export function compile(args: string[], out: Out): number {
-  const usage = "hwpx compile <파일> -o 승격본 --experimental [--overwrite]";
-  const p = parse(args, { output: { type: "string", short: "o" }, experimental: { type: "boolean" }, overwrite: { type: "boolean" } }, { min: 1, max: 1 }, usage);
+  const usage = "hwpx compile <파일> -o 승격본 --experimental [--merge-fields to-placeholder|to-field] [--overwrite]   (--merge-fields는 메일 머지 필드 변환만 하고 {{}} 승격은 하지 않는다)";
+  const p = parse(
+    args,
+    { output: { type: "string", short: "o" }, experimental: { type: "boolean" }, "merge-fields": { type: "string" }, overwrite: { type: "boolean" } },
+    { min: 1, max: 1 },
+    usage,
+  );
+  const mergeText = str(p, "merge-fields");
+  if (mergeText !== undefined && mergeText !== "to-placeholder" && mergeText !== "to-field") {
+    throw new UsageError(`--merge-fields는 to-placeholder(필드를 {{키}} 글로)나 to-field(필드를 누름틀로)여야 합니다: ${mergeText}\n사용법: ${usage}`);
+  }
+  const mergeFields: MergeFieldsMode | undefined = mergeText;
   const file = p.positionals[0] ?? "";
   rejectText(file, "compile");
   if (!flag(p, "experimental")) {
@@ -818,7 +837,7 @@ export function compile(args: string[], out: Out): number {
   const bytes = readBytes(file, "입력 파일");
   let result;
   try {
-    result = compileDocument(bytes);
+    result = compileDocument(bytes, mergeFields === undefined ? {} : { mergeFields });
   } catch (e) {
     if (e instanceof HwpxError) throw new InputError(`입력 파일을 처리할 수 없습니다: ${file} (${e.code}: ${e.message})`);
     throw e;
@@ -829,6 +848,7 @@ export function compile(args: string[], out: Out): number {
     return 1;
   }
   writeSafely(output, result.output, [file], flag(p, "overwrite"));
-  out.log(`누름틀 ${result.report.promoted}개로 승격해 저장했습니다: ${output} (${basename(output)})`);
+  if (mergeFields === undefined) out.log(`누름틀 ${result.report.promoted}개로 승격해 저장했습니다: ${output} (${basename(output)})`);
+  else out.log(`메일 머지 필드 ${result.report.mergeConverted}개를 ${mergeFields === "to-field" ? "누름틀(이름 = 키)로" : "{{키}} 글로"} 바꿔 저장했습니다: ${output} (${basename(output)})`);
   return 0;
 }

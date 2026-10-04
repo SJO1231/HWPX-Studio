@@ -120,7 +120,9 @@ function refreshMarks(): void {
 const describe = (a: AnchorDraftJson): { kind: string; text: string; sub: string } => {
   switch (a.kind) {
     case "field":
-      return { kind: "누름틀", text: `"${a.name}"`, sub: a.occurrence === undefined ? "" : `같은 이름 ${a.occurrence + 1}번째` };
+      return a.mergeKey === undefined
+        ? { kind: "누름틀", text: `"${a.name}"`, sub: a.occurrence === undefined ? "" : `같은 이름 ${a.occurrence + 1}번째` }
+        : { kind: "메일 머지", text: `"${a.mergeKey}"`, sub: a.occurrence === undefined ? "" : `같은 키 ${a.occurrence + 1}번째` };
     case "word":
       return { kind: "낱말", text: `"${a.print.text}"`, sub: `앞 "${a.print.before.slice(-12)}" 뒤 "${a.print.after.slice(0, 12)}"` };
     case "line":

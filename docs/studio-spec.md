@@ -158,13 +158,13 @@ DataNode     = { part: "data" | "derived", depth, key, path: string | null, type
 **화면에서 사용자가 하는 일**
 
 1. 문서(.hwpx)를 올린다. 문서에서 찾은 자리 목록이 보인다: 누름틀 이름, `{{키}}`, 후보 자리(라벨 옆 빈 칸 등. 표시만, 채우지 않음).
-2. 데이터(.json)를 올린다: 객체 하나, 객체 배열(여러 건), 또는 묶음 형식. 자리와 데이터 키의 대조표가 보인다(자리별: 데이터 있음 / 없음 / 값에 줄바꿈·탭 / 객체·배열이라 못 넣음 / 넣을 수 없는 문자 / 이름이 키 꼴이 아님 / 채울 수 없는 모양). 자리 목록의 누름틀은 `type`이 `CLICK_HERE`인 것만이고, 엔진이 채우지 못하는 모양(안에 그림·표가 있음·표 칸 경계를 넘음·끝 표식 없음)은 곳 수와 함께 표시하고, 여러 문단에 걸친 누름틀은 "채우면 사이 문단이 합쳐짐"으로 미리 알리며 생성 뒤 알림(`FIELD_PARAGRAPHS_MERGED`)을 보인다(2026-10-03 독립 검증 M1·M2, 2026-10-04 엔진 보강 반영).
+2. 데이터(.json)를 올린다: 객체 하나, 객체 배열(여러 건), 또는 묶음 형식. 자리와 데이터 키의 대조표가 보인다(자리별: 데이터 있음 / 없음 / 값에 줄바꿈·탭 / 객체·배열이라 못 넣음 / 넣을 수 없는 문자 / 이름이 키 꼴이 아님 / 채울 수 없는 모양). 자리 목록의 자리는 `type`이 `CLICK_HERE`인 누름틀과 키가 있는 메일 머지 필드(`MAILMERGE`, 키 = `mergeKey`. 2026-10-04 #18)이고, 엔진이 채우지 못하는 모양(안에 그림·표가 있음·표 칸 경계를 넘음·끝 표식 없음)은 곳 수와 함께 표시하고, 여러 문단에 걸친 누름틀은 "채우면 사이 문단이 합쳐짐"으로 미리 알리며 생성 뒤 알림(`FIELD_PARAGRAPHS_MERGED`)을 보인다(2026-10-03 독립 검증 M1·M2, 2026-10-04 엔진 보강 반영).
 3. 누락 정책을 고른다(오류로 멈춤 / 빈칸 / 그대로 둠).
 4. [생성]. 건별 결과(성공·실패, 채운 자리 수, 건너뜀과 사유)를 쉬운 말로 보인다.
 5. 결과를 내려받는다(건별). 호스트는 결과를 작업 공간의 `out/<날짜-시각>/`에도 저장하고 "폴더 열기"(Windows 탐색기) 버튼을 둔다.
 6. (선택) 결과를 뷰어로 미리 본다(기존 뷰어 재사용).
 
-**호스트 API**: `POST /api/quick/template`(.hwpx → 세션, 자리 목록), `POST /api/quick/data`(.json → 키 목록과 대조표), `POST /api/quick/generate`(`{ missing }` → 건별 결과), `GET /api/quick/result/:id/:index`(내려받기), `POST /api/quick/open-folder`. 세션은 메모리, 개수·바이트 상한. 오류는 `{ error: { code, message, plain } }`. 자리 목록의 누름틀 항목은 `{ name, count, usable, fillable, merging, unfillable: [{ shape, count, reasons? }] }`이다(`fillable`은 엔진이 채울 수 있는 곳 수(`simple`·`empty`·`inline`·건너뛰지 않는 `crossParagraph`), `unfillable`은 `object`·`crossContainer`·`unpaired`·`crossBlocked`(모양은 `crossParagraph`지만 엔진이 건너뛰는 곳. 사유 문구 `reasons`)별 곳 수, `merging`은 채울 수 있는 곳 가운데 `crossParagraph`인 수(채우면 사이 문단이 합쳐짐). 채울 수 있는지는 엔진의 `fieldFillBlock`으로 판정해 생성 결과와 어긋나지 않게 한다. 2026-10-04부터 `inline`·`crossParagraph`는 채울 수 있다. `type`이 `CLICK_HERE`인 필드만 센다). 대조표 상태는 `ok | missing | notScalar | rejected | badKey | unfillable`이고, 데이터 응답에는 객체가 아닌 건의 수 `invalidRecords`가 있다(그 건은 건수 판정에서 뺀다). 서버 껍데기의 거절(Host·Origin·크기)도 `plain`을 갖는다(2026-10-03 독립 검증 반영).
+**호스트 API**: `POST /api/quick/template`(.hwpx → 세션, 자리 목록), `POST /api/quick/data`(.json → 키 목록과 대조표), `POST /api/quick/generate`(`{ missing }` → 건별 결과), `GET /api/quick/result/:id/:index`(내려받기), `POST /api/quick/open-folder`. 세션은 메모리, 개수·바이트 상한. 오류는 `{ error: { code, message, plain } }`. 자리 목록의 누름틀 항목은 `{ name, count, usable, fillable, merging, unfillable: [{ shape, count, reasons? }] }`이다(`fillable`은 엔진이 채울 수 있는 곳 수(`simple`·`empty`·`inline`·건너뛰지 않는 `crossParagraph`), `unfillable`은 `object`·`crossContainer`·`unpaired`·`crossBlocked`(모양은 `crossParagraph`지만 엔진이 건너뛰는 곳. 사유 문구 `reasons`)별 곳 수, `merging`은 채울 수 있는 곳 가운데 `crossParagraph`인 수(채우면 사이 문단이 합쳐짐). 채울 수 있는지는 엔진의 `fieldFillBlock`으로 판정해 생성 결과와 어긋나지 않게 한다. 2026-10-04부터 `inline`·`crossParagraph`는 채울 수 있다. 누름틀(`CLICK_HERE`, 이름)과 키가 있는 메일 머지 필드(`MAILMERGE`, 키)를 센다). 대조표 상태는 `ok | missing | notScalar | rejected | badKey | unfillable`이고, 데이터 응답에는 객체가 아닌 건의 수 `invalidRecords`가 있다(그 건은 건수 판정에서 뺀다). 서버 껍데기의 거절(Host·Origin·크기)도 `plain`을 갖는다(2026-10-03 독립 검증 반영).
 
 **수용 조건**
 
@@ -173,13 +173,23 @@ DataNode     = { part: "data" | "derived", depth, key, path: string | null, type
 | Q1 | 누름틀·`{{}}`·표 셀에 여러 줄 값을 채우면 게이트를 통과하고, 다시 읽은 논리 텍스트가 값과 같고, 문단 수가 같다. 한컴으로 열면 두 줄로 보이고(PDF), 한컴이 다시 저장한 문서를 엔진이 읽으면 줄바꿈이 남아 있다(한컴의 필드 읽기 API는 줄바꿈을 글자로 주지 않는다). XML 금지 제어 문자는 여전히 거절 |
 | Q2 | 배열 N건이면 파일 N개. 이름 규칙대로. 한 건이 실패해도 나머지는 만들고 보고서에 건별로 적으며 종료 코드 1. 같은 입력은 같은 바이트 |
 | Q3 | 화면에서 시험 문서와 데이터로 생성·내려받기가 되고, 내려받은 바이트는 CLI 결과와 같다. 결과가 `out/` 폴더에 저장된다. 올린 원본은 디스크에 남지 않는다. 외부 요청 0 |
-| Q4 | 자리 목록과 대조표가 엔진의 누름틀 목록·`{{}}` 탐지·후보 탐지와 같다. 데이터에 없는 키가 표시된다. 엔진이 건너뛸 누름틀(`CLICK_HERE`가 아닌 type은 목록에 없음, 채울 수 없는 모양은 "채울 수 없는 모양")이 "데이터 있음"으로 보이지 않는다 |
+| Q4 | 자리 목록과 대조표가 엔진의 누름틀 목록·`{{}}` 탐지·후보 탐지와 같다. 데이터에 없는 키가 표시된다. 엔진이 건너뛸 자리(누름틀·키 있는 메일 머지 외의 type은 목록에 없음, 채울 수 없는 모양은 "채울 수 없는 모양")가 "데이터 있음"으로 보이지 않는다. 알려진 한계: 메일 머지 표시 글 안의 `{{}}`는 엔진이 dropped로 버리는데 자리 목록에는 나온다(lite 화면 #24에서 정리) |
 | Q5 | 엔진의 모든 오류·건너뜀 코드에 쉬운 말 설명이 있고, 모르는 코드도 깨지지 않는다 |
 | Q6 | 서버 보안 항목(루프백, Host·Origin, 경로 탈출, 본문 한도)이 시험 앱과 같다 |
 | Q7 | 실제 문서 표본 30건에 여러 줄 값과 배열 데이터를 넣어 게이트 통과·검사기 새 오류 0, 한컴 표본 10건 열림 |
 | Q8 | 사용자가 자기 서식·자기 데이터로 한 건을 만들어 한컴에서 확인한다(사용자 과제. 견본 데이터가 오면 개발 쪽이 먼저 돌려 본다) |
 
 **M1b(뒤따름)**: 생성물의 옛 미리보기 글·그림과 작성자 정보 정리(개인정보. 설계자 지적). 값 꾸미기(금액 쉼표·날짜).
+
+## 4b. 템플릿 계약 2판과 LITE 1차 (포인터, 2026-10-04)
+
+계약의 정본은 [엔진 명세](engine-spec.md) 8.8(`template@2`·`case@1`·`block-proto@1`)이다. 근거는 이슈 #4 설계안(독립 설계자) + 총괄 임시 선택이고, 전부 **[계약]**·**[미구현]**이다. 화면이 지킬 것:
+
+- 슬롯마다 선택 상태 7종(`manual`·`confirmed`·`default`·`fallback`·`undecided`·`recheck`·`inactive`)을 구별해 보인다. 수동 선택이 우선이고 확정한 선택은 데이터가 바뀌어도 바꾸지 않는다(조건 결과와 다르면 차이만 보인다).
+- 원형을 고치면 영향 목록(어느 템플릿·블록이 몇 판인지)을 먼저 보이고, 사용자가 템플릿별로 골라야 전파한다. 자동 전파는 없다.
+- `undecided`·`recheck`가 있으면 생성 단추를 막고 이유를 쉬운 말로 보인다.
+- 이번 건에서 고친 값·블록은 그 건에만 저장한다. 원형에 반영은 따로 누르는 동작이다.
+- 저장 구조(SQLite)는 Codex가 정한다(이슈 #25). lite 프로젝트 이관 코드는 lite 앱에 둔다(#4·#25).
 
 ## 5. 알려진 한계 (S1)
 

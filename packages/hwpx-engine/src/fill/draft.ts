@@ -5,7 +5,7 @@ import type { HwpxDocument, ParagraphNode, TableNode } from "../model/types.ts";
 import { linePrintOf, wordPrintAt } from "./anchors.ts";
 import type { AnchorDraft } from "./candidates.ts";
 import { paragraphAtPath, topLevelObjects } from "./doc.ts";
-import { collectFields, fieldFillBlock, fieldRangeIn } from "./fields.ts";
+import { collectFields, fieldAnchorOf, fieldFillBlock, fieldRangeIn } from "./fields.ts";
 import { cellFillBlock, lineFillBlock, rangeReplaceBlock } from "./text.ts";
 
 /** 앵커 초안을 요청하는 자리. `start`·`end`는 문단 논리 텍스트의 UTF-16 오프셋이다. */
@@ -91,7 +91,7 @@ function wordRange(paragraph: ParagraphNode, start: number | undefined, end: num
 /**
  * 문단의 한 자리(또는 한 범위)를 가리키는 앵커 초안을 후보 순서대로 돌려준다. 템플릿의 `anchors`에 `id`만 더해 그대로 넣을 수 있다.
  *
- * 1. 그 자리가 누름틀 안이면 `field`(이름과 같은 이름 안 순번). 값을 채울 수 있는 모양(`simple`·`empty`·`inline`·`crossParagraph`)만, 안쪽 누름틀부터.
+ * 1. 그 자리가 누름틀 안이면 `field`(이름과 같은 이름 안 순번. 메일 머지 필드는 `name` 대신 `mergeKey`와 같은 키 안 순번). 값을 채울 수 있는 모양(`simple`·`empty`·`inline`·`crossParagraph`)만, 안쪽 누름틀부터.
  *    여러 문단에 걸친 누름틀은 시작 문단의 표식 뒤, 사이 문단, 끝 문단의 끝 표식 앞이 모두 그 안이다.
  * 2. `start`·`end`가 있으면 그 범위의 `word`, `start`만 있으면 그 글자를 포함한 낱말(공백으로 나뉜 덩어리)의 `word`. `print`(대상 글, 앞뒤 문맥)를 채운다.
  *    범위가 글자 묶음(grapheme cluster)을 가르면 묶음 경계로 넓힌다. 객체 자리·탭·줄바꿈 같은 경계 조각을 포함하는 `word`는 만들지 않는다.
@@ -133,7 +133,7 @@ export function draftAnchors(doc: HwpxDocument, request: DraftRequest): DraftedA
       })
       .filter((f) => f.from <= start && to <= f.until)
       .sort((a, b) => b.from - a.from || a.until - b.until);
-    for (const f of inside) out.push({ kind: "field", name: f.t.info.name, occurrence: f.t.info.occurrence });
+    for (const f of inside) out.push(fieldAnchorOf(f.t.info));
   }
 
   // 2. 낱말·범위
