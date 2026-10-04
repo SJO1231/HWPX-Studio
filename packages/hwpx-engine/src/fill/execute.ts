@@ -143,14 +143,29 @@ export function executeFillPlan(doc: HwpxDocument, plan: FillPlan, hooks: Execut
 
   for (const step of plan.injects) {
     const where = `inject:${step.ruleId}`;
-    let start = step.paragraphStart;
-    for (const edits of history) start = mapPos(edits.filter((e) => e.entry === step.entry), start);
-    const found = paragraphIndex(cur).get(startKey(step.entry, start));
+    const mapStart = (original: number): number => {
+      let start = original;
+      for (const edits of history) start = mapPos(edits.filter((e) => e.entry === step.entry), start);
+      return start;
+    };
+    const index = paragraphIndex(cur);
+    const found = index.get(startKey(step.entry, mapStart(step.paragraphStart)));
     if (found === undefined) {
       issues.push(fail("INJECT_ANCHOR_LOST", "앞 단계를 적용한 문서에서 앵커 문단을 다시 찾지 못했습니다.", where));
       return { ok: false, stages, issues, checked, inherited: inheritedOf() };
     }
     const { section, paragraph } = found;
+    // 교체: 지울 문단들. range 앵커는 범위 전체이고 앞 단계의 편집으로 옮긴 시작 오프셋에서 다시 찾는다(같은 부모의 연속 문단이어야 한다).
+    const doomed = step.position !== "replace" ? [] : (step.rangeStarts ?? [step.paragraphStart]).map((s) => index.get(startKey(step.entry, mapStart(s)))?.paragraph);
+    const parent = paragraph.path.slice(0, -1);
+    const first = paragraph.path[paragraph.path.length - 1] ?? 0;
+    const consecutive = doomed.every(
+      (d, k) => d !== undefined && d.path.length === paragraph.path.length && d.path.slice(0, -1).every((v, i) => v === parent[i]) && d.path[d.path.length - 1] === first + k,
+    );
+    if (!consecutive) {
+      issues.push(fail("INJECT_ANCHOR_LOST", "앞 단계를 적용한 문서에서 교체할 범위의 문단들을 다시 찾지 못했습니다.", where));
+      return { ok: false, stages, issues, checked, inherited: inheritedOf() };
+    }
     let importPlan: ImportPlan;
     try {
       importPlan = planImport(
@@ -169,12 +184,13 @@ export function executeFillPlan(doc: HwpxDocument, plan: FillPlan, hooks: Execut
       issues.push(fail(e.code, e.message, where));
       return { ok: false, stages, issues, checked, inherited: inheritedOf() };
     }
-    if (step.position === "replace") {
+    for (const old of doomed) {
+      if (old === undefined) continue;
       importPlan.edits.push({
         entry: section.entryName,
-        start: paragraph.element.start,
-        end: paragraph.element.end,
-        expected: section.text.slice(paragraph.element.start, paragraph.element.end),
+        start: old.element.start,
+        end: old.element.end,
+        expected: section.text.slice(old.element.start, old.element.end),
         replacement: "",
         reason: `규칙 ${step.ruleId}: 문단 교체`,
       });

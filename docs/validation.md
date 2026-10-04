@@ -344,3 +344,26 @@ M1(값의 줄바꿈·탭, 여러 건 생성, 빠른 생성 화면 `apps/studio`,
 반영: 명세 7절(md·txt mergeKey는 ANCHOR_NOT_FOUND), 8.3(빈 값은 dirty 유지, 키 없는 필드의 `{{}}`), 8.4(`--merge-fields`는 승격 없음), 스튜디오 명세 4a, 쉬운 말 조사 2곳, compile 경고 문구 구분.
 
 남은 것: 빠른 생성(apps/studio, 흡수 대상)의 자리 목록이 메일 머지 표시 글 안의 `{{}}`를 자리로 보임(lite 화면 #24에서 정리). 반복 행 원형 안의 메일 머지 필드 미검증. 사람이 한컴 화면으로 만든 메일 머지 서식 미확인.
+
+## 19. `range` 앵커·이동표·range 액션·cell/object 지문 검증 (2026-10-04, 이슈 #30)
+
+엔진 명세 7.10. 구현은 `src/fill/{anchor-types,range,prints,moves}.ts`와 `plan`·`execute`·`anchors`의 확장, 1판 `readTemplate`의 `range`·`print` 수용, CLI `fragment import --range`·`fill --template`(range 템플릿). 독립 검증은 구현자와 다른 Agent가 자기 스크립트로 했다.
+
+| 검사 | 결과 |
+| --- | --- |
+| 시험 문서 | 합성 공고서(메일 머지 시험 문서를 엔진으로 키운 것: 문단 63·필드 101·`{{}}` 60곳 이상·표 4·6문단짜리 칸)와 기존 한컴 저장 합성 문서 |
+| 지문·해석(독립) | 지문을 독립 계산한 값과 일치. 앞에 2문단 삽입 → relocated(경고, +2). 칸 안 범위는 앞에 표를 끼워 `parentPath`가 바뀌어도 다시 찾음(`[12,1]`→`[14,1]`). 복제 → ambiguous(칸 안 포함, 주소가 맞으면 exact). 끝·첫 문단 삭제 → notFound. 안쪽 글 변경·안쪽 문단 삭제·이동+변경·칸 안 변경 → `ANCHOR_CHANGED`(출력 없음). 한 문단 범위는 changed 없음. 해석 27/27 |
+| 교체·삭제·삽입(독립) | 길이 2~20 × (글 1~8문단 / 조각 / 삭제) 57회, 앞뒤 삽입 10회, 여러 범위 2~5개를 순서 섞어 50회: 117/117. 문단 수 = 원래 − n + k, `moves`가 독립 계산과 같은 집합·문서 순서, `remapAddress` 7,371건 일치(덮인 번호 `undefined`), 칸 주소 누적 일치. 게이트 통과·독립 재검사 새 오류 0·2회 바이트 동일 |
+| 거절·충돌(독립) | 구역 설정 문단 → `FILL_SECTION_PROPS`(3액션×2), 칸 문단 전부 삭제 → `FILL_LAST_PARAGRAPH`, 누름틀 가운데 자름 → `FRAG_SPLITS_FIELD`(4범위×3액션), fill·tableProps·resize·repeat·delete scope → `TPL_RULE`, 겹침·안쪽·같은 범위·line·word·누름틀·mergeKey·표 객체·칸 채움·행 삭제·행 반복 → `TPL_CONFLICT`(규칙 순서 2가지), insertText replace + before/after/inject before → `TPL_CONFLICT`, 범위 안 `{{}}`·누름틀·메일 머지 → dropped. 오류 시 출력 없음. 111+18행 |
+| 1판 `readTemplate`(독립) | range·cell/object `print` 수용과 왕복, 틀린 모양 25종 → `TPL_ANCHOR`, 지문 없는 앵커는 `print` 키 없음. 기존 template·fill·cli 시험 통과(43/43) |
+| CLI(독립) | `fragment import --range 0:18-21` → 0·moves 1항목, `--parent 12.1` → 0, 사용법 오류 9종 → 2(출력 없음), 구역 설정·누름틀 자름 → 1(출력 없음), `fill --template`(range 5개) → 0·이동표 5개·2회 바이트 동일, `--dry-run` moves만, 겹침·`ANCHOR_CHANGED` → 1, `TPL_ANCHOR` → 2, md → 1(`ANCHOR_NOT_FOUND`). 23/23 |
+| cell·object 지문(독립) | 앞에 표를 넣은 뒤 9칸+표 재발견, 긴 값 채움, ambiguous·notFound. 36/36 |
+| 결정성 | 시드 고정(`Math.random`·`Date.now` 없음). range-anchor 시험 2회 TAP 동일 |
+| 한글 2024 | `HWPX_COM=1` 시험으로 결과 6/6 열림(쪽 2·30·3·1·27·1), Hwp.exe 실행 전후 0개, 임시 폴더 잔여 0 |
+| 실제 공고서(독립, 읽기 전용, 메모리 안) | 17건 모두 번호 제목 사이 범위 3곳(길이 2~20): 단독 교체 51/51, 한 계획에 3곳 17/17, 표 칸 안 범위 33/33. 게이트 통과·새 오류 0·이동표·뒤 문단 보존·결정성 전부 통과, 오류 코드 0. 앞에 2문단 삽입 뒤 다시 찾기 46/46(나머지 5건은 다른 구역 범위 exact 3·원문 중복 ambiguous 2로 정상) |
+| 결함과 처리 | **중간(명세 빈틈)**: 이동표가 표 행 삭제·반복으로 바뀌는 칸 번호를 담지 않음 → 7.10에 "문단 목록 변경만" 범위로 확정하고 행 규칙이 적용된 표 안 자리는 #31(2단계)이 지문으로 다시 찾도록 적음. **낮음**: 양 끝이 빈 문단인 범위 삭제가 notFound 대신 changed(명세 규칙 그대로. 7.10에 한계로 기록); insertText replace의 값이 비어 교체를 건너뛰어도 범위 안 자리가 dropped → 실제 교체 때만 덮인 범위로 등록하도록 고침; 교체 범위 안 표 칸 채움은 `FILL_HAS_OBJECT`가 먼저(8.3 순서, 기록); 낡은 주석 1곳 고침. 부수 변화: 구역 설정 문단의 line 글 교체도 값이 비면 아무것도 바꾸지 않으므로 `FILL_SECTION_PROPS`를 내지 않는다 |
+| 회귀(수정 뒤) | 형 검사 0. 1,543개 중 1,485 통과, 0 실패, 58 선택 실행분(직전 1,518/1,461/0/57. 새 시험 25: 엔진 21·CLI 3·한컴 선택 1). 수정 뒤 독립 스크립트 재실행: 읽기 43/43·CLI 23/23, 거절·충돌 111행 통과(나머지 9행은 검증자가 명세 빈틈으로 분류한 기대값 차이이며 7.10에 반영) |
+
+반영: 명세 7.10(재탐색 범위·changed 창·초안 꼴·`head` 직렬화·이동표 항목 단위와 범위·충돌 규칙·1판 수용·텍스트 어댑터), 8.4(`--range`), 8.8.11, CLI 안내(`--range`·`moves`), 쉬운 말 표 `ANCHOR_CHANGED`.
+
+남은 것: 실제 공고서 결과의 한글 열기(합성 6건만 열었다), 실제 공고서의 CLI 경로(엔진 API로만), 구역을 섞은 한 계획의 이동표 정렬, strict·repair 게이트와 `fitTable: allowBreak`가 range와 함께 쓰일 때(코드만 읽음). `checkAnchors`·`unverified`(#32)와 2단계 생성(#31)은 미구현. `draftAnchors`·`findCandidates`의 cell 초안에 `print` 넣기는 후속.

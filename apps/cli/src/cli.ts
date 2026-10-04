@@ -8,6 +8,7 @@ export const USAGE = `사용법: hwpx <명령> [옵션]
   candidates <파일> [--json]                            채울 자리 후보 목록
   fragment extract <파일> --section N --from A --to B [--parent 주소] -o 조각.json
   fragment import <대상> <조각.json> --section N --index I [--parent 주소] [--before] -o 출력.hwpx
+  fragment import <대상> <조각.json> --range 구역:시작-끝 [--parent 주소] -o 출력.hwpx   범위의 문단들을 조각으로 교체
        [--mode baseline|strict|repair] [--reissue-internal] [--report r.json] [--overwrite]
   fill <파일> --data d.json [--template t.json] -o 출력 [--missing error|empty|keep]
        [--dry-run] [--report r.json] [--overwrite]               확장자로 형식을 고른다(.hwpx, .md, .txt)

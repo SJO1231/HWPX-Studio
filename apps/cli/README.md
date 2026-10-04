@@ -109,14 +109,18 @@ hwpx table set form.hwpx --table 0:1 --columns 10000,20000,10000 -o out.hwpx --r
 
 `table set`은 내부에서 규칙이 하나나 둘뿐인 템플릿(`tableProps`, `resize`)을 만들어 `fill`과 같은 저장 게이트를 거친다. 그래서 `--mode`(`baseline` 기본, `strict`, `repair`), `--report`, `--overwrite`, 종료 코드(0 성공, 1 게이트 실패, 2 사용법·읽을 수 없는 입력), 출력 덮어쓰기 금지 규칙이 `fill`과 같다. `--width`·`--scale`·`--columns`는 하나만 줄 수 있고(열 수는 표의 `colCnt`와 같아야 한다), 설정 하나도 주지 않으면 사용법 오류다. 문서 안 `{{}}` 표기는 건드리지 않는다. 표의 격자가 불규칙하거나(구조), 행마다 열 경계의 위치가 어긋나(너비 불규칙; `table list`가 "너비 불규칙"으로 알리고 JSON은 `structureRegular`·`widthRegular`를 준다) `--scale`·`--width`가 열 너비를 필요로 하거나, 너비 기준이 절대값이 아니면 게이트가 `TABLE_IRREGULAR`·`TABLE_RELATIVE_SIZE`로 막고 출력 파일을 만들지 않는다(`--columns`는 새 너비를 주므로 너비 불규칙인 표에도 된다). 행 반복·셀 설정 같은 나머지 표 조정은 템플릿 규칙(`tableProps`, `resize`, `repeat`)으로 `fill`에 준다.
 
-조각을 뜨고 다른 문서에 가져온다. 주소는 구역 번호(`--section`)와 그 목록 안 문단 서수(`--index`)다. 표 셀 안은 `--parent 문단.하위목록`으로 가리킨다.
+조각을 뜨고 다른 문서에 가져온다. 주소는 구역 번호(`--section`)와 그 목록 안 문단 서수(`--index`)다. 표 셀 안은 `--parent 문단.하위목록`으로 가리킨다. `--range 구역:시작-끝`을 주면 그 범위의 문단들(0부터 세는 포함 범위, 같은 목록 안)을 지우고 그 자리에 조각을 넣는다(범위 교체. `--section`·`--index`·`--before`와 함께 쓸 수 없다). 범위 안에 구역 설정이 든 문단이 있거나 범위가 누름틀을 가운데에서 자르면 게이트가 막는다(종료 코드 1, 출력 없음).
 
 ```
 hwpx fragment extract source.hwpx --section 0 --from 3 --to 5 -o fragment.json
 hwpx fragment import target.hwpx fragment.json --section 0 --index 2 -o merged.hwpx
 hwpx fragment import target.hwpx fragment.json --section 0 --index 2 --before -o merged.hwpx
 hwpx fragment import target.hwpx fragment.json --section 0 --index 2 -o merged.hwpx --report import-report.json
+hwpx fragment import target.hwpx fragment.json --range 0:18-21 -o merged.hwpx                 # 구역 0의 문단 18~21을 조각으로 교체
+hwpx fragment import target.hwpx fragment.json --range 0:2-4 --parent 12.1 -o merged.hwpx      # 표 셀 안(문단 12의 하위 목록 1)의 문단 2~4를 교체
 ```
+
+템플릿(`fill --template`)에서는 같은 일을 `range` 앵커로 한다(`{ "kind": "range", "at": { "sectionIndex": 0, "parentPath": [] }, "from": 18, "to": 21, "print": { ... } }`. 지문 `print`는 엔진의 `makeRangeAnchor`가 채운다). `inject`·`insertText`는 `position: "replace"`(범위 교체)·`"before"`·`"after"`를, `delete`는 범위 삭제를 받는다. 원본에서 범위의 글이 바뀌어 있으면 `ANCHOR_CHANGED`로 막는다. 보고서의 `report.plan.moves`가 교체·삭제·삽입으로 뒤 문단 번호가 얼마나 움직였는지 적는다(항목 `{ sectionIndex, parentPath, from, to, count, delta }`, 원본 좌표).
 
 `--report`는 `hwpx fill --report`와 같은 게이트 보고서다. 조각이 소스에서부터 갖고 있던 문제(겹치는 id, 소스에서 이미 없던 참조)는 새 오류로 세지 않고 보고서의 `report.inherited`에 적는다. 이런 조각 안의 겹치는 id를 새 값으로 바꾸려면 `--reissue-internal`을 준다(`fragment import`와 `.hwpx`의 `fill`에서 쓴다. 템플릿의 `inject`에 적용된다. 기본은 소스 원문 그대로다).
 
@@ -136,4 +140,4 @@ hwpx candidates form.hwpx --json
 
 ## 보고서 형식 (`--report`)
 
-JSON 하나: `{ ok, dryRun, report, ledger? }`. `report`는 계획(액션·건너뜀·필요한 데이터 경로)과 검사 결과·경고·오류 코드를, `ledger`는 입력·템플릿·데이터·출력의 해시와 수량을 담는다(HWPX를 만든 경우에만 있다. md·txt에는 없다).
+JSON 하나: `{ ok, dryRun, report, ledger? }`. `report`는 계획(액션·건너뜀·필요한 데이터 경로, 그리고 범위 교체·삭제·삽입으로 문단 번호가 움직인 이동표 `plan.moves`)과 검사 결과·경고·오류 코드를, `ledger`는 입력·템플릿·데이터·출력의 해시와 수량을 담는다(HWPX를 만든 경우에만 있다. md·txt에는 없다).

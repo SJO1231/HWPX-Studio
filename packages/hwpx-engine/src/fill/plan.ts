@@ -11,6 +11,7 @@ import { readTableGrid } from "../table/grid.ts";
 import { planRepeatRows } from "../table/rows.ts";
 import {
   emptyFillReport,
+  type Action,
   type Dataset,
   type FillReport,
   type MissingPolicy,
@@ -21,12 +22,15 @@ import {
 } from "../template/types.ts";
 import { isValidPath } from "../template/placeholder.ts";
 import { digestValue, lookupPath, resolvePathValue, resolveValue } from "../template/value.ts";
+import type { Move } from "./anchor-types.ts";
 import { resolveAnchors, type ResolvedAnchor } from "./anchors.ts";
 import { addDelta, deltaOfElements, deltaRecord, scaleDelta, zeroDelta, type Delta } from "./census.ts";
 import { applyRepls, groupBy, hasSecPr, siblingsAtPath, type Repl } from "./doc.ts";
 import { collectFields, fieldAnchorMatches, fieldFillBlock, fieldRangeIn, planFieldFill, type FieldFill, type FieldTarget } from "./fields.ts";
 import { fillFragment } from "./fragment-fill.ts";
+import { makeMove } from "./moves.ts";
 import { fillPlaceholders } from "./placeholders.ts";
+import { splitsField } from "./range.ts";
 import { buildParagraphs, planRowDeletes, splitLines } from "./structure.ts";
 import { planFitTables, planTableAction, fillRowCopy, inheritedOfRow, rowDataset, tableElementOf, tableLabel, type RepeatStep } from "./table-actions.ts";
 import { cellFillBlock, lineFillBlock, planClear, planLineFill, planRangeReplace, span, type Ctx, type TextPlan } from "./text.ts";
@@ -50,8 +54,10 @@ export type InjectStep = {
   ruleId: string;
   anchor: string;
   entry: string;
-  /** 앵커 문단 요소의 시작 오프셋(편집 전 문서) */
+  /** 앵커 문단 요소의 시작 오프셋(편집 전 문서). range 앵커는 `after`면 끝 문단, 그 밖은 첫 문단이다. */
   paragraphStart: number;
+  /** range 앵커의 `replace`: 범위 모든 문단의 시작 오프셋(편집 전 문서). 없으면 `paragraphStart`의 문단 하나를 지운다. */
+  rangeStarts?: number[];
   position: Position;
   /** `{{}}`를 채운 조각 */
   fragment: Fragment;
@@ -79,7 +85,12 @@ export type FillPlan = EditPlan & {
   delta: Delta;
   /** 규칙이 쓴 조각의 지문(키는 조각 경로나 `inline:<규칙 id>`) */
   fragmentDigests: { key: string; sha256: string }[];
+  /** 이동표(7.10): 문단 구조를 바꾸는 항목마다 문서 순서의 원본 좌표 */
+  moves: Move[];
 };
+
+/** 채움 보고서에 이동표를 더한 것(`moves`는 `plan.moves`와 같다) */
+export type PlanReport = FillReport & { moves: Move[] };
 
 type Range = { entry: string; start: number; end: number };
 const within = (outer: Range, inner: Range): boolean => outer.entry === inner.entry && outer.start <= inner.start && inner.end <= outer.end;
@@ -149,10 +160,10 @@ export function buildFillPlan(
   template: Template,
   dataset: Dataset,
   options: FillOptions = {},
-): { plan: FillPlan; report: FillReport } {
+): { plan: FillPlan; report: PlanReport } {
   const policy: MissingPolicy = options.missing ?? template.options.missing ?? "error";
   const mixed: MixedFormatPolicy = options.mixedFormat ?? template.options.mixedFormat ?? "skip";
-  const report = emptyFillReport();
+  const report: PlanReport = { ...emptyFillReport(), moves: [] };
   const issues = report.issues;
   const required = new Set<string>();
   const missingPaths = new Set<string>();
@@ -173,6 +184,116 @@ export function buildFillPlan(
   issues.push(...resolution.issues);
   for (const i of resolution.issues) if (i.code === "ANCHOR_RELOCATED") report.relocated.push({ anchor: i.where ?? "", message: i.message });
   const anchorOf = (id: string): ResolvedAnchor | undefined => resolution.anchors.get(id);
+  /** insertText `replace`의 값이 비거나(`empty`·빈 글) 자리를 그대로 두면(`keep`) 교체를 건너뛴다: 그 문단·범위는 교체되는 범위로 세지 않는다(안의 자리는 채운다) */
+  const skipsReplace = (action: Action): boolean => {
+    if (action.type !== "insertText" || action.position !== "replace") return false;
+    const value = resolveValue(dataset, action.value, policy);
+    return value.kind === "keep" || value.kind === "empty" || (value.kind === "text" && value.text === "");
+  };
+
+  // ── 1b. range 앵커를 받는 규칙(7.10) ──────────────────────────
+  // range 앵커는 inject·insertText·delete만 받는다(다른 액션은 TPL_RULE). 범위를 교체·삭제하는 규칙은 그 범위 전체를 바꾸므로,
+  // 겹치는 다른 규칙은 규칙 순서와 상관없이 TPL_CONFLICT다(여러 문단에 걸친 누름틀의 구간 치환과 같은 규칙). 범위 안의 `{{}}`·누름틀 암묵 채움은 `dropped`다.
+  type RangeOp = {
+    ruleId: string;
+    anchor: string;
+    resolved: Extract<ResolvedAnchor, { kind: "range" }>;
+    /** 첫 문단 시작부터 끝 문단 끝까지 */
+    range: Range;
+    type: "inject" | "insertText" | "delete";
+    position: Position | undefined;
+    /** 범위를 지우거나 교체한다(`delete`, `replace`. 값이 비어 교체를 건너뛰는 insertText는 아니다) */
+    destructive: boolean;
+  };
+  const rangeOps: RangeOp[] = [];
+  const rangeSkip = new Set<string>();
+  for (const rule of active) {
+    const action = rule.do;
+    const anchor = anchorOf(action.anchor);
+    const first = anchor?.kind === "range" ? anchor.paragraphs[0] : undefined;
+    const last = anchor?.kind === "range" ? anchor.paragraphs[anchor.paragraphs.length - 1] : undefined;
+    if (anchor?.kind !== "range" || first === undefined || last === undefined) continue;
+    if (action.type !== "inject" && action.type !== "insertText" && action.type !== "delete") {
+      issues.push(issueFor("TPL_RULE", `${action.type}은(는) range 앵커에 쓸 수 없습니다(inject·insertText·delete만 받습니다).`, rule.id));
+      rangeSkip.add(rule.id);
+      continue;
+    }
+    if (action.type === "delete" && action.scope !== undefined) {
+      issues.push(issueFor("TPL_RULE", "range 앵커의 delete에는 scope를 줄 수 없습니다.", rule.id));
+      rangeSkip.add(rule.id);
+      continue;
+    }
+    const position = action.type === "delete" ? undefined : action.position;
+    const destructive = action.type === "delete" || (position === "replace" && !skipsReplace(action));
+    if (destructive) {
+      const verb = action.type === "delete" ? "지울" : "교체할";
+      const split = splitsField(anchor.paragraphs);
+      if (anchor.paragraphs.some((p) => hasSecPr(p))) {
+        issues.push(issueFor("FILL_SECTION_PROPS", `범위 안에 구역 설정(secPr)이 든 문단이 있어 ${verb} 수 없습니다.`, rule.id));
+        rangeSkip.add(rule.id);
+        continue;
+      }
+      if (split !== undefined) {
+        issues.push(issueFor("FRAG_SPLITS_FIELD", `범위가 누름틀의 시작과 끝 사이를 자릅니다(범위 안에서 짝이 닫히지 않는 시작 ${split.begins}개, 끝 ${split.ends}개). ${verb} 수 없습니다.`, rule.id));
+        rangeSkip.add(rule.id);
+        continue;
+      }
+    }
+    rangeOps.push({
+      ruleId: rule.id,
+      anchor: action.anchor,
+      resolved: anchor,
+      range: { entry: anchor.section.entryName, start: first.element.start, end: last.element.end },
+      type: action.type,
+      position,
+      destructive,
+    });
+  }
+  // 범위끼리: 교체·삭제가 하나라도 끼고 범위가 겹치면 충돌이다. 같은 범위에 교체·삭제가 둘 이상이어도 충돌이다.
+  // 같은 범위에 앞·뒤 삽입(before·after)과 교체·삭제가 하나씩이면 허용한다(line 앵커의 앞뒤 삽입과 교체처럼). insertText 교체는 같은 범위의 다른 삽입과 함께 쓸 수 없다.
+  const isTextReplace = (o: RangeOp): boolean => o.type === "insertText" && o.destructive;
+  for (let j = 0; j < rangeOps.length; j++) {
+    const b = rangeOps[j];
+    if (b === undefined) continue;
+    for (const a of rangeOps.slice(0, j)) {
+      if (rangeSkip.has(a.ruleId) || (!a.destructive && !b.destructive)) continue;
+      if (!(a.range.entry === b.range.entry && a.range.start < b.range.end && b.range.start < a.range.end)) continue;
+      if (same(a.range, b.range) && !(a.destructive && b.destructive) && !isTextReplace(a) && !isTextReplace(b)) continue;
+      issues.push(issueFor("TPL_CONFLICT", `규칙 ${a.ruleId}와 같은 범위나 겹치는 range 범위를 바꿉니다.`, b.ruleId));
+      rangeSkip.add(b.ruleId);
+      break;
+    }
+  }
+  /** 교체·삭제로 바뀌는 range 앵커의 범위(충돌 판정과 암묵 채움 버림에 쓴다) */
+  const regs = rangeOps.filter((o) => o.destructive && !rangeSkip.has(o.ruleId));
+  /** 규칙 `who`가 range 앵커의 교체·삭제가 바꾸는 범위 `r` 안을 건드리면 TPL_CONFLICT를 내고 true를 돌려준다. */
+  const clashRange = (r: Range, who: string): boolean => {
+    const reg = regs.find((o) => within(o.range, r));
+    if (reg === undefined) return false;
+    const key = `conflict\u0000${reg.ruleId}\u0000${who}`;
+    if (!reportedErrors.has(key)) {
+      reportedErrors.add(key);
+      issues.push(
+        issueFor("TPL_CONFLICT", `규칙 ${reg.ruleId}가 ${reg.type === "delete" ? "지우는" : "교체하는"} range 범위(구역 ${reg.resolved.section.index}, 문단 ${reg.resolved.from}~${reg.resolved.to}) 안을 건드립니다.`, who),
+      );
+    }
+    return true;
+  };
+  /** 이동표 항목: 문서 순서로 정렬하려고 구역 안 위치(`at`)와 만든 순서(`seq`)를 함께 둔다. 정렬은 계획 끝에서 하고, 항목은 합치지 않는다(문단 삭제는 문단마다, range 삭제는 범위마다 하나). */
+  const moveEntries: { move: Move; at: number; seq: number }[] = [];
+  const noteMove = (sectionIndex: number, at: number, parentPath: number[], from: number, to: number, count: number): void => {
+    moveEntries.push({ move: makeMove(sectionIndex, parentPath, from, to, count), at, seq: moveEntries.length });
+  };
+
+  /** 앵커 문단(들)의 앞·뒤 삽입이나 교체의 이동표 항목. 부모와 번호는 문단 주소에서 읽는다. */
+  const noteStructure = (sectionIndex: number, at: number, first: ParagraphNode, last: ParagraphNode, position: Position, count: number): void => {
+    const parentPath = first.path.slice(0, -1);
+    const from = first.path[first.path.length - 1] ?? 0;
+    const to = last.path[last.path.length - 1] ?? from;
+    if (position === "before") noteMove(sectionIndex, at, parentPath, from, from - 1, count);
+    else if (position === "after") noteMove(sectionIndex, at, parentPath, to + 1, to, count);
+    else noteMove(sectionIndex, at, parentPath, from, to, count);
+  };
 
   // 조건이 거짓인 repeat: 원형 행은 그대로 두고 그 안의 원소·순번 자리(`{{item.이름}}`·`{{순번}}`)는 채우지 않는다(`REPEAT_INACTIVE`).
   // 이 용도로만 앵커를 풀기 때문에 풀지 못해도 오류를 내지 않는다.
@@ -202,7 +323,9 @@ export function buildFillPlan(
     if (found === undefined) cands.push(cand);
     else found.rules.push(...cand.rules);
   };
-  const paragraphDelete = (section: SectionModel, paragraph: ParagraphNode, rule: { ruleId: string; anchor: string }): void => {
+  const paragraphDelete = (section: SectionModel, paragraph: ParagraphNode, rule: { ruleId: string; anchor: string }, viaRange = false): void => {
+    // range 앵커의 교체·삭제가 바꾸는 범위 안의 다른 규칙의 삭제는 충돌이다(그 범위를 지우는 규칙 자신(`viaRange`)은 제외)
+    if (!viaRange && clashRange(rangeOf(section, paragraph.element), rule.ruleId)) return;
     if (hasSecPr(paragraph)) {
       issues.push(issueFor("FILL_SECTION_PROPS", "구역 설정(secPr)이 든 문단은 지울 수 없습니다.", rule.ruleId));
       return;
@@ -220,6 +343,7 @@ export function buildFillPlan(
     });
   };
   const objectDelete = (section: SectionModel, paragraph: ParagraphNode, object: ObjectNode, rule: { ruleId: string; anchor: string }): void => {
+    if (clashRange(rangeOf(section, object.element), rule.ruleId)) return;
     if (isOnlyObject(paragraph, object)) {
       paragraphDelete(section, paragraph, rule);
       return;
@@ -247,7 +371,7 @@ export function buildFillPlan(
     if (anchor === undefined) continue;
     if (action.type === "delete" && anchor.kind === "line") doomed.push(rangeOf(anchor.section, anchor.paragraph.element));
     else if (action.type === "delete" && anchor.kind === "object") doomed.push(rangeOf(anchor.section, isOnlyObject(anchor.paragraph, anchor.object) ? anchor.paragraph.element : anchor.object.element));
-    else if ((action.type === "inject" || action.type === "insertText") && action.position === "replace" && anchor.kind === "line") doomed.push(rangeOf(anchor.section, anchor.paragraph.element));
+    else if ((action.type === "inject" || action.type === "insertText") && action.position === "replace" && anchor.kind === "line" && !skipsReplace(action)) doomed.push(rangeOf(anchor.section, anchor.paragraph.element));
   }
   const repeatClaims = new Map<string, string>();
 
@@ -262,7 +386,8 @@ export function buildFillPlan(
     const action = rule.do;
     if (action.type !== "repeat") continue;
     const anchor = anchorOf(action.anchor);
-    if (anchor === undefined) continue;
+    // range 앵커는 1b가 이미 TPL_RULE로 막았다
+    if (anchor === undefined || rangeSkip.has(rule.id)) continue;
     if (anchor.kind !== "cell") {
       issues.push(issueFor("TPL_RULE", "repeat의 앵커는 원형 행의 셀을 가리키는 cell 앵커여야 합니다.", rule.id));
       continue;
@@ -274,6 +399,7 @@ export function buildFillPlan(
       continue;
     }
     const tableRange = rangeOf(anchor.section, anchor.table.element);
+    if (clashRange(tableRange, rule.id)) continue;
     if (doomed.some((d) => within(d, tableRange))) {
       report.dropped.push({ ruleId: rule.id, anchor: action.anchor, reason: "표가 삭제·교체되는 범위 안이라 버렸습니다." });
       continue;
@@ -375,10 +501,12 @@ export function buildFillPlan(
     if (anchor.kind === "line") paragraphDelete(anchor.section, anchor.paragraph, who);
     else if (anchor.kind === "object") objectDelete(anchor.section, anchor.paragraph, anchor.object, who);
     else if (anchor.kind === "cell") rowReqs.push({ rule: who, section: anchor.section, owner: anchor.owner, table: anchor.table, row: anchor.cell.row });
+    else if (anchor.kind === "range" && !rangeSkip.has(rule.id)) for (const par of anchor.paragraphs) paragraphDelete(anchor.section, par, who, true);
   }
   // 반복해서 바뀌는 원형 행을 지우라는 다른 규칙은 버린다(원형 행은 단계에서 다시 찾아야 한다)
   const activeRows = repeatRows.filter((r) => r.active);
   const effectiveRowReqs = rowReqs.filter((req) => {
+    if (clashRange(rangeOf(req.section, req.table.element), req.rule.ruleId)) return false;
     const tr = readTableGrid(req.table.element).rows[req.row];
     if (tr === undefined || repeatRuleIds.has(req.rule.ruleId)) return true;
     const range = rangeOf(req.section, tr);
@@ -415,12 +543,15 @@ export function buildFillPlan(
   const replaceRanges: { range: Range; ruleId: string; type: "inject" | "insertText" | "repeat" }[] = [];
   // 반복할 원형 행은 단계에서 통째로 바뀌므로 그 안의 채움·삽입·줄 배치 캐시 제거는 버린다(교체되는 범위로 센다)
   for (const r of repeatRows) replaceRanges.push({ range: r.range, ruleId: r.ruleId, type: "repeat" });
+  // range 앵커의 교체는 범위 전체를 교체되는 범위로 센다(그 안의 채움·줄 배치 캐시 제거는 버린다)
+  for (const op of regs) if (op.type !== "delete") replaceRanges.push({ range: op.range, ruleId: op.ruleId, type: op.type });
   for (const rule of active) {
     const action = rule.do;
     if ((action.type !== "inject" && action.type !== "insertText") || action.position !== "replace") continue;
     const anchor = anchorOf(action.anchor);
     if (anchor === undefined || anchor.kind !== "line") continue;
     const range = rangeOf(anchor.section, anchor.paragraph.element);
+    if (clashRange(range, rule.id) || skipsReplace(action)) continue;
     if (hasSecPr(anchor.paragraph)) {
       issues.push(issueFor("FILL_SECTION_PROPS", "구역 설정(secPr)이 든 문단은 교체할 수 없습니다.", rule.id));
       continue;
@@ -530,6 +661,10 @@ export function buildFillPlan(
     spanDelta = addDelta(spanDelta, sp.delta);
     if (sp.merge !== undefined) {
       const { between, tables } = sp.merge;
+      // 끝 문단이 시작 문단에 합쳐지고 사이 문단이 사라진다: 시작 문단 다음부터 끝 문단까지가 0개로 바뀐다
+      const startIndex = target.paragraph.path[target.paragraph.path.length - 1] ?? 0;
+      const endIndex = sp.merge.endParagraph.path[sp.merge.endParagraph.path.length - 1] ?? startIndex;
+      noteMove(target.section.index, target.paragraph.element.end, target.paragraph.path.slice(0, -1), startIndex + 1, endIndex, 0);
       issues.push(
         makeIssue("warning", "FIELD_PARAGRAPHS_MERGED", `${subjectOf(target)} 걸친 문단 ${between + 2}개를 합쳤고 사이의 문단 ${between}개를 지웠습니다(그 안의 표 ${tables}개 포함).`, label),
       );
@@ -609,7 +744,8 @@ export function buildFillPlan(
     const action = rule.do;
     if (action.type === "delete") continue;
     const anchor = anchorOf(action.anchor);
-    if (anchor === undefined) continue;
+    // range 앵커를 받지 않는 액션과 1b에서 거절한 range 규칙은 이미 오류를 냈다
+    if (anchor === undefined || rangeSkip.has(rule.id)) continue;
     const who = { ruleId: rule.id, anchor: action.anchor };
 
     if (action.type === "tableProps" || action.type === "resize") {
@@ -619,6 +755,7 @@ export function buildFillPlan(
         continue;
       }
       const tableRange = rangeOf(target.section, target.element);
+      if (clashRange(tableRange, rule.id)) continue;
       const tableOver = spanOver(tableRange);
       if (tableOver !== undefined) {
         clashSpan(tableOver, rule.id);
@@ -676,6 +813,7 @@ export function buildFillPlan(
       /** 이 문단(`part`가 있으면 그 논리 구간)은 채우지 않는다: 구간 치환이 지우는 자리면 충돌, 삭제·교체되는 범위면 버린다. */
       const dropIf = (section: SectionModel, par: ParagraphNode, part?: { start: number; end: number }): boolean => {
         const r = rangeOf(section, par.element);
+        if (clashRange(r, rule.id)) return true;
         const over = spanOver(r) ?? (part === undefined ? undefined : goneOver(par, part.start, part.end));
         if (over !== undefined) {
           clashSpan(over, rule.id);
@@ -691,6 +829,7 @@ export function buildFillPlan(
 
       if (anchor.kind === "field") {
         for (const target of anchor.targets) {
+          if (clashRange(rangeOf(target.section, target.paragraph.element), rule.id)) continue;
           if (fieldDeleted(target)) {
             droppedCount++;
             continue;
@@ -757,17 +896,26 @@ export function buildFillPlan(
       continue;
     }
 
-    // insertText·inject: 앵커는 line
-    if (anchor.kind !== "line") continue;
-    const anchorRange = rangeOf(anchor.section, anchor.paragraph.element);
+    // insertText·inject: 앵커는 line(문단 하나)이나 range(같은 부모의 연속 문단)다. range는 `before`가 첫 문단 앞, `after`가 끝 문단 뒤, `replace`가 범위 전체다.
+    if (anchor.kind !== "line" && anchor.kind !== "range") continue;
+    const paras = anchor.kind === "range" ? anchor.paragraphs : [anchor.paragraph];
+    const firstPar = paras[0];
+    const lastPar = paras[paras.length - 1];
+    if (firstPar === undefined || lastPar === undefined) continue;
+    /** 삽입 지점이 되는 문단: `after`는 끝 문단, 그 밖은 첫 문단 */
+    const edgePar = action.position === "after" ? lastPar : firstPar;
+    const anchorRange: Range = { entry: anchor.section.entryName, start: firstPar.element.start, end: lastPar.element.end };
+    // range 앵커의 교체·삭제가 바꾸는 범위 안의 line 앵커 규칙은 충돌이다(range 앵커끼리는 1b가 판정했다)
+    if (anchor.kind === "line" && clashRange(anchorRange, rule.id)) continue;
     // 구간 치환이 지우는 구간 안이거나, 문단을 합치는 구간 치환의 시작·끝·사이 문단이면(앞뒤 어디든) 충돌이다
-    const anchorOver = spanOver(anchorRange) ?? blockOver(anchor.section, anchor.paragraph);
+    const anchorOver = spanOver(anchorRange) ?? paras.map((par) => blockOver(anchor.section, par)).find((x) => x !== undefined);
     if (anchorOver !== undefined) {
       clashSpan(anchorOver, rule.id);
       continue;
     }
-    // 앵커 문단이 지워지거나, 다른 문단의 교체 범위 안(자기 자신을 교체하는 것은 제외)이면 버린다
-    if (isDeleted(anchorRange) || replaceRanges.some((x) => within(x.range, anchorRange) && !same(x.range, anchorRange))) {
+    // 앵커 문단(range의 `replace`는 범위 전체, 앞뒤 삽입은 삽입 지점 문단)이 지워지거나, 다른 문단의 교체 범위 안(자기 자신을 교체하는 것은 제외)이면 버린다
+    const edgeRange = action.position === "replace" ? anchorRange : rangeOf(anchor.section, edgePar.element);
+    if (isDeleted(edgeRange) || replaceRanges.some((x) => within(x.range, edgeRange) && !same(x.range, anchorRange))) {
       report.dropped.push({ ruleId: rule.id, anchor: action.anchor, reason: "앵커 문단이 삭제·교체되는 범위 안이라 버렸습니다." });
       continue;
     }
@@ -777,7 +925,7 @@ export function buildFillPlan(
     }
     const ctx = ctxOf(anchor.section);
     const warnBeforeSecPr = (): void => {
-      if (action.position === "before" && hasSecPr(anchor.paragraph)) {
+      if (action.position === "before" && hasSecPr(firstPar)) {
         issues.push(makeIssue("warning", "FILL_BEFORE_SECPR", `규칙 ${rule.id}: 구역 설정(secPr)이 든 문단 앞에 넣으면 구역 설정이 첫 문단이 아니게 됩니다.`, rule.id));
       }
     };
@@ -797,7 +945,7 @@ export function buildFillPlan(
       if (value.kind === "empty") missingPaths.add(value.path);
       const text = value.kind === "text" ? value.text : "";
       if (text === "") continue;
-      const par = anchor.paragraph;
+      const par = firstPar;
       let style: { paraPrIDRef: string; styleIDRef: string; charPrIDRef: string };
       if (action.style === "inherit") {
         const charPr = par.runs[0]?.charPrIDRef;
@@ -823,13 +971,16 @@ export function buildFillPlan(
       const lines = splitLines(text);
       const xml = buildParagraphs(par, lines, style);
       warnBeforeSecPr();
-      const at = action.position === "after" ? par.element.end : par.element.start;
+      const at = action.position === "after" ? lastPar.element.end : firstPar.element.start;
       insertEdits.push(span(ctx, at, at, xml, `규칙 ${rule.id}: 문단 삽입`));
       if (action.position === "replace") {
-        insertEdits.push(span(ctx, par.element.start, par.element.end, "", `규칙 ${rule.id}: 문단 교체`));
-        insertDelta = addDelta(insertDelta, deltaOfElements([par.element], anchor.section.entryName, -1));
+        for (const old of paras) {
+          insertEdits.push(span(ctx, old.element.start, old.element.end, "", `규칙 ${rule.id}: 문단 교체`));
+          insertDelta = addDelta(insertDelta, deltaOfElements([old.element], anchor.section.entryName, -1));
+        }
       }
       insertDelta = { ...insertDelta, paragraphs: insertDelta.paragraphs + lines.length };
+      noteStructure(anchor.section.index, at, firstPar, lastPar, action.position, lines.length);
       touchedEntries.add(anchor.section.entryName);
       explicit.push({ ruleId: rule.id, type: "insertText", anchor: action.anchor, targets: lines.length, position: action.position, value: digestValue(text) });
       continue;
@@ -867,7 +1018,7 @@ export function buildFillPlan(
     if (action.fitTable === "allowBreak") {
       // 삽입 지점을 감싸는 표 가운데 잘릴 수 있는 표를 쪽을 넘길 수 있게 바꾼다(주 계획에서 먼저 적용하므로 가져오기 단계에는 경고가 없다)
       try {
-        for (const fit of planFitTables(doc, anchor.section, anchor.paragraph.element)) {
+        for (const fit of planFitTables(doc, anchor.section, edgePar.element)) {
           for (const edit of fit.edits) tagged.push({ edit, label: rule.id });
           for (const change of fit.changes) report.tableChanges.push({ ruleId: rule.id, anchor: action.anchor, table: tableLabel(anchor.section, fit.table), change });
           touchedEntries.add(anchor.section.entryName);
@@ -882,22 +1033,28 @@ export function buildFillPlan(
     let delta = filled.delta;
     let replacedDelta: Delta | undefined;
     if (action.position === "replace") {
-      replacedDelta = deltaOfElements([anchor.paragraph.element], anchor.section.entryName, -1);
+      replacedDelta = deltaOfElements(
+        paras.map((old) => old.element),
+        anchor.section.entryName,
+        -1,
+      );
       delta = addDelta(delta, replacedDelta);
     }
     const step: InjectStep = {
       ruleId: rule.id,
       anchor: action.anchor,
       entry: anchor.section.entryName,
-      paragraphStart: anchor.paragraph.element.start,
+      paragraphStart: edgePar.element.start,
       position: action.position,
       fragment: filled.fragment,
       texts: filled.texts,
       topLevel: filled.topLevel,
       delta,
     };
+    if (anchor.kind === "range" && action.position === "replace") step.rangeStarts = paras.map((old) => old.element.start);
     if (replacedDelta !== undefined) step.replacedDelta = replacedDelta;
     injects.push(step);
+    noteStructure(anchor.section.index, action.position === "after" ? lastPar.element.end : firstPar.element.start, firstPar, lastPar, action.position, filled.topLevel);
     touchedEntries.add(anchor.section.entryName);
     explicit.push({ ruleId: rule.id, type: "inject", anchor: action.anchor, targets: filled.topLevel, position: action.position });
   }
@@ -1124,6 +1281,20 @@ export function buildFillPlan(
       else if (type === "delete") found.targets += d.parts.length;
     }
   }
+  // 이동표: 문단 삭제는 문단마다, range 앵커의 삭제는 범위 하나가 항목 하나다(구조 변경 하나당 항목 하나)
+  const rangeDeletes = regs.filter((o) => o.type === "delete");
+  for (const d of deletes) {
+    const par = d.kind === "paragraph" ? d.paragraph : undefined;
+    if (par === undefined || d.rules.some((r) => rangeDeletes.some((o) => o.ruleId === r.ruleId))) continue;
+    const index = par.path[par.path.length - 1] ?? 0;
+    noteMove(d.section.index, par.element.start, par.path.slice(0, -1), index, index, 0);
+  }
+  for (const op of rangeDeletes) {
+    const { section, parentPath, from, to, paragraphs } = op.resolved;
+    if (paragraphs.every((p) => deletes.some((d) => d.paragraph === p))) noteMove(section.index, op.range.start, parentPath, from, to, 0);
+  }
+  const moves = moveEntries.sort((a, b) => a.move.sectionIndex - b.move.sectionIndex || a.at - b.at || a.seq - b.seq).map((x) => x.move);
+  report.moves = moves.map((m) => ({ ...m, parentPath: [...m.parentPath] }));
   let delta = zeroDelta();
   for (const d of deletes) delta = addDelta(delta, d.delta);
   delta = addDelta(delta, insertDelta);
@@ -1146,6 +1317,7 @@ export function buildFillPlan(
     expectations,
     delta,
     fragmentDigests,
+    moves,
   };
   return { plan, report };
 }
