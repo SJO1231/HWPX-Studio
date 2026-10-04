@@ -1380,10 +1380,10 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 `generateFromTemplate(bytes, t, record, case, loadBlob, opts)`의 순서다. 어느 단계든 실패하면 출력이 없다. 순수 함수이고 시계·파일을 모르므로 같은 입력은 같은 바이트다. **[구현 #31]**(2026-10-04, `src/fill/generate-studio*.ts`·`studio-common.ts`·`studio-post.ts`. 검증은 [검증 기준](validation.md) 22절). `t`가 1판 `Template`이면 `generate` 한 번(8.8.11)이고, `StudioTemplate`이면 아래 순서로 `StudioGenerateResult`(`{ ok, dryRun, output?(hwpx 바이트 또는 md 문자열), report, ledger? }`)를 돌려준다. `loadBlob(sha256)`은 덩어리 바이트 또는 `undefined`다. 템플릿·이번 건은 이미 읽힌 객체로 보고 다시 검사하지 않는다.
 
 1. 원본 대조: `bytes`의 sha256이 `t.source.sha256`과 다르면 `TPL_SOURCE_MISMATCH`다. 이 검사가 앵커 상태(8.8.13)보다 앞선다.
-2. 검사: 템플릿·이번 건을 8.8.10대로 읽고, 중첩 슬롯이 있으면 `TPL_NESTED`다. 조각은 `loadBlob(sha256)`으로 가져온다. 없거나 받은 바이트의 해시가 요청과 다르면 `TPL_FRAGMENT_MISSING`이다.
+2. 검사: 템플릿·이번 건은 8.8.10대로 읽힌 객체를 받는다(여기서 다시 검사하지 않는다). 중첩 슬롯이 있으면 `TPL_NESTED`다. 조각은 `loadBlob(sha256)`으로 가져온다. 없거나 받은 바이트의 해시가 요청과 다르면 `TPL_FRAGMENT_MISSING`, 해시는 맞는데 조각 JSON이 아니면 `FRAG_SCHEMA`다.
 3. 값: `bindValues`(8.8.4). 글이 확정된다.
 4. 선택: `selectSlots`(8.8.8). 슬롯이 하나라도 막으면 슬롯마다 `SEL_*`를 모아 내고 끝낸다.
-5. 앵커: 원본 해시가 같으면 `checkAnchors`(8.8.13)는 exact·unverified만 낸다(unverified는 경고). 그 밖의 상태는 템플릿이 손상된 것이므로 해당 코드로 막는다. (#31 구현은 2단계 자리 앵커를 `resolveAnchors`로 풀어 relocated 경고·notFound·ambiguous 오류로 처리하고, 슬롯 앵커는 1단계 `generate`가 푼다. `checkAnchors` 연결은 #32를 합친 뒤.)
+5. 앵커: `checkAnchors(doc, t)`(8.8.13)를 불러 unverified는 `ANCHOR_UNVERIFIED` 경고로 남기고, 원본 해시가 같으면 나올 수 없는 상태(relocated·changed·ambiguous·notFound)가 하나라도 있으면 템플릿이 손상된 것이므로 그 코드들을 모아 막는다(출력 없음). 보고서에 앵커 상태를 담는다. 슬롯 앵커는 1단계 `generate`가, 2단계 자리 앵커는 `resolveAnchors`가 다시 푼다(같은 판정이라 중복 경고는 내지 않는다).
 6. 구조 → 값 두 단계 생성(아래 표).
 7. 후처리(켠 것만)와 끝 판정.
 
@@ -1392,19 +1392,22 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | 계약 요소 | 1단계: 구조(원본 좌표, 빈 데이터) | 2단계: 값(조립본) |
 | --- | --- | --- |
 | 슬롯 s의 선택 블록 b(조각) | 슬롯 앵커마다 문서 순서로 `inject { anchor, position: "replace", fragment }`. 내용은 `blockEdits[b]`가 있으면 그것 | — |
-| b(글) | `insertText { anchor, "replace", { text }, style: "inherit" }`, 줄마다 문단. 글이 비면(hwpx는 빈 글, md는 공백 아닌 줄이 없음) 슬롯 범위를 지우는 `delete`(빈 값 교체는 건너뛰어 원래 글이 남기 때문) | 글 안 `{{키}}`는 `placeholder` 자리가 채운다 |
+| b(글) | `insertText { anchor, "replace", { text }, style: "inherit" }`, 줄마다 문단. 글이 공백·탭·줄바꿈만이거나 비면(hwpx·md 같은 규칙) 슬롯 범위를 지우는 `delete`(빈 값 교체는 건너뛰어 원래 글이 남기 때문) | 글 안 `{{키}}`는 `placeholder` 자리가 채운다 |
 | 고르지 않은 블록 | 규칙 없음(출력에 없다) | — |
 | `word`·`line`·`cell` 자리 | — | 1단계 이동표(7.10)로 주소를 옮긴 뒤 `fill { text }`. 교체 범위 안이면 `dropped`(`PLACE_COVERED`). `cell`은 표를 담은 문단을 옮긴 뒤 그 문단 안 몇 번째 표인지로 서수를 고정하고 지문(`print`)은 쓰지 않는다(첫 행에 슬롯이 있으면 `head`가 바뀐다). 1단계는 슬롯 교체·삭제만 하므로 행 삭제·반복은 생기지 않는다 |
-| `clickHere`·`mailMerge` 자리 | — | 조립본에서 이름·키(NFC 비교)로 다시 열거한다(조각 때문에 순번이 바뀐다). `occurrence`는 이동표로 옮겨 찾고, 원본에 그 순번이 없으면 `ANCHOR_NOT_FOUND` |
+| `clickHere`·`mailMerge` 자리 | — | 조립본에서 이름·키(NFC 비교)로 다시 열거한다(조각 때문에 순번이 바뀐다). `occurrence`는 이동표로 옮겨 찾고, 원본에 그 순번이 없으면 `ANCHOR_NOT_FOUND`, 그 필드가 교체 범위에 덮였으면 `dropped`(`PLACE_COVERED`) |
 | `placeholder` 자리 | — | 조립본의 `{{ 키 }}`마다 `word` 앵커를 만들고 `fill { text }` |
 | 등록되지 않은 `{{ }}` | — | `unregistered: error`이면 `PLACE_UNREGISTERED`, 출력 없음. `keep`이면 경고를 남기고 그대로 둔다 |
-| 값 | 생성 전에 `bindValues`로 글 확정(형식·누락 정책·제어 문자·`valueEdits`) | 규칙은 `{text}`만 쓰고, 데이터 묶음은 비우고 `missing: "keep"`. 값의 `issue`(`DATA_MISSING`·`DATA_FORMAT`·`DATA_NOT_SCALAR`·`VALUE_CONTROL_CHAR`)는 그 값을 쓰는 자리가 2단계 대상으로 1곳 이상 있을 때만 그 코드로 막는다(덮인 자리·고르지 않은 `where` 블록의 자리는 막지 않는다) |
-| 판정 | 단계마다 `generate` 게이트(`allowNothingApplied`). `opts.mode`(`repair` 포함)는 1단계에만 넘기고 2단계는 baseline 또는 strict | 암묵 채움이 아닌 건너뜀이 어느 단계든 1건이라도 있으면 실패(`FILL_SKIPPED`). 후처리 뒤 원본 대비 누적 기준선 비교(`GATE_NEW_ERRORS`·`GATE_ERRORS`) |
+| 값 | 생성 전에 `bindValues`로 글 확정(형식·누락 정책·제어 문자·`valueEdits`) | 규칙은 `{text}`만 쓰고, 데이터 묶음은 비우고 `missing: "keep"`. 값의 `issue`(`DATA_MISSING`·`DATA_FORMAT`·`DATA_NOT_SCALAR`·`DATA_ALIAS_CONFLICT`·`VALUE_CONTROL_CHAR`)는 그 값을 쓰는 자리가 2단계 대상으로 1곳 이상 있을 때만 그 코드로 막는다(덮인 자리·고르지 않은 `where` 블록의 자리는 막지 않는다) |
+| 판정 | 단계마다 `generate` 게이트(`allowNothingApplied`). `opts.mode`(`repair` 포함)는 처음 실행하는 단계에만 넘기고(슬롯이 없으면 2단계가 처음) 그 다음 단계는 baseline 또는 strict | 암묵 채움이 아닌 건너뜀이 어느 단계든 1건이라도 있으면 실패(`FILL_SKIPPED`). 후처리 뒤 원본 대비 누적 기준선 비교(`GATE_NEW_ERRORS`·`GATE_ERRORS`) |
 
 - 1단계와 2단계는 8.3의 `generate`를 그대로 재사용한다. 2단계는 1단계 결과를 다시 파싱한 조립본에서 자리를 찾는다. 1단계에서 `inject`·`insertText`가 쓰는 조각 안의 `{{}}`는 비운 데이터 묶음 때문에 채워지지 않고(`missing: "keep"`), 2단계가 채운다.
 - 등록되지 않은 누름틀·메일머지 필드는 손대지 않는다. `{{ }}`의 등록 여부는 `places[]`의 `placeholder`로만 정해진다: 조립본의 `{{K}}` 하나하나에 적용되는 placeholder 자리가 있어야 등록이다(`where`가 있는 자리는 그 블록이 적용된 곳에서만, `where`가 없는 자리는 어디서나). `where` 블록 밖의 `{{K}}`는 K를 쓰는 다른 자리가 없으면 미등록이다. 누름틀·메일머지 구간 안의 `{{ }}`는 그 필드 자리가 맡으므로 등록 검사에서 뺀다. md의 코드 블록 안 `{{ }}`는 채우지도 세지도 않는다(9절).
 - 건너뜀(`FILL_CROSSES_MARKUP`·`FILL_MIXED_FORMAT` 등)은 `report.skipped`에 남고, 1건이라도 있으면 `FILL_SKIPPED`로 실패한다(메시지에 건너뜀 코드별 건수). `dropped`는 실패가 아니다. `dryRun`도 1단계는 실제로 적용해 2단계 계획을 세우며 `FILL_SKIPPED`면 실패다.
 - 조각 덩어리는 고른 블록만이 아니라 모든 조각 블록과 `blockEdits`의 조각을 2번에서 확인한다.
+- 자리끼리 겹침(예: `line`·`word` 자리 범위 안에 등록된 `{{K}}`)은 읽기에서 잡지 않고 2단계 `generate`가 `TPL_CONFLICT`로 막는다(출력 없음). 부모가 다른 슬롯 range의 겹침(표 문단을 덮는 범위와 그 칸 안의 범위)도 읽기(8.8.10은 같은 부모만 본다)가 아니라 1단계가 `TPL_CONFLICT`로 막는다.
+- `PLACE_UNREGISTERED`·`dropped`의 메시지·`where`에는 `{{ }}` 키(데이터 경로)가 들어간다. 키는 사용자가 서식에 적은 경로이고 값 원문이 아니므로 허용한다(1판 `skipped.anchor`와 같다).
+- 결과 형: 성공 `{ ok: true, dryRun, output?, report, ledger? }`(dryRun이면 `output`·`ledger` 없음), 실패 `{ ok: false, report }`(`dryRun` 없음).
 - 원장(`StudioLedger`, 8.3의 원장에서 `template`·`dataset`을 바꾼 것): 원본 해시 `source.sha256`, 템플릿 `{ id, version, sha256(정규 JSON) }`, 이번 건 `{ sha256 }`, 행 `{ sha256 = sha256(canonicalStudioJson(record)), dataset?, version? }`. 값 원문은 넣지 않는다. counts·expected·actions는 두 단계의 합이고 `counts.skipped`는 암묵 채움을 뺀 건너뜀(성공이면 0), `dropped`에는 `PLACE_COVERED` 수를 더한다. `case.record.sha256`과의 대조는 하지 않는다(화면 몫).
 - 후처리 2종(`options`로 켠 것만. 기본 끔. 이관 템플릿만 켠다. md에는 없다). 확정 규칙(#31, lite와 다른 점은 괄호): `unwrapFilled`는 **이번에 채운** 누름틀·메일머지 필드(구역·시작 id·종류로 고른다. lite는 이름 단위·누름틀만)의 표식을 지워 값 글만 남긴다. `inline` 모양도 푼다(줄바꿈·탭 값은 inline이 된다. lite는 simple·empty만). 표식을 지운 문단의 줄 배치 캐시를 지운다. 확인 3종은 lite와 같다(글 동일 `REREAD_TEXT`·새 오류 0 `GATE_NEW_ERRORS`·남은 필드 0 `REREAD_FIELD`). `refreshPreview`는 lite와 같다: 항목이 있을 때만 `Preview/PrvText.txt`를 문단 글에서 U+FFFC를 빼고 `\n`으로 이어 UTF-8로 다시 쓴다. 보고서 `postprocess: { unwrapped, preview }`.
 - `source.kind`가 `md`이면 텍스트 어댑터(9절)로 같은 순서를 따른다. 슬롯 앵커는 표식 줄 `line`, 블록은 `text`(조각이면 `TPL_FIELD`)다. 결과는 `{ ok, output?(문자열), report }`이고 원장은 없다(9.1). `source.sha256`은 입력 문자열의 UTF-8 바이트(BOM 포함) 해시다. UTF-8이 아니면 `TEXT_ENCODING`.
@@ -1532,7 +1535,7 @@ type AnchorAddress = Pick<WordAnchor, "kind" | "at" | "start" | "end"> | Pick<Li
 
 #### 8.8.16 수용 조건
 
-소유: 검사 = 엔진 쪽 독립 검증(Claude 지휘). 앱 쪽 항목 = Codex 시험. 통과 전에는 [미구현]이다. 상태(2026-10-04): W1~W3의 읽기·쓰기·값 연결·선택 평가 부분은 #29에서 통과([검증 기준](validation.md) 20절). W1의 생성 바이트 동일·W2의 `TPL_NESTED`·W3의 출력 항목은 #31, W4의 전파 함수는 #29(저장·화면은 Codex), W7의 `range` 지문은 #30(19절), W7의 상태 판정·일괄 갱신·재지정은 #32(21절. "생성이 막힌다"는 `resolveAnchors`의 기존 동작으로 확인).
+소유: 검사 = 엔진 쪽 독립 검증(Claude 지휘). 앱 쪽 항목 = Codex 시험. 통과 전에는 [미구현]이다. 상태(2026-10-04): W1~W3의 읽기·쓰기·값 연결·선택 평가 부분은 #29에서 통과([검증 기준](validation.md) 20절). W1의 생성 바이트 동일(1판 경로=승계 경로, CLI=API. 앱=CLI는 #25 뒤)·W2의 `TPL_NESTED`·W3의 출력 항목·W8은 #31에서 통과(22절), W4의 전파 함수는 #29(저장·화면은 Codex), W7의 `range` 지문은 #30(19절), W7의 상태 판정·일괄 갱신·재지정은 #32(21절. "생성이 막힌다"는 `resolveAnchors`의 기존 동작으로 확인). 남은 것: W5(#20), W6(#25, Codex), W1 앱 바이트.
 
 | ID | 조건 |
 | --- | --- |

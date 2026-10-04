@@ -19,6 +19,7 @@ import type { Anchor, Dataset, ReportSkip } from "../template/types.ts";
 import type { TextReport } from "../text/types.ts";
 import { decodeUtf8 } from "../xml/parse.ts";
 import type { Move } from "./anchor-types.ts";
+import type { AnchorCheck } from "./check-anchors.ts";
 import type { GenerateOptions, GenerateReport, Ledger, ValidationSummary } from "./gate.ts";
 import type { ValidationIssue } from "../validate/index.ts";
 
@@ -43,6 +44,8 @@ export type StudioGenerateReport = {
   values: StudioValueReport[];
   /** 슬롯 선택(8.8.8) */
   selections: SlotSelection[];
+  /** 앵커 상태(8.8.13, hwpx. md는 빈 목록). 원본 해시가 같으므로 exact·unverified만 생성에 쓴다 */
+  anchors: AnchorCheck[];
   /** 1단계(구조) 보고서. 바꿀 슬롯이 없거나 그 앞에서 멈췄으면 null */
   stage1: GenerateReport | TextReport | null;
   /** 2단계(값) 보고서. 채울 자리가 없거나 그 앞에서 멈췄으면 null */
@@ -79,7 +82,7 @@ export type StudioGenerateResult =
 export const EMPTY_DATASET: Dataset = { data: {}, derived: {} };
 
 export function newReport(kind: "hwpx" | "md", dryRun: boolean): StudioGenerateReport {
-  return { kind, dryRun, values: [], selections: [], stage1: null, stage2: null, moves: [], dropped: [], skipped: [], warnings: [], issues: [], validation: null, postprocess: { unwrapped: 0, preview: false } };
+  return { kind, dryRun, values: [], selections: [], anchors: [], stage1: null, stage2: null, moves: [], dropped: [], skipped: [], warnings: [], issues: [], validation: null, postprocess: { unwrapped: 0, preview: false } };
 }
 
 /** 보고서를 마무리한다(경고 목록을 채운다). */

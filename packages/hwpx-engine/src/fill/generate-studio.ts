@@ -11,6 +11,7 @@ import { TEMPLATE_SCHEMA, type Anchor, type Template } from "../template/types.t
 import { compareToBaseline, validateDocument } from "../validate/index.ts";
 import type { Move } from "./anchor-types.ts";
 import { linePrintOf, resolveAnchors, wordPrintAt, type ResolvedAnchor } from "./anchors.ts";
+import { checkAnchors } from "./check-anchors.ts";
 import { topLevelObjects } from "./doc.ts";
 import { collectFields, fieldRangeIn, type FieldTarget } from "./fields.ts";
 import { generate, type GateMode, type GenerateOptions, type GenerateResult, type Ledger } from "./gate.ts";
@@ -144,6 +145,15 @@ function generateStudioHwpx(bytes: Uint8Array, t: StudioTemplate, record: Record
   const prep = prepare(bytes, t, record, c, loadBlob, opts, report);
   if (prep === undefined) return failed();
   const origDoc = parseDocument(openPackage(bytes));
+
+  // ── 5. 앵커: 원본 해시가 같으므로 exact·unverified만 쓴다. 그 밖의 상태는 템플릿이 손상된 것이라 그 코드들로 막는다 ──
+  report.anchors = checkAnchors(origDoc, t);
+  for (const check of report.anchors) {
+    if (check.state === "exact") continue;
+    if (check.state === "unverified") issues.push(...check.issues);
+    else issues.push(...check.issues.map((i) => ({ ...i, severity: "error" as const })));
+  }
+  if (hasErrors(issues)) return failed();
   const mode: GateMode = opts.mode ?? "baseline";
   const later: GateMode = mode === "strict" ? "strict" : "baseline";
   const common: GenerateOptions = {
@@ -177,8 +187,8 @@ function generateStudioHwpx(bytes: Uint8Array, t: StudioTemplate, record: Record
         const fragment = prep.fragments.get(content.fragment);
         if (fragment !== undefined) fragments[key] = fragment;
         s1.rules.push({ id, do: { type: "inject", anchor: a.id, position: "replace", fragment: key } });
-      } else if (content.text === "") {
-        // 빈 글 블록: 슬롯 자리를 비운다(insertText의 빈 값은 교체를 건너뛰어 원래 글이 남으므로 지운다)
+      } else if (content.text.trim() === "") {
+        // 빈 글 블록(공백·탭·줄바꿈뿐): 슬롯 자리를 비운다(insertText의 빈 값은 교체를 건너뛰어 원래 글이 남으므로 지운다)
         s1.rules.push({ id, do: { type: "delete", anchor: a.id } });
       } else {
         s1.rules.push({ id, do: { type: "insertText", anchor: a.id, position: "replace", value: { text: content.text }, style: "inherit" } });
@@ -216,8 +226,8 @@ function generateStudioHwpx(bytes: Uint8Array, t: StudioTemplate, record: Record
     const anchor = a === undefined ? undefined : engineAnchor(a);
     if (anchor !== undefined) placeAnchors.set(anchor.id, anchor);
   }
+  // 이 앵커들은 5단계에서 exact·unverified로 확인했다(같은 이슈를 두 번 담지 않는다)
   const origResolved = resolveAnchors(origDoc, { schema: TEMPLATE_SCHEMA, anchors: [...placeAnchors.values()], rules: [], options: {} });
-  issues.push(...origResolved.issues);
 
   const s2: Template = { schema: TEMPLATE_SCHEMA, anchors: [], rules: [], options: t.options?.mixedFormat === undefined ? {} : { mixedFormat: t.options.mixedFormat } };
   const filledFields = new Set<string>();

@@ -212,6 +212,45 @@ test("W8: clickHere·mailMerge는 조립본에서 이름·키로 다시 열거�
   assert.ok(texts.includes(`문의: ${label("담당자 이름")} (${label("연락처")})`));
 });
 
+test("8.8.13 5단계: 정상 템플릿은 앵커 전부 exact, 지문 없는 cell은 성공 + ANCHOR_UNVERIFIED 경고 1(출력 같음), 지문이 틀린 앵커는 그 코드들로 실패(출력 없음)", () => {
+  const { k, record, c, r } = baseRun();
+  const base = ok(r);
+  assert.equal(base.report.anchors.length, k.t.anchors.length);
+  assert.deepEqual([...new Set(base.report.anchors.map((x) => x.state))], ["exact"]);
+  assert.deepEqual(base.report.warnings, []);
+  const run = (edit: (anchors: Record<string, any>[]) => void): StudioGenerateResult => {
+    const t = withRaw(k, (raw) => edit(raw["anchors"] as Record<string, any>[]));
+    return generateFromTemplate(k.bytes, t, record, { ...c, template: caseOf(t, record).template }, loaderOf(k.blobs));
+  };
+  const byId = (anchors: Record<string, any>[], id: string): Record<string, any> => {
+    const a = anchors.find((x) => x["id"] === id);
+    assert.ok(a !== undefined);
+    return a;
+  };
+  const unverified = ok(run((anchors) => delete byId(anchors, "a14")["print"]));
+  assert.deepEqual(unverified.report.warnings.map((w) => w.code), ["ANCHOR_UNVERIFIED"]);
+  assert.equal(unverified.report.anchors.find((x) => x.anchor === "a14")?.state, "unverified");
+  assert.ok(bytesEqual(out(unverified), out(base)));
+  const broken = run((anchors) => {
+    byId(anchors, "a1")["print"]["sha256"] = "0".repeat(64); // 양 끝은 같고 안쪽 해시가 다름
+    byId(anchors, "a7")["print"]["before"] = "없는 앞 글"; // 어디에도 없는 지문
+    byId(anchors, "a11")["at"]["path"] = [41]; // 지문은 맞고 주소만 틀림
+  });
+  assert.deepEqual(failCodes(broken), ["ANCHOR_CHANGED", "ANCHOR_NOT_FOUND", "ANCHOR_RELOCATED"]);
+  assert.deepEqual(broken.report.anchors.filter((x) => x.state !== "exact").map((x) => [x.anchor, x.state]), [["a1", "changed"], ["a7", "notFound"], ["a11", "relocated"]]);
+  assert.equal(broken.report.stage1, null);
+});
+
+test("G4: 공백·탭·줄바꿈만 있는 글 블록은 빈 글로 보아 슬롯 범위를 지운다(이동표 count 0, 문단 수 감소)", () => {
+  const { k, record, c, r } = baseRun();
+  const base = reparse(out(ok(r)));
+  const blank = ok(generateFromTemplate(k.bytes, k.t, record, { ...c, blockEdits: { b2: { text: " \n\t\n" } } }, loaderOf(k.blobs)));
+  assert.deepEqual(blank.report.moves.find((m) => m.parentPath.length === 0 && m.from === 18), { sectionIndex: 0, parentPath: [], from: 18, to: 22, count: 0, delta: -5 });
+  const doc = reparse(out(blank));
+  assert.equal(at(doc.sections, 0).paragraphs.length, at(base.sections, 0).paragraphs.length - 2);
+  assert.ok(!allTexts(doc).some((x) => x.trim() === "" && x !== "" && !x.includes("\uFFFC")), "공백뿐인 문단이 들어갔다");
+});
+
 // ── W3: 선택 ────────────────────────────────────────────────────
 
 test("W3: 고르지 않은 블록의 글·누름틀·{{}}는 출력에 없고, 고른 블록은 슬롯 앵커마다 들어간다. confirmed는 조건과 달라도 유지된다", () => {
