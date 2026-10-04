@@ -172,8 +172,8 @@ test("repeat: 같은 원형 행을 지우는 규칙은 버리고, 그 행 칸을
   const t = repeatTemplate([rule("d", { type: "delete", anchor: "row", scope: "row" }), rule("f", { type: "fill", anchor: "cell", value: { text: "X" } })], [cellAnchor("cell", 1, 1)]);
   const r = done(run(LIST, t, DATA));
   assert.equal(r.output, listWith(rows(3)));
-  const dropped = r.report.plan.dropped.map((d) => `${d.ruleId}:${d.reason}`).sort();
-  assert.deepEqual(dropped, ["d:반복하는 원형 행을 지우는 규칙이라 버렸습니다.", "f:삭제·교체되는 범위 안의 자리 1곳을 버렸습니다."]);
+  const dropped = r.report.plan.dropped.map((d) => `${d.ruleId}:${d.reason}:${d.kind}`).sort();
+  assert.deepEqual(dropped, ["d:반복하는 원형 행을 지우는 규칙이라 버렸습니다.:covered", "f:삭제·교체되는 범위 안의 자리 1곳을 버렸습니다.:covered"]);
   assert.deepEqual(r.report.plan.actions.map((a) => a.ruleId), ["r"]);
 });
 

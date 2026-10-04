@@ -345,7 +345,7 @@ test("C4-6 구간을 가로질러 짝이 끊기는 다른 필드가 있으면 �
   assert.deepEqual(listFields(reparse(inner)).map((f) => f.name), ["성명", "소속"]);
   const r = done(run(inner, { 성명: "새 값", 소속: "소속값" }));
   assert.deepEqual(fieldsOf(reparse(r.output)), [["성명", "새 값", "1", "simple"]], "안쪽 누름틀이 사라졌다");
-  assert.deepEqual(r.report.plan.dropped.map((d) => [d.ruleId, d.anchor]), [["implicit", "bookmark:북마크"], ["implicit", "field:소속"]]);
+  assert.deepEqual(r.report.plan.dropped.map((d) => [d.ruleId, d.anchor, d.kind]), [["implicit", "bookmark:북마크", "covered"], ["implicit", "field:소속", "covered"]]);
   assert.ok(!sectionText(r.output).includes("북마크") && !sectionText(r.output).includes("소속값"));
   assert.deepEqual(r.report.plan.expected, { paragraphs: -2, fieldPairs: -1, bookmarks: -1 }, "누름틀·책갈피도 수량 예고에 든다(게이트가 확인한다)");
   assert.deepEqual(r.report.plan.actions.map((a) => a.anchor), ["field:성명"], "안쪽 누름틀은 채운 자리가 아니다");
@@ -366,7 +366,7 @@ test("C4-7 사이 문단에 든 {{키}}는 dropped로 보고되고 결과에 남
     x.replace("<hp:t>가운데 문단</hp:t>", "<hp:t>가운데 {{키}} 문단</hp:t>").replace("<hp:t>성명: </hp:t>", "<hp:t>{{앞}} 성명: </hp:t>").replace("<hp:t> 끝 뒤 글</hp:t>", "<hp:t> 끝 뒤 {{뒤}}</hp:t>"),
   );
   const r = done(run(bytes, { 성명: "새 값", 키: "KEY", 앞: "A", 뒤: "Z" }));
-  assert.deepEqual(r.report.plan.dropped.map((d) => [d.ruleId, d.anchor]), [["implicit", "{{키}}"]]);
+  assert.deepEqual(r.report.plan.dropped.map((d) => [d.ruleId, d.anchor, d.kind]), [["implicit", "{{키}}", "covered"]]);
   assert.deepEqual(topTexts(reparse(r.output)).map(plain), ["앞 문단", "A 성명: 새 값 끝 뒤 Z", "뒤 문단"]);
   assert.ok(!sectionText(r.output).includes("KEY") && !sectionText(r.output).includes("{{"));
   assert.deepEqual(r.report.plan.actions.map((a) => a.anchor).sort(), ["field:성명", "{{뒤}}", "{{앞}}"].sort());
@@ -380,7 +380,7 @@ test("C4-7 시작 문단의 표식 뒤나 끝 문단의 표식 앞(지워지는 
   for (const [from, to] of [["<hp:t>첫 문단</hp:t>", "<hp:t>첫 {{키}} 문단</hp:t>"], ["<hp:t>끝 문단</hp:t>", "<hp:t>끝 {{키}} 문단</hp:t>"]] as const) {
     const bytes = mutateEntryText(SPAN, SEC, (x) => x.replace(from, to));
     const r = done(run(bytes, { 성명: "새 값", 키: "KEY" }));
-    assert.deepEqual(r.report.plan.dropped.map((d) => [d.ruleId, d.anchor]), [["implicit", "{{키}}"]], from);
+    assert.deepEqual(r.report.plan.dropped.map((d) => [d.ruleId, d.anchor, d.kind]), [["implicit", "{{키}}", "covered"]], from);
     assert.deepEqual(topTexts(reparse(r.output)).map(plain), ["앞 문단", "성명: 새 값 끝 뒤 글", "뒤 문단"], from);
     assert.ok(!sectionText(r.output).includes("KEY") && !sectionText(r.output).includes("{{"), from);
     assert.deepEqual(r.report.plan.actions.map((a) => a.anchor), ["field:성명"], from);
@@ -438,6 +438,7 @@ test("L4 꼬리·머리의 표·쪽 번호·책갈피·중첩 필드는 한컴�
     assert.deepEqual(r.report.plan.expected, c.expected, c.label);
     assert.deepEqual(merged(r).map((i) => i.message), [`누름틀 성명이 걸친 문단 3개를 합쳤고 사이의 문단 1개를 지웠습니다(그 안의 표 ${c.tables}개 포함).`], c.label);
     assert.deepEqual(r.report.plan.dropped.map((d) => [d.ruleId, d.anchor]), c.dropped, c.label);
+    assert.ok(r.report.plan.dropped.every((d) => d.kind === "covered"), c.label);
     assert.deepEqual(newErrorsAfter(validateDocument(c.bytes), validateDocument(r.output)), [], c.label);
     // 명시 규칙도 같은 결과다
     const g = done(generate(c.bytes, nameTemplate("값"), ds({ 소속: "기관" })));
@@ -683,7 +684,7 @@ test("M1 구간 안을 가리키는 명시 규칙은 규칙 순서와 상관없�
   }
   // 암묵 채움(`{{}}`·암묵 누름틀)은 순서와 상관없이 dropped다(오류가 아니다)
   const implicit = done(run(MATRIX, { 성명: "값", 소속: "기관", item: { name: "x" } }));
-  assert.deepEqual(implicit.report.plan.dropped.map((d) => [d.ruleId, d.anchor]), [["implicit", "{{item.name}}"], ["implicit", "field:소속"]]);
+  assert.deepEqual(implicit.report.plan.dropped.map((d) => [d.ruleId, d.anchor, d.kind]), [["implicit", "{{item.name}}", "covered"], ["implicit", "field:소속", "covered"]]);
 });
 
 test("M1 구간 안의 word 규칙도 순서와 상관없이 TPL_CONFLICT다(한 문단 안 inline 구간의 값 안, 여러 문단 구간의 시작 문단 꼬리 안)", () => {
@@ -764,8 +765,8 @@ test("L1 구간 안에 통째로 든 CLICK_HERE가 아닌 필드(날짜·하이�
   const r = done(run(bytes, { 성명: "값" }));
   assert.deepEqual(topTexts(reparse(r.output)).map(plain), ["앞", "성명: 값 끝 뒤", "뒤"]);
   assert.deepEqual(
-    r.report.plan.dropped.map((d) => [d.ruleId, d.anchor]),
-    [["implicit", "field:작성일"], ["implicit", "field:HYPERLINK"], ["implicit", "bookmark:책1"], ["implicit", "bookmark:책2"]],
+    r.report.plan.dropped.map((d) => [d.ruleId, d.anchor, d.kind]),
+    [["implicit", "field:작성일", "covered"], ["implicit", "field:HYPERLINK", "covered"], ["implicit", "bookmark:책1", "covered"], ["implicit", "bookmark:책2", "covered"]],
   );
   assert.match(r.report.plan.dropped[0]?.reason ?? "", /누름틀 성명이 지우는 구간 안에 있어 함께 지웠습니다/);
   assert.match(r.report.plan.dropped[2]?.reason ?? "", /\(2곳\)/);

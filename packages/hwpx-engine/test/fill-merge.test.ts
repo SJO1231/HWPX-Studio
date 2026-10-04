@@ -293,6 +293,8 @@ test("암묵 채움(짧은 값): 메일 머지 29곳·누름틀 4곳·{{}} 8곳�
   const keepDisplay = BEFORE.filter((f) => f.type === "MAILMERGE" && f.valueText === `{{${f.mergeKey}}}` && !NON_PATH.includes(f));
   assert.equal(keepDisplay.length, 23, "서식에서 `{{키}}` 표시 글인 경로 꼴 필드(경로 꼴 29개 중 안내 글 6개를 뺀 것)");
   const dropped = new Map(plan.dropped.map((d) => [d.anchor, d.reason]));
+  // 잃은 자리가 아니라 필드가 맡는 자리다(kind mergeDisplay). 지워진 자리(covered)는 없다
+  assert.ok(plan.dropped.length > 0 && plan.dropped.every((d) => d.kind === "mergeDisplay"));
   for (const k of new Set(keepDisplay.map((f) => f.mergeKey))) assert.match(dropped.get(`{{${k}}}`) ?? "", /메일 머지 필드가 맡는 표시 글 안의 자리 \d+곳을 버렸습니다/, String(k));
   // 값 재읽기: 채운 필드 33개(메일 머지 29 + 누름틀 4)와 채운 문단
   assert.equal(r.report.reread.fields, 33);
@@ -397,7 +399,7 @@ test("표시 글 안의 {{경로}}: 일부만 `{{}}`인 안내 글(금 {{추정�
   // 표시 글에 다른 경로의 {{}}가 든 경우도 필드가 맡는다(그 경로는 데이터에 없어도 된다)
   const r = done(generate(docOf(field(1, "가", "금 {{나}} 원"), field(2, "다", "{{다}}")), emptyTemplate(), ds({ 가: "값1", 다: "값2" })));
   assert.deepEqual(allParagraphs(reparse(r.output)).map((p) => plain(p.logicalText)), ["앞 값1 뒤", "앞 값2 뒤"]);
-  assert.deepEqual(r.report.plan.dropped.map((d) => d.anchor).sort(), ["{{나}}", "{{다}}"]);
+  assert.deepEqual(r.report.plan.dropped.map((d) => [d.anchor, d.kind]).sort(), [["{{나}}", "mergeDisplay"], ["{{다}}", "mergeDisplay"]]);
   assert.deepEqual(r.report.plan.requiredPaths, ["가", "다"]);
   // 키가 경로 꼴이 아니면 필드는 건너뛰고(그대로 둔다), 표시 글 안의 {{}}는 이전처럼 {{}} 규칙이 채운다
   const bad = done(generate(docOf(field(1, "가 나", "금 {{다}} 원"), field(2, "라", "{{라}}")), emptyTemplate(), ds({ 다: "값", 라: "L" })));
@@ -549,7 +551,8 @@ test("구간 안의 메일 머지 필드: 여러 문단에 걸친 누름틀의 �
   const r = done(generate(doc, emptyTemplate(), ds({ 성명: "홍", 키: "K" })));
   assert.deepEqual(texts(reparse(r.output)), ["성명: 홍 끝 뒤"]);
   // 구간 안의 표시 글 `{{키}}`(기존 규칙: 구간 치환이 지우는 구간 안의 {{}})와 필드 자체가 각각 한 번씩
-  assert.deepEqual(r.report.plan.dropped.map((d) => [d.ruleId, d.anchor]).sort(), [["implicit", "merge:키"], ["implicit", "{{키}}"]].sort());
+  // 바깥 누름틀이 메일 머지 필드째 지우므로 표시 글 안 {{키}}도 실제로 지워진 자리(covered)다
+  assert.deepEqual(r.report.plan.dropped.map((d) => [d.ruleId, d.anchor, d.kind]).sort(), [["implicit", "merge:키", "covered"], ["implicit", "{{키}}", "covered"]].sort());
   assert.match(r.report.plan.dropped.find((d) => d.anchor === "merge:키")?.reason ?? "", /메일 머지 필드 1곳을 채우지 않았습니다/);
   assert.deepEqual(r.report.plan.requiredPaths, ["성명"]);
 });

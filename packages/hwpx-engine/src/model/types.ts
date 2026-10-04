@@ -162,6 +162,7 @@ export type FieldShape = "simple" | "empty" | "inline" | "object" | "crossParagr
 
 export type FieldInfo = {
   name: string;
+  /** 종류(`fieldTypeOf`): `CLICK_HERE`·`MAILMERGE`는 대소문자 무시, type 속성이 없거나 비면 `UNKNOWN`, 그 밖은 속성 값 그대로 */
   type: string;
   /** 메일 머지 필드(`type="MAILMERGE"`)의 키(`FieldValue` 인자). 메일 머지 필드는 `name`이 비어 있어 이 키로 가리킨다. 없거나 비면 없다. */
   mergeKey?: string;
