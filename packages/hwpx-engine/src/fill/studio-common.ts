@@ -168,6 +168,7 @@ export type SlotApply = { slot: TemplateSlot; block: TemplateBlock; content: Blo
 /** 앵커의 문서 순서 열쇠: 구역 번호 뒤에 문단 주소 */
 function orderKey(a: StudioAnchor): number[] {
   if (a.kind === "range") return [a.at.sectionIndex, ...a.at.parentPath, a.from];
+  if (a.kind === "headingRange") return [a.at.sectionIndex, ...a.at.parentPath, a.index];
   if (a.kind === "line") return [a.at.sectionIndex, ...a.at.path];
   return [];
 }

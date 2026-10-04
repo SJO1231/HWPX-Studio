@@ -6,7 +6,8 @@ import { sha256Hex } from "../template/hash.ts";
 import { paragraphAtPath, topLevelObjects } from "./doc.ts";
 import { collectFields, fieldAnchorMatches, type FieldTarget } from "./fields.ts";
 import { locateCell, locateObject } from "./prints.ts";
-import { locateRange } from "./range.ts";
+import { locateHeadingRange } from "./heading.ts";
+import { locateRange, type RangeLocation } from "./range.ts";
 
 export const WORD_CONTEXT = 24;
 export const LINE_PREFIX = 40;
@@ -163,32 +164,49 @@ function resolveObject(doc: HwpxDocument, a: Extract<Anchor, { kind: "object" }>
   return { kind: "object", section, paragraph: hit.paragraph, object: hit.object };
 }
 
-function resolveRange(doc: HwpxDocument, a: Extract<Anchor, { kind: "range" }>, issues: Issue[]): ResolvedAnchor | undefined {
-  const loc = locateRange(doc, a);
-  const at = `구역 ${a.at.sectionIndex}·상위 ${addr(a.at.parentPath)}의 문단 ${a.from}~${a.to}`;
+/** 범위 판정(`range`·`headingRange`)을 해석 결과와 이슈로 바꾼다. `at`은 앵커 주소의 설명, `what`(조사 포함)·`changed`·`noSection`은 이슈 문구다. */
+function resolveLocated(id: string, loc: RangeLocation, text: { at: string; what: string; changed: string; noSection: string }, issues: Issue[]): ResolvedAnchor | undefined {
   switch (loc.state) {
     case "exact":
     case "relocated": {
       const f = loc.found;
       if (loc.state === "relocated") {
         issues.push(
-          makeIssue("warning", "ANCHOR_RELOCATED", `앵커 ${a.id}: ${at}이(가) 지문과 달라 같은 구역에서 지문으로 다시 찾았습니다(상위 ${addr(f.parentPath)}의 문단 ${f.from}~${f.to}).`, a.id),
+          makeIssue("warning", "ANCHOR_RELOCATED", `앵커 ${id}: ${text.at}이(가) 지문과 달라 같은 구역에서 지문으로 다시 찾았습니다(상위 ${addr(f.parentPath)}의 문단 ${f.from}~${f.to}).`, id),
         );
       }
       return { kind: "range", section: f.section, parentPath: f.parentPath, from: f.from, to: f.to, paragraphs: f.paragraphs, relocated: loc.state === "relocated" };
     }
     case "ambiguous":
-      issues.push(makeIssue("error", "ANCHOR_AMBIGUOUS", `앵커 ${a.id}: 지문과 같은 범위가 같은 구역에 ${loc.count}곳 있어 하나로 정할 수 없습니다.`, a.id));
+      issues.push(makeIssue("error", "ANCHOR_AMBIGUOUS", `앵커 ${id}: 지문과 같은 ${text.what} 같은 구역에 ${loc.count}곳 있어 하나로 정할 수 없습니다.`, id));
       return undefined;
     case "changed":
-      issues.push(makeIssue("error", "ANCHOR_CHANGED", `앵커 ${a.id}: ${at}의 첫 문단과 끝 문단은 찾았지만 안쪽 글이 지문과 다릅니다(원본이 바뀌었습니다).`, a.id));
+      issues.push(makeIssue("error", "ANCHOR_CHANGED", `앵커 ${id}: ${text.changed}`, id));
       return undefined;
     case "notFound":
-      issues.push(
-        makeIssue("error", "ANCHOR_NOT_FOUND", loc.noSection ? `앵커 ${a.id}: 구역 ${a.at.sectionIndex}이(가) 없습니다.` : `앵커 ${a.id}: ${at}이(가) 지문과 다르고 같은 구역에서도 찾지 못했습니다.`, a.id),
-      );
+      issues.push(makeIssue("error", "ANCHOR_NOT_FOUND", loc.noSection ? `앵커 ${id}: ${text.noSection}` : `앵커 ${id}: ${text.at}이(가) 지문과 다르고 같은 구역에서도 찾지 못했습니다.`, id));
       return undefined;
   }
+}
+
+function resolveRange(doc: HwpxDocument, a: Extract<Anchor, { kind: "range" }>, issues: Issue[]): ResolvedAnchor | undefined {
+  const at = `구역 ${a.at.sectionIndex}·상위 ${addr(a.at.parentPath)}의 문단 ${a.from}~${a.to}`;
+  return resolveLocated(
+    a.id,
+    locateRange(doc, a),
+    { at, what: "범위가", changed: `${at}의 첫 문단과 끝 문단은 찾았지만 안쪽 글이 지문과 다릅니다(원본이 바뀌었습니다).`, noSection: `구역 ${a.at.sectionIndex}이(가) 없습니다.` },
+    issues,
+  );
+}
+
+function resolveHeadingRange(doc: HwpxDocument, a: Extract<Anchor, { kind: "headingRange" }>, issues: Issue[]): ResolvedAnchor | undefined {
+  const at = `구역 ${a.at.sectionIndex}·상위 ${addr(a.at.parentPath)}의 제목 문단 ${a.index}`;
+  return resolveLocated(
+    a.id,
+    locateHeadingRange(doc, a),
+    { at, what: "제목이", changed: `${at}의 제목은 찾았지만 제목 범위의 글이 지문과 다릅니다(원본이 바뀌었습니다).`, noSection: `구역 ${a.at.sectionIndex}이(가) 없습니다.` },
+    issues,
+  );
 }
 
 /**
@@ -200,6 +218,7 @@ function resolveRange(doc: HwpxDocument, a: Extract<Anchor, { kind: "range" }>, 
  *   아니면 같은 구역에서 지문으로 다시 찾는다(`word`·`line`과 같은 판정: 유일하면 `ANCHOR_RELOCATED`, 여럿 `ANCHOR_AMBIGUOUS`, 없음 `ANCHOR_NOT_FOUND`).
  * - `range`: 주소의 범위가 지문과 맞으면 그 자리, 아니면 같은 구역의 모든 문단 목록에서 첫·끝 문단·문단 수·전체 글 해시가 맞는 범위를 다시 찾는다
  *   (판정은 `word`·`line`과 같다). 없는데 첫·끝 문단은 있고 안쪽이 다르면 `ANCHOR_CHANGED`(오류)다.
+ * - `headingRange`: 주소의 제목(지문·꼴)에서 범위를 다시 계산해 지문과 대조한다(`locateHeadingRange`). 해석 결과는 `range`다.
  */
 export function resolveAnchors(doc: HwpxDocument, template: Template, only?: ReadonlySet<string>): AnchorResolution {
   const anchors = new Map<string, ResolvedAnchor>();
@@ -237,6 +256,9 @@ export function resolveAnchors(doc: HwpxDocument, template: Template, only?: Rea
         break;
       case "range":
         resolved = resolveRange(doc, a, issues);
+        break;
+      case "headingRange":
+        resolved = resolveHeadingRange(doc, a, issues);
         break;
     }
     if (resolved !== undefined) anchors.set(a.id, resolved);

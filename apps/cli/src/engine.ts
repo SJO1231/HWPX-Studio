@@ -25,6 +25,7 @@ export {
   makeLineAnchor,
   makeRangeAnchor,
   censusOfDoc,
+  detectHeadings,
   type BatchItem,
   type GateMode,
   type GenerateResult,
