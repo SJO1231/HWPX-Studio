@@ -116,7 +116,8 @@ test("7.10 실제 공고서: 번호 글자 문단 탐지율 문서별 70% 이상
       const draft = makeHeadingRangeAnchor(d.doc, h.at.sectionIndex, h.at.parentPath, h.index);
       const rdraft = makeRangeAnchor(d.doc, h.at.sectionIndex, h.at.parentPath, s.from, s.to);
       assert.ok(draft !== undefined && rdraft !== undefined);
-      assert.deepEqual(draft.print, rdraft.print, `${d.id}: 범위 지문`);
+      // 실패 메시지에 문서 글(지문의 앞 40자)이 나오지 않도록 참·거짓으로만 본다
+      assert.ok(JSON.stringify(draft.print) === JSON.stringify(rdraft.print), `${d.id}: 범위 지문`);
       const anchor: HeadingRangeAnchor = { id: `h${k}`, ...draft };
       anchors.push(anchor);
       // 다른 문서에서 같은 꼴의 범위 조각(앞 문서부터, 뽑을 수 있는 첫 것)
@@ -139,8 +140,8 @@ test("7.10 실제 공고서: 번호 글자 문단 탐지율 문서별 70% 이상
       const rr = generate(d.bytes, tpl([{ id: anchor.id, ...rdraft }], [rule]), EMPTY);
       assert.ok(rh.ok && !rh.dryRun, `${d.id} ${h.marker.form}: ${rh.report.issues.filter((i) => i.severity === "error").map((i) => i.code).join(",")}`);
       assert.ok(rr.ok && !rr.dryRun);
-      assert.deepEqual(rh.report.validation?.newErrors, [], `${d.id}: 게이트 새 오류`);
-      assert.deepEqual(newErrorsAfter(validateDocument(d.bytes), validateDocument(rh.output)), [], `${d.id}: 검사기 새 오류`);
+      assert.deepEqual(rh.report.validation?.newErrors.map((v) => v.code), [], `${d.id}: 게이트 새 오류`);
+      assert.deepEqual(newErrorsAfter(validateDocument(d.bytes), validateDocument(rh.output)).map((v) => v.code), [], `${d.id}: 검사기 새 오류`);
       assert.ok(bytesEqual(rh.output, rr.output), `${d.id}: range와 바이트 동일`);
       forms[h.marker.form] = (forms[h.marker.form] ?? 0) + 1;
       replaced++;

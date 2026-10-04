@@ -4,6 +4,7 @@ export { makeRangeAnchor, locateRange, rangePrintOf, type FoundRange, type Range
 export { makeCellAnchor, makeObjectAnchor, cellPrintOf, objectPrintOf } from "./prints.ts";
 export { remapAddress } from "./moves.ts";
 export { detectHeadings, headingRangeOf, makeHeadingRangeAnchor, type HeadingOptions, type HeadingRangeDraft } from "./heading.ts";
+export { patternOf, suggestSimilar, rejectSuggestion, type Pattern, type PatternMatchKey, type PatternPlace, type Suggestion, type SuggestionDraft, type SuggestOptions } from "./pattern.ts";
 export type { RangeAnchor, RangePrint, ParagraphPrint, CellPrint, ObjectPrint, Move, HeadingRangeAnchor, HeadingForm, HeadingMarker, Heading } from "./anchor-types.ts";
 export { buildFillPlan, loadFragment, type FillOptions, type FillPlan, type InjectStep, type Expectation, type PlanReport } from "./plan.ts";
 export { executeFillPlan, type ExecuteHooks, type ExecuteResult, type StageRecord } from "./execute.ts";

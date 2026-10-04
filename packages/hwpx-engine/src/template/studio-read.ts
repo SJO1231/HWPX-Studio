@@ -231,7 +231,7 @@ function readPattern(v: unknown, index: number): TemplatePattern {
   const out: TemplatePattern = {
     id,
     name: str(p, "name", where, FIELD),
-    marker: { form: oneOf(markerObj, "form", PATTERN_FORMS, `${where}.marker`), level: int(markerObj, "level", `${where}.marker`, FIELD, 1) },
+    marker: { form: oneOf(markerObj, "form", PATTERN_FORMS, `${where}.marker`), level: int(markerObj, "level", `${where}.marker`, FIELD, 0) },
     place: oneOf(p, "place", PATTERN_PLACES, where),
     match,
   };

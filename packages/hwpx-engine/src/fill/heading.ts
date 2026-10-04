@@ -1,6 +1,6 @@
 import type { HwpxDocument, ParagraphNode } from "../model/types.ts";
 import { attrValue, childEl } from "../xml/tree.ts";
-import { HEADING_FORMS, type Heading, type HeadingForm, type HeadingRangeAnchor } from "./anchor-types.ts";
+import { HEADING_FORMS, type Heading, type HeadingForm, type HeadingMarker, type HeadingRangeAnchor } from "./anchor-types.ts";
 import { listAtParent, paragraphHash, paragraphLists, rangePrintOf, samePrint, type FoundRange, type RangeLocation } from "./range.ts";
 
 // 제목 탐지와 제목 범위 앵커(7.10 `headingRange`). 제목은 문단 글 머리의 번호 글자로 꼴을 정하고, 번호 글자가 없으면 굵기·길이로 본다.
@@ -95,11 +95,16 @@ function charLooks(doc: HwpxDocument): Map<string, CharLook> {
   return map;
 }
 
-/** 첫 글(공백이 아닌 글자가 든 글 조각)이 든 run의 글자모양. 글이 없거나 글자모양을 찾지 못하면 굵지 않음·크기 없음. */
-function firstLook(doc: HwpxDocument, p: ParagraphNode): CharLook {
+/** 첫 글(공백이 아닌 글자가 든 글 조각)이 든 run의 글자모양 id. 글이 없거나 run에 글자모양 참조가 없으면 undefined. */
+export function firstTextCharPr(p: ParagraphNode): string | undefined {
   const piece = p.pieces.find((x) => (x.kind === "text" || x.kind === "entity") && HAS_TEXT.test(p.logicalText.slice(x.logicalStart, x.logicalEnd)));
-  const id = piece === undefined ? undefined : p.runs.find((r) => r.ordinal === piece.runOrdinal)?.charPrIDRef;
-  return (id === undefined || id === null ? undefined : charLooks(doc).get(id)) ?? { bold: false };
+  return (piece === undefined ? undefined : p.runs.find((r) => r.ordinal === piece.runOrdinal)?.charPrIDRef) ?? undefined;
+}
+
+/** 첫 글이 든 run의 글자모양(진하게·크기). 글이 없거나 글자모양을 찾지 못하면 굵지 않음·크기 없음. */
+export function firstLook(doc: HwpxDocument, p: ParagraphNode): CharLook {
+  const id = firstTextCharPr(p);
+  return (id === undefined ? undefined : charLooks(doc).get(id)) ?? { bold: false };
 }
 
 // ── 탐지 ──────────────────────────────────────────────────────
@@ -150,6 +155,15 @@ function headingsIn(doc: HwpxDocument, list: readonly ParagraphNode[], order: re
   const out = new Map<number, Leveled>();
   for (const [i, r] of raws) out.set(i, { ...r, level: keys.indexOf(keyOf(r)) + 1 });
   return out;
+}
+
+/** 문단 목록의 문단마다 제목 꼴·단계(`detectHeadings`와 같은 판독·단계, `opts.order` 적용). 제목이 아닌 문단은 undefined. */
+export function headingMarkersIn(doc: HwpxDocument, list: readonly ParagraphNode[], opts?: HeadingOptions): (HeadingMarker | undefined)[] {
+  const heads = headingsIn(doc, list, orderOf(opts?.order));
+  return list.map((_, i) => {
+    const h = heads.get(i);
+    return h === undefined ? undefined : { form: h.form, level: h.level };
+  });
 }
 
 /** 제목 `index`의 범위 끝: 뒤에서 처음 나오는, 단계가 같거나 높은 제목의 앞 문단. 없으면 목록의 끝 문단. */

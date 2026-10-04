@@ -1,5 +1,5 @@
 import { isTableNode, walkParagraphs } from "../model/paragraph.ts";
-import type { HwpxDocument, SectionModel, TableCell, TableNode } from "../model/types.ts";
+import type { HwpxDocument, ParagraphNode, SectionModel, TableCell, TableNode } from "../model/types.ts";
 import type { CellAnchor, FieldAnchor, LineAnchor, WordAnchor } from "../template/types.ts";
 import { findPlaceholders } from "../template/placeholder.ts";
 import { linePrintOf, wordPrintAt } from "./anchors.ts";
@@ -40,16 +40,32 @@ const SENTENCE_END = /[.!?。…]$|[다요]$/u;
 const strip = (text: string): string => text.replace(/￼/g, "").trim();
 const cellText = (cell: TableCell): string => (cell.subList?.paragraphs ?? []).map((p) => p.logicalText).join("\n");
 
+/**
+ * 라벨 셀 규칙: 셀 글(개체 자리 글자를 빼고 앞뒤 공백을 걷은 것)이 12자 이하이고 문장 끝맺음·빈칸 모양이 아니며,
+ * 오른쪽 셀(같은 행, 열 + 열 병합)에 문단이 있고 그 글이 비었거나 밑줄·괄호뿐이면 그 오른쪽 셀을 돌려준다. 아니면 undefined.
+ */
+export function labelCellRight(table: TableNode, label: TableCell): TableCell | undefined {
+  const text = strip(cellText(label));
+  if (text === "" || [...text].length > LABEL_MAX || SENTENCE_END.test(text) || BLANK_CELL.test(text)) return undefined;
+  const right = table.cells.find((c) => c.row === label.row && c.col === label.col + label.colSpan);
+  if (right?.subList?.paragraphs[0] === undefined) return undefined;
+  return BLANK_CELL.test(cellText(right).replace(/\n/g, "")) ? right : undefined;
+}
+
+/** `라벨:` 규칙: 글이 `라벨:`(뒤는 공백뿐)이고 라벨이 12자 이하·문장 끝맺음 아님이며 문단에 내용 개체가 없다. */
+export function isLabelColon(par: ParagraphNode): boolean {
+  const label = LABEL_COLON.exec(par.logicalText)?.[1]?.trim();
+  return label !== undefined && [...label].length <= LABEL_MAX && !SENTENCE_END.test(label) && contentObjects(par).length === 0;
+}
+
 function emptyCellCandidates(section: SectionModel, table: TableNode, out: Candidate[]): void {
   const topOrdinal = topLevelObjects(section, "tbl").findIndex((x) => x.object === table);
   for (const label of table.cells) {
-    const text = strip(cellText(label));
-    if (text === "" || [...text].length > LABEL_MAX || SENTENCE_END.test(text) || BLANK_CELL.test(text)) continue;
-    const right = table.cells.find((c) => c.row === label.row && c.col === label.col + label.colSpan);
+    const right = labelCellRight(table, label);
     const first = right?.subList?.paragraphs[0];
     if (right === undefined || first === undefined) continue;
+    const text = strip(cellText(label));
     const rightText = cellText(right);
-    if (!BLANK_CELL.test(rightText.replace(/\n/g, ""))) continue;
     const at = { sectionIndex: section.index, path: [...first.path] };
     const anchor: AnchorDraft =
       topOrdinal >= 0
@@ -97,8 +113,7 @@ export function findCandidates(doc: HwpxDocument): Candidate[] {
           evidence: `빈칸 표시 '${m[0]}'(앞 글: '${text.slice(Math.max(0, start - 12), start)}')`,
         });
       }
-      const label = LABEL_COLON.exec(text)?.[1]?.trim();
-      if (label !== undefined && [...label].length <= LABEL_MAX && !SENTENCE_END.test(label) && contentObjects(par).length === 0) {
+      if (isLabelColon(par)) {
         out.push({ kind: "labelColon", at, anchor: { kind: "line", at, print: linePrintOf(text) }, evidence: `라벨 '${text.trim()}' 뒤가 비어 있음` });
       }
       for (const o of par.objects) if (isTableNode(o)) emptyCellCandidates(section, o, out);
