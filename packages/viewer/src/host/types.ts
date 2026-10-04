@@ -1,9 +1,16 @@
 // 호스트(Node 서버)와 웹 화면이 주고받는 JSON 가운데 위치 변환·앵커 초안·강조에 관한 공용 형. 형만 있는 파일이라 브라우저 코드가 `import type`으로 가져온다(엔진을 값으로 가져오지 않는다).
+import type { HeadingRangeAnchor, RangeAnchor } from "../../../hwpx-engine/src/fill/anchor-types.ts";
 import type { CellAnchor, FieldAnchor, LineAnchor, WordAnchor } from "../../../hwpx-engine/src/template/types.ts";
 import type { CellRef, EngineAddress, LocateEdge, RhwpPosition, Shown } from "../map/types.ts";
 
-/** 앵커 초안(템플릿에 `id`만 더해 넣을 수 있는 꼴) */
-export type AnchorDraftJson = Omit<FieldAnchor, "id"> | Omit<WordAnchor, "id"> | Omit<LineAnchor, "id"> | Omit<CellAnchor, "id">;
+/** 앵커 초안(템플릿에 `id`만 더해 넣을 수 있는 꼴). `range`·`headingRange`는 여러 문단에 걸친 끌기의 초안이다 */
+export type AnchorDraftJson =
+  | Omit<FieldAnchor, "id">
+  | Omit<WordAnchor, "id">
+  | Omit<LineAnchor, "id">
+  | Omit<CellAnchor, "id">
+  | Omit<RangeAnchor, "id">
+  | Omit<HeadingRangeAnchor, "id">;
 
 export type ApiError = { error: { code: string; message: string } };
 
@@ -18,7 +25,7 @@ export type LocatePoint = { position?: RhwpPosition; cell?: CellRef; shown?: Sho
 
 export type LocateRequest = {
   from: LocatePoint;
-  /** 끌기로 고른 범위의 끝(같은 문단) */
+  /** 끌기로 고른 범위의 끝(같은 문단이면 글자 범위, 다른 문단이면 문단 범위) */
   to?: LocatePoint;
 };
 
@@ -39,6 +46,8 @@ export type LocateResponse = {
   trail: string[];
   /** 범위 선택이면 엔진 논리 오프셋 구간 */
   range?: { start: number; end: number };
+  /** 여러 문단에 걸친 끌기이면 같은 부모(`parentPath`: 빈 배열이면 구역 최상위) 안 문단 범위 `from`~`to`(문서 순서, 포함) */
+  span?: { sectionIndex: number; parentPath: number[]; from: number; to: number };
   edge: LocateEdge;
   drafts: DraftView[];
 };

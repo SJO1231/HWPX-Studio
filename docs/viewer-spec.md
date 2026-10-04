@@ -67,6 +67,9 @@ type Shown = { text: string; start: number }        // 포인터 아래 런의 �
 type EngineAddress = { sectionIndex: number; path: number[]; offset?: number }   // offset: 논리 텍스트의 UTF-16 오프셋
 type Located   = { address: EngineAddress; precision: "char" | "paragraph"; reason?: string; trail: string[] }
 type Unlocated = { precision: "none"; reason: string; trail: string[] }
+// 문단 범위 끌기(#53): 두 끝이 같은 부모의 다른 문단이면 precision "paragraph", address는 시작 문단, span { sectionIndex, parentPath, from, to },
+// drafts는 range 초안(makeRangeAnchor와 같은 지문)과, 시작 문단이 제목이면 headingRange 초안(makeHeadingRangeAnchor). mark는 없다(한 문단 구간만 강조한다).
+// defaultDraftIndex는 막히지 않은 range 초안이 있으면 그것을 고른다. 한 끝을 풀지 못하면 그 끝의 사유(PARAGRAPH_NOT_FOUND 등)다.
 ```
 
 **함수**
@@ -115,7 +118,7 @@ type Unlocated = { precision: "none"; reason: string; trail: string[] }
 | `paragraph` | `NEAREST_LINE` | 빈 곳을 눌러 가장 가까운 줄을 썼다 |
 | `none` | `PARAGRAPH_MISMATCH`, `PARAGRAPH_NOT_FOUND` | 런의 글이 엔진 문단에 없다, 문단을 찾지 못했다 |
 | `none` | `SECTION_NOT_FOUND`, `PARENT_PARAGRAPH_MISSING`, `CONTROL_NOT_FOUND`, `CONTROL_KIND_UNKNOWN`, `CONTROL_NOT_CONTAINER`, `CELL_NOT_FOUND`, `CELL_PARAGRAPH_NOT_FOUND`, `TEXTBOX_AMBIGUOUS`, `PATH_INCONSISTENT` | 경로를 풀 수 없다(묶음 개체, 표 셀 안 도형, 미주 등) |
-| `none` | `RANGE_PARAGRAPHS_DIFFER` | 끌기의 두 끝이 다른 문단이다 |
+| `none` | `RANGE_PARAGRAPHS_DIFFER` | 끌기의 두 끝이 다른 부모(최상위 ↔ 표 칸, 다른 칸)에 있다. 같은 부모의 다른 문단이면 아래 문단 범위 끌기다(2026-10-04 #53) |
 | `none` | `OVERLAPPING_RUNS`, `UNPOSITIONED_TEXT` | 겹친 글, 문서 좌표 없는 글 |
 | `none` | `NEAREST_UNCONFIRMED` | 빈 곳인데 가장 가까운 줄의 문단을 확인하지 못했다 |
 | `none` | `CELL_MISMATCH` | 셀 안 빈 곳인데 줄 후보의 글이 다른 셀의 것이다 |

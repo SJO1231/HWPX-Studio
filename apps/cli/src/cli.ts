@@ -1,4 +1,4 @@
-import { candidates, compile, diff, fill, fragmentCommand, inspect, tableCommand, validate } from "./commands.ts";
+import { candidates, compile, diff, fill, fragmentCommand, headings, inspect, tableCommand, validate } from "./commands.ts";
 import { InputError, UsageError, type Out } from "./io.ts";
 
 export const USAGE = `사용법: hwpx <명령> [옵션]
@@ -6,6 +6,7 @@ export const USAGE = `사용법: hwpx <명령> [옵션]
 명령
   inspect <파일> [--json] [--model 출력.json]            구역·문단·표·누름틀·{{}}·자원 요약(.md·.txt는 블록·표·코드 블록·{{}}, --model 없음)
   candidates <파일> [--json]                            채울 자리 후보 목록
+  headings <파일> [--json]                              제목 목록(구역:상위주소:문단 번호, 단계, 번호 글자 꼴, 글 앞 40자)
   fragment extract <파일> --section N --from A --to B [--parent 주소] -o 조각.json
   fragment import <대상> <조각.json> --section N --index I [--parent 주소] [--before] -o 출력.hwpx
   fragment import <대상> <조각.json> --range 구역:시작-끝 [--parent 주소] -o 출력.hwpx   범위의 문단들을 조각으로 교체
@@ -40,6 +41,8 @@ export async function run(argv: string[], out: Out): Promise<number> {
         return inspect(rest, out);
       case "candidates":
         return candidates(rest, out);
+      case "headings":
+        return headings(rest, out);
       case "fragment":
         return await fragmentCommand(rest, out);
       case "fill":

@@ -83,7 +83,7 @@ test('Lite 빠른 생성 HTTP: 다른 세션 선택·위조 초안·여러 문�
   const crossSession=await post(base,'assign',{session:second.session,selection:selection.selection,draft:0,path:'replacement'});assert.equal(crossSession.status,400);
   const forged=await post(base,'assign',{session:second.session,selection:'unissued',draft:0,path:'replacement',anchor:selection.location.drafts[0].anchor});assert.equal(forged.status,400);
   const crossed=await post(base,'locate',{session:first.session,request:{from:request(1,'앞 첫째값 뒤').from,to:request(2,'다른 문단').from}});assert.equal(crossed.status,200);
-  const location=await crossed.json() as any;assert.equal(location.location.precision,'none');assert.equal(location.location.reason,'RANGE_PARAGRAPHS_DIFFER');assert.deepEqual(location.location.drafts,[]);
+  const location=await crossed.json() as any;assert.equal(location.location.precision,'paragraph');assert.deepEqual(location.location.span,{sectionIndex:0,parentPath:[],from:1,to:2});assert.equal(location.location.drafts[0].anchor.kind,'range'); // #53: 여러 문단 끌기는 range 초안(fill 규칙은 range를 받지 않아 아래 assign은 400)
   const noDraft=await post(base,'assign',{session:first.session,selection:location.selection,draft:0,path:'replacement'});assert.equal(noDraft.status,400);
   assert.deepEqual(await originalOf(base,first.session),Buffer.from(sourceA));assert.deepEqual(await originalOf(base,second.session),Buffer.from(sourceB));
 }));

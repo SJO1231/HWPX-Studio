@@ -10,6 +10,7 @@ HWPX 문서와 Markdown·텍스트 문서를 검사하고 채우는 명령줄 �
 | --- | --- | --- |
 | `inspect` | 구역·문단·표·누름틀·메일 머지 필드(종류와 키)·`{{}}`·자원 요약. md·txt는 블록·표·코드 블록 수와 `{{}}` 목록 | `.hwpx` `.md` `.txt` |
 | `candidates` | 채울 자리 후보 목록(누름틀, `{{}}`, 빈 값 셀, `라벨:` 뒤 빈 곳 등) | `.hwpx` |
+| `headings` | 제목 목록(번호 글자 꼴·단계·글 앞 40자. 표 칸 안 포함) | `.hwpx` |
 | `fragment extract` | 문단 구간을 조각 JSON으로 뜬다 | `.hwpx` |
 | `fragment import` | 조각 JSON을 다른 문서의 문단 앞·뒤나 표 셀 안에 가져온다(저장 게이트 포함) | `.hwpx` |
 | `fill` | 데이터로 `{{}}`·누름틀·메일 머지 필드(키 = 데이터 경로)를 채우고 템플릿 규칙(채움·삭제·삽입·조각 주입·표 설정·표 크기·행 반복)을 적용한다. `.hwpx`는 `--batch`로 데이터 배열의 원소마다 결과 파일을 만든다 | `.hwpx` `.md` `.txt` |
@@ -130,6 +131,13 @@ hwpx fragment import target.hwpx fragment.json --range 0:2-4 --parent 12.1 -o me
 ```
 
 템플릿(`fill --template`)에서는 같은 일을 `range` 앵커로 한다(`{ "kind": "range", "at": { "sectionIndex": 0, "parentPath": [] }, "from": 18, "to": 21, "print": { ... } }`. 지문 `print`는 엔진의 `makeRangeAnchor`가 채운다). `inject`·`insertText`는 `position: "replace"`(범위 교체)·`"before"`·`"after"`를, `delete`는 범위 삭제를 받는다. 원본에서 범위의 글이 바뀌어 있으면 `ANCHOR_CHANGED`로 막는다. 보고서의 `report.plan.moves`가 교체·삭제·삽입으로 뒤 문단 번호가 얼마나 움직였는지 적는다(항목 `{ sectionIndex, parentPath, from, to, count, delta }`, 원본 좌표).
+
+제목을 찾아 제목 범위 앵커(`headingRange`)를 만든다. `headings`는 제목마다 한 줄(`구역:상위주소:문단 번호  단계  꼴  글 앞 40자`)을 낸다. 상위 주소는 표 칸 같은 하위 목록의 `문단.하위목록`이고 구역 최상위는 `-`다. 꼴은 `article`(제N장·절·조), `roman`(Ⅰ. Ⅱ), `digitDot`(`1.` `1.1.`), `hangulDot`(`가.`), `digitParen`(`1)`), `hangulParen`(`가)`), `digitParens`(`(1)`), `hangulParens`(`(가)`), `circled`(①·⑴·㉠·㉮·❶·➀), `box`(□ ○ ※ `- ` 등), `none`(번호 글자 없이 굵고 짧은 글)이고, 단계는 같은 상위 목록 안에서 이 순서대로 1부터 센다(숫자 다단은 점 수만큼, 기호는 그 목록에서 처음 나온 순서대로 한 단계씩 아래). `--json`이면 엔진의 `detectHeadings` 결과 배열(`at`, `index`, `text`, `sha256`, `marker`, `bold`, `height`)을 그대로 낸다. 템플릿에서는 `{ "kind": "headingRange", "at": { "sectionIndex": 0, "parentPath": [] }, "index": 17, "marker": { ... }, "heading": { ... }, "print": { ... } }` 앵커(엔진의 `makeHeadingRangeAnchor`가 채운다. 기본과 다른 서열로 만들면 그 서열을 `order`에 담는다)가 그 제목부터 같은 단계 이상의 다음 제목 앞까지를 가리키고, `range` 앵커와 같은 액션(`inject`·`insertText`·`delete`)과 같은 결과를 낸다.
+
+```
+hwpx headings notice.hwpx
+hwpx headings notice.hwpx --json
+```
 
 `--report`는 `hwpx fill --report`와 같은 게이트 보고서다. 조각이 소스에서부터 갖고 있던 문제(겹치는 id, 소스에서 이미 없던 참조)는 새 오류로 세지 않고 보고서의 `report.inherited`에 적는다. 이런 조각 안의 겹치는 id를 새 값으로 바꾸려면 `--reissue-internal`을 준다(`fragment import`와 `.hwpx`의 `fill`에서 쓴다. 템플릿의 `inject`에 적용된다. 기본은 소스 원문 그대로다).
 

@@ -8,9 +8,9 @@ import type {
   Rule,
   WordAnchor,
 } from "./types.ts";
-import type { CellPrint, ObjectPrint, ParagraphPrint, RangeAnchor } from "../fill/anchor-types.ts";
+import { HEADING_FORMS, type CellPrint, type HeadingRangeAnchor, type ObjectPrint, type ParagraphPrint, type RangeAnchor } from "../fill/anchor-types.ts";
 // 같은 선언을 다시 내보낸다(`fill/index.ts`와 같은 선언이라 겹치지 않는다).
-export type { CellPrint, ObjectPrint, RangeAnchor, RangePrint } from "../fill/anchor-types.ts";
+export type { CellPrint, HeadingRangeAnchor, ObjectPrint, RangeAnchor, RangePrint } from "../fill/anchor-types.ts";
 
 // 2판 템플릿 계약(엔진 명세 8.8). 이 폴더는 문서 형식을 모른다(8.5).
 
@@ -27,7 +27,7 @@ export type RangeEndPrint = ParagraphPrint;
 /** 메일머지(MAILMERGE) 필드를 FieldValue 인자로 가리킨다(7.10). occurrence는 같은 키 안의 순번 */
 export type MergeFieldAnchor = { id: string; kind: "mergeField"; key: string; occurrence?: number; pattern?: string };
 
-/** 1판 앵커 5종(필드·낱말·줄·셀·개체)에 range·mergeField를 더하고, 모든 앵커에 선택 pattern(패턴 id)을 둔다. headingRange는 #19가 정할 때까지 읽기가 거절한다. */
+/** 1판 앵커 5종(필드·낱말·줄·셀·개체)에 range·headingRange·mergeField를 더하고, 모든 앵커에 선택 pattern(패턴 id)을 둔다. */
 export type StudioAnchor =
   | (FieldAnchor & { pattern?: string })
   | (WordAnchor & { pattern?: string })
@@ -35,11 +35,13 @@ export type StudioAnchor =
   | (CellAnchor & { pattern?: string; print?: CellPrint })
   | (ObjectAnchor & { pattern?: string; print?: ObjectPrint })
   | (RangeAnchor & { pattern?: string })
+  | (HeadingRangeAnchor & { pattern?: string })
   | MergeFieldAnchor;
 
 // ── 패턴(형만. 판정은 #20) ──────────────────────────────────────
 
-export const PATTERN_FORMS = ["digitDot", "hangulDot", "circled", "paren", "box", "article", "none"] as const;
+/** 패턴의 번호 글자 꼴: 제목 범위의 꼴(`HEADING_FORMS`, 7.10)과 같은 11종 */
+export const PATTERN_FORMS = HEADING_FORMS;
 export const PATTERN_PLACES = ["body", "cell", "labelCell", "labelColon"] as const;
 export const PATTERN_MATCH = ["marker", "bold", "height", "print", "paraPrint", "align"] as const;
 
