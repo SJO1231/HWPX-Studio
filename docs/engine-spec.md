@@ -962,7 +962,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | `hwpx fragment import <대상> <조각.json> (--section N --index I [--before] \| --range 구역:시작-끝) [--parent 주소] -o 출력.hwpx` | 조각 가져오기(게이트 포함). `--range`는 그 범위의 문단을 지우고 그 자리에 넣는다(7.10의 `range` 교체. `--section`·`--index`·`--before`와 함께 쓸 수 없다. 2026-10-04 #30) |
 | `hwpx fill <파일> --data d.json [--template t.json] -o 출력 [--mode baseline\|strict\|repair] [--missing error\|empty\|keep] [--dry-run] [--report r.json] [--overwrite]` | 생성. 템플릿 없이도 `{{}}`와 누름틀을 채운다 |
 | `hwpx fill <파일> --data 배열.json --batch -o <폴더> [--name "{{경로}}"] [--dry-run] [--report r.json] [--overwrite]` | 여러 건 생성(8.36). 한 건이 실패해도 나머지는 만들고 종료 코드 1. 폴더가 없거나 같은 이름 파일이 있으면 2 |
-| `hwpx fill <파일> --template t2.json --case c.json --data 한건.json --blobs <폴더> -o 출력 [--report r.json] [--overwrite]` | **[계약]** **[미구현]** 2판 템플릿(`template@2`, 8.8) 생성. `--data`는 한 건(객체), `--case`는 이번 건(`case@1`, 없으면 선택을 전부 계산), `--blobs`는 조각 덩어리를 `<sha256>.json`으로 담은 폴더(받은 바이트의 해시를 대조한다). 앱과 같은 바이트를 낸다(8.8.12). `--template`이 `@1`이면 위 `fill` 동작 그대로이고 `--case`·`--blobs`는 종료 코드 2. 덩어리 파일은 입력이라 출력 경로로 덮어쓸 수 없다. 종료 코드는 아래와 같다 |
+| `hwpx fill <파일> --template t2.json --case c.json --data 한건.json --blobs <폴더> -o 출력 [--report r.json] [--overwrite]` | **[계약]** **[구현 #31]** 2판 템플릿(`template@2`, 8.8) 생성. 템플릿 파일의 `schema`를 먼저 읽어 `template@N`(N≠1)이면 2판 경로다(`@3`은 `TPL_VERSION`으로 2). `--data`는 한 건(객체. 배열이면 2), `--case`는 이번 건(`case@1`, 없으면 선택을 전부 계산), `--blobs`는 조각 덩어리를 `<sha256>.json`으로 담은 폴더(받은 바이트의 해시를 대조한다. 조각 블록이 있는데 없으면 `TPL_FRAGMENT_MISSING`으로 2). 둘 다 선택이다. 앱과 같은 바이트를 낸다(8.8.12). `--template`이 `@1`이면 위 `fill` 동작 그대로이고 `--case`·`--blobs`는 종료 코드 2. 2판에 `--batch`·`--name`·`--mode`·`--missing`·`--reissue-internal`·`--fill-in-code`는 2. 덩어리 파일은 입력이라 `-o`·`--report`로 덮어쓸 수 없다(2). `--dry-run`은 출력 없이 보고만. 실패해도 `--report`는 쓴다. 종료 코드는 아래와 같다 |
 | `hwpx validate <파일> [--baseline 원본] [--strict] [--json]` | 검사 |
 | `hwpx diff <원본> <결과> [--json]` | 항목별 동일 여부와 수량 비교 |
 | `hwpx compile <파일> -o 승격본 --experimental` | `{{}}`를 누름틀로 |
@@ -1377,13 +1377,13 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 
 소유: 엔진 = Claude(`generateFromTemplate`, CLI). 호출(앱) = Codex.
 
-`generateFromTemplate(bytes, t, record, case, loadBlob, opts): GenerateResult`의 순서다. 어느 단계든 실패하면 출력이 없다. 순수 함수이고 시계·파일을 모르므로 같은 입력은 같은 바이트다.
+`generateFromTemplate(bytes, t, record, case, loadBlob, opts)`의 순서다. 어느 단계든 실패하면 출력이 없다. 순수 함수이고 시계·파일을 모르므로 같은 입력은 같은 바이트다. **[구현 #31]**(2026-10-04, `src/fill/generate-studio*.ts`·`studio-common.ts`·`studio-post.ts`. 검증은 [검증 기준](validation.md) 22절). `t`가 1판 `Template`이면 `generate` 한 번(8.8.11)이고, `StudioTemplate`이면 아래 순서로 `StudioGenerateResult`(`{ ok, dryRun, output?(hwpx 바이트 또는 md 문자열), report, ledger? }`)를 돌려준다. `loadBlob(sha256)`은 덩어리 바이트 또는 `undefined`다. 템플릿·이번 건은 이미 읽힌 객체로 보고 다시 검사하지 않는다.
 
 1. 원본 대조: `bytes`의 sha256이 `t.source.sha256`과 다르면 `TPL_SOURCE_MISMATCH`다. 이 검사가 앵커 상태(8.8.13)보다 앞선다.
 2. 검사: 템플릿·이번 건을 8.8.10대로 읽고, 중첩 슬롯이 있으면 `TPL_NESTED`다. 조각은 `loadBlob(sha256)`으로 가져온다. 없거나 받은 바이트의 해시가 요청과 다르면 `TPL_FRAGMENT_MISSING`이다.
 3. 값: `bindValues`(8.8.4). 글이 확정된다.
 4. 선택: `selectSlots`(8.8.8). 슬롯이 하나라도 막으면 슬롯마다 `SEL_*`를 모아 내고 끝낸다.
-5. 앵커: 원본 해시가 같으면 `checkAnchors`는 exact·unverified만 낸다. 그 밖의 상태는 템플릿이 손상된 것이므로 해당 코드로 막는다.
+5. 앵커: 원본 해시가 같으면 `checkAnchors`(8.8.13)는 exact·unverified만 낸다(unverified는 경고). 그 밖의 상태는 템플릿이 손상된 것이므로 해당 코드로 막는다. (#31 구현은 2단계 자리 앵커를 `resolveAnchors`로 풀어 relocated 경고·notFound·ambiguous 오류로 처리하고, 슬롯 앵커는 1단계 `generate`가 푼다. `checkAnchors` 연결은 #32를 합친 뒤.)
 6. 구조 → 값 두 단계 생성(아래 표).
 7. 후처리(켠 것만)와 끝 판정.
 
@@ -1392,21 +1392,22 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | 계약 요소 | 1단계: 구조(원본 좌표, 빈 데이터) | 2단계: 값(조립본) |
 | --- | --- | --- |
 | 슬롯 s의 선택 블록 b(조각) | 슬롯 앵커마다 문서 순서로 `inject { anchor, position: "replace", fragment }`. 내용은 `blockEdits[b]`가 있으면 그것 | — |
-| b(글) | `insertText { anchor, "replace", { text }, style: "inherit" }`, 줄마다 문단 | 글 안 `{{키}}`는 `placeholder` 자리가 채운다 |
+| b(글) | `insertText { anchor, "replace", { text }, style: "inherit" }`, 줄마다 문단. 글이 비면(hwpx는 빈 글, md는 공백 아닌 줄이 없음) 슬롯 범위를 지우는 `delete`(빈 값 교체는 건너뛰어 원래 글이 남기 때문) | 글 안 `{{키}}`는 `placeholder` 자리가 채운다 |
 | 고르지 않은 블록 | 규칙 없음(출력에 없다) | — |
-| `word`·`line`·`cell` 자리 | — | 1단계 이동표(7.10)로 주소를 옮긴 뒤 `fill { text }`. 교체 범위 안이면 `dropped`(`PLACE_COVERED`) |
-| `clickHere`·`mailMerge` 자리 | — | 조립본에서 이름·키로 다시 열거한다(조각 때문에 순번이 바뀐다). `occurrence`는 이동표로 옮겨 찾는다 |
+| `word`·`line`·`cell` 자리 | — | 1단계 이동표(7.10)로 주소를 옮긴 뒤 `fill { text }`. 교체 범위 안이면 `dropped`(`PLACE_COVERED`). `cell`은 표를 담은 문단을 옮긴 뒤 그 문단 안 몇 번째 표인지로 서수를 고정하고 지문(`print`)은 쓰지 않는다(첫 행에 슬롯이 있으면 `head`가 바뀐다). 1단계는 슬롯 교체·삭제만 하므로 행 삭제·반복은 생기지 않는다 |
+| `clickHere`·`mailMerge` 자리 | — | 조립본에서 이름·키(NFC 비교)로 다시 열거한다(조각 때문에 순번이 바뀐다). `occurrence`는 이동표로 옮겨 찾고, 원본에 그 순번이 없으면 `ANCHOR_NOT_FOUND` |
 | `placeholder` 자리 | — | 조립본의 `{{ 키 }}`마다 `word` 앵커를 만들고 `fill { text }` |
 | 등록되지 않은 `{{ }}` | — | `unregistered: error`이면 `PLACE_UNREGISTERED`, 출력 없음. `keep`이면 경고를 남기고 그대로 둔다 |
-| 값 | 생성 전에 `bindValues`로 글 확정(형식·누락 정책·제어 문자·`valueEdits`) | 규칙은 `{text}`만 쓰고, 데이터 묶음은 비우고 `missing: "keep"` |
-| 판정 | 단계마다 `generate` 게이트(`allowNothingApplied`) | 건너뜀이 1건이라도 있으면 실패(`FILL_SKIPPED`). 끝에서 원본 대비 누적 기준선 비교 |
+| 값 | 생성 전에 `bindValues`로 글 확정(형식·누락 정책·제어 문자·`valueEdits`) | 규칙은 `{text}`만 쓰고, 데이터 묶음은 비우고 `missing: "keep"`. 값의 `issue`(`DATA_MISSING`·`DATA_FORMAT`·`DATA_NOT_SCALAR`·`VALUE_CONTROL_CHAR`)는 그 값을 쓰는 자리가 2단계 대상으로 1곳 이상 있을 때만 그 코드로 막는다(덮인 자리·고르지 않은 `where` 블록의 자리는 막지 않는다) |
+| 판정 | 단계마다 `generate` 게이트(`allowNothingApplied`). `opts.mode`(`repair` 포함)는 1단계에만 넘기고 2단계는 baseline 또는 strict | 암묵 채움이 아닌 건너뜀이 어느 단계든 1건이라도 있으면 실패(`FILL_SKIPPED`). 후처리 뒤 원본 대비 누적 기준선 비교(`GATE_NEW_ERRORS`·`GATE_ERRORS`) |
 
 - 1단계와 2단계는 8.3의 `generate`를 그대로 재사용한다. 2단계는 1단계 결과를 다시 파싱한 조립본에서 자리를 찾는다. 1단계에서 `inject`·`insertText`가 쓰는 조각 안의 `{{}}`는 비운 데이터 묶음 때문에 채워지지 않고(`missing: "keep"`), 2단계가 채운다.
-- 등록되지 않은 누름틀·메일머지 필드는 손대지 않는다. `{{ }}`의 등록 여부는 `places[]`의 `placeholder`로만 정해진다. 누름틀·메일머지 구간 안의 `{{ }}`는 그 필드 자리가 맡으므로 등록 검사에서 뺀다.
-- 건너뜀(`FILL_CROSSES_MARKUP`·`FILL_MIXED_FORMAT` 등)은 `report.skipped`에 남고, 1건이라도 있으면 `FILL_SKIPPED`로 실패한다(메시지에 건너뜀 코드별 건수). `dropped`는 실패가 아니다.
-- 원장(`ledger`, 8.3)에 더하는 것: 원본 해시, 템플릿 `{ id, version, 정규 JSON 해시 }`, 이번 건 정규 JSON 해시, 행 해시(와 dataset id·version). 값 원문은 넣지 않는다.
-- 후처리 2종(`options`로 켠 것만. 기본 끔. 이관 템플릿만 켠다): `unwrapFilled`는 채운 누름틀·메일머지 필드의 표식을 지워 값 글만 남기고, `refreshPreview`는 `Preview/PrvText.txt`를 결과 본문의 글로 다시 쓴다. 정확한 규칙은 lite의 현재 결과와 대조해 구현할 때 확정한다(8.8.14의 결과 동일 판정이 검사한다).
-- `source.kind`가 `md`이면 텍스트 어댑터(9절)로 같은 순서를 따른다. 슬롯 앵커는 표식 줄 `line`, 블록은 `text`다. 결과는 `{ ok, output?, report }`이고 원장은 없다(9.1). `source.sha256`은 입력 문자열의 UTF-8 바이트(BOM 포함) 해시다.
+- 등록되지 않은 누름틀·메일머지 필드는 손대지 않는다. `{{ }}`의 등록 여부는 `places[]`의 `placeholder`로만 정해진다: 조립본의 `{{K}}` 하나하나에 적용되는 placeholder 자리가 있어야 등록이다(`where`가 있는 자리는 그 블록이 적용된 곳에서만, `where`가 없는 자리는 어디서나). `where` 블록 밖의 `{{K}}`는 K를 쓰는 다른 자리가 없으면 미등록이다. 누름틀·메일머지 구간 안의 `{{ }}`는 그 필드 자리가 맡으므로 등록 검사에서 뺀다. md의 코드 블록 안 `{{ }}`는 채우지도 세지도 않는다(9절).
+- 건너뜀(`FILL_CROSSES_MARKUP`·`FILL_MIXED_FORMAT` 등)은 `report.skipped`에 남고, 1건이라도 있으면 `FILL_SKIPPED`로 실패한다(메시지에 건너뜀 코드별 건수). `dropped`는 실패가 아니다. `dryRun`도 1단계는 실제로 적용해 2단계 계획을 세우며 `FILL_SKIPPED`면 실패다.
+- 조각 덩어리는 고른 블록만이 아니라 모든 조각 블록과 `blockEdits`의 조각을 2번에서 확인한다.
+- 원장(`StudioLedger`, 8.3의 원장에서 `template`·`dataset`을 바꾼 것): 원본 해시 `source.sha256`, 템플릿 `{ id, version, sha256(정규 JSON) }`, 이번 건 `{ sha256 }`, 행 `{ sha256 = sha256(canonicalStudioJson(record)), dataset?, version? }`. 값 원문은 넣지 않는다. counts·expected·actions는 두 단계의 합이고 `counts.skipped`는 암묵 채움을 뺀 건너뜀(성공이면 0), `dropped`에는 `PLACE_COVERED` 수를 더한다. `case.record.sha256`과의 대조는 하지 않는다(화면 몫).
+- 후처리 2종(`options`로 켠 것만. 기본 끔. 이관 템플릿만 켠다. md에는 없다). 확정 규칙(#31, lite와 다른 점은 괄호): `unwrapFilled`는 **이번에 채운** 누름틀·메일머지 필드(구역·시작 id·종류로 고른다. lite는 이름 단위·누름틀만)의 표식을 지워 값 글만 남긴다. `inline` 모양도 푼다(줄바꿈·탭 값은 inline이 된다. lite는 simple·empty만). 표식을 지운 문단의 줄 배치 캐시를 지운다. 확인 3종은 lite와 같다(글 동일 `REREAD_TEXT`·새 오류 0 `GATE_NEW_ERRORS`·남은 필드 0 `REREAD_FIELD`). `refreshPreview`는 lite와 같다: 항목이 있을 때만 `Preview/PrvText.txt`를 문단 글에서 U+FFFC를 빼고 `\n`으로 이어 UTF-8로 다시 쓴다. 보고서 `postprocess: { unwrapped, preview }`.
+- `source.kind`가 `md`이면 텍스트 어댑터(9절)로 같은 순서를 따른다. 슬롯 앵커는 표식 줄 `line`, 블록은 `text`(조각이면 `TPL_FIELD`)다. 결과는 `{ ok, output?(문자열), report }`이고 원장은 없다(9.1). `source.sha256`은 입력 문자열의 UTF-8 바이트(BOM 포함) 해시다. UTF-8이 아니면 `TEXT_ENCODING`.
 - 원본 해시: `source.sha256`은 원본 문서 바이트의 sha256(소문자 16진 64자)이다. 8.7의 "대조하지 않는다"는 1판의 한계이고 2판은 위 1번에서 대조한다.
 - 같은 입력으로 두 번 생성하면 출력과 원장이 바이트까지 같다. CLI(8.4)와 앱의 결과가 같아야 한다.
 
@@ -1507,7 +1508,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | `listProtoUsage(templates, protoId, latest)`, `planProtoUpdate(t, proto)` | `src/template/` | 8.8.7(#21). 형식과 무관한 순수 함수 |
 | CLI `fill --template(@2) --case --blobs <폴더>` | `apps/cli` | 8.4. 앱과 같은 바이트 |
 
-구현 상태(2026-10-04): `read*`·`write*`·해시 도우미(`templateSha256`·`caseSha256`·`contentSha256`)·`bindValues`·`selectSlots`·`listProtoUsage`·`planProtoUpdate`는 #29, `range`·`moves`·`makeRangeAnchor`는 #30(7.10). `generateFromTemplate`·CLI `--case --blobs`(#31), `checkAnchors`(#32), 패턴(#20)은 미구현. 정확한 형은 `src/template/studio-types.ts`가 정본이고 아래는 요지다.
+구현 상태(2026-10-04): `read*`·`write*`·해시 도우미(`templateSha256`·`caseSha256`·`contentSha256`)·`bindValues`·`selectSlots`·`listProtoUsage`·`planProtoUpdate`는 #29, `range`·`moves`·`makeRangeAnchor`는 #30(7.10). `generateFromTemplate`·CLI `--case --blobs`는 #31(`src/fill/generate-studio.ts`. 결과 형 `StudioGenerateResult`·`StudioGenerateReport`·`StudioLedger`는 `src/fill/studio-common.ts`가 정본). `checkAnchors`(#32), 패턴(#20)은 미구현. 정확한 형은 `src/template/studio-types.ts`가 정본이고 아래는 요지다.
 
 ```ts
 type ValueState = "bound" | "edited" | "missing" | "empty" | "rejected"
