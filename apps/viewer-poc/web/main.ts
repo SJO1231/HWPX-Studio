@@ -129,6 +129,10 @@ const describe = (a: AnchorDraftJson): { kind: string; text: string; sub: string
       return { kind: "문단", text: `"${a.print.text.slice(0, 40)}"`, sub: `주소 [${a.at.path.join(", ")}]` };
     case "cell":
       return { kind: "표 셀", text: `표 ${a.table.ordinal + 1}의 ${a.row + 1}행 ${a.col + 1}열`, sub: "" };
+    case "range":
+      return { kind: "문단 범위", text: `"${a.print.first.text}" ~ "${a.print.last.text}"`, sub: `문단 ${a.from}~${a.to}(${a.print.count}개)` };
+    case "headingRange":
+      return { kind: "제목 범위", text: `"${a.heading.text}"`, sub: `문단 ${a.index}부터 ${a.print.count}개` };
   }
 };
 
