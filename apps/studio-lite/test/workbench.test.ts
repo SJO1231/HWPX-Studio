@@ -8,8 +8,9 @@ import { buildHwpx, mutateEntryText, readFixture } from '../../../packages/hwpx-
 import { gridTable, tableParagraph, textPara } from '../../../packages/hwpx-engine/test/table-helpers.ts';
 import { createWorkbench } from '../src/workbench.ts';
 import { createApp } from '../src/server.ts';
+import type { RhwpPosition } from '../../../packages/viewer/src/map/index.ts';
 
-type Row = { id: string; sectionIndex: number; path: number[]; text: string; editable: boolean; rangeEditable: boolean; reason?: string };
+type Row = { id: string; sectionIndex: number; path: number[]; text: string; editable: boolean; rangeEditable: boolean; reason?: string; position?: RhwpPosition };
 type Open = { session: string; paragraphs: Row[]; sourceUrl: string };
 type Work = { index: number; edits: {id:string;text:string}[]; headings: {id:string;level:1|2}[]; blocks: {id:string;from:string;to:string;text:string;alias:string}[] };
 const blank = (): Work => ({index:0,edits:[],headings:[],blocks:[]});
@@ -398,4 +399,35 @@ test('linked workspace TXT: no-data edits and blocks keep keys; later data fills
   const done=post(app,plain.session,'generate',{...blank(),edits:[{id:plain.paragraphs[0]!.id,text:'수정'}]}) as any;
   assert.equal(done.template,undefined);assert.equal(done.text,'수정');assert.equal(done.filled,0);
   assert.deepEqual(Buffer.from(app.get('/api/workbench/source',new URLSearchParams({session:opened.session}))!.body),source);
+});
+
+test('linked workspace viewer positions: body/cell rows round-trip through the selection API; unmapped header/footer stay absent and restored IDs stay stable',()=>{
+  const app=api(),source=denseSource(),opened=open(app,source);
+  for(const name of ['BODY_0','BODY_6','BODY_11','CELL_0','CELL_5','CELL_11']) {
+    const target=row(opened,name);assert(target.position);
+    const selected=post(app,opened.session,'select',{request:{from:{position:target.position,limit:'paragraph'}}}) as any;
+    assert.equal(selected.id,target.id);assert.deepEqual(selected.location.address,{sectionIndex:target.sectionIndex,path:target.path});
+    if(name.startsWith('CELL_')) assert(target.position.cellPath?.length);
+    else assert.equal(target.position.parentParaIndex,undefined);
+  }
+  assert.equal(row(opened,'HEADER_EDIT').position,undefined);assert.equal(row(opened,'FOOTER_FIXED').position,undefined);
+  const saved=post(app,opened.session,'save',blank()) as {workspace:string};
+  const restored=app.post('/api/workbench/restore',{workspace:saved.workspace}) as Open;
+  assert.deepEqual(restored.paragraphs,opened.paragraphs);
+  post(app,opened.session,'generate',{...blank(),edits:[{id:row(opened,'BODY_0').id,text:'수정된 본문'}]});
+  const reopened=open(app,output(app,opened.session));
+  assert.deepEqual(row(reopened,'수정된 본문').position,row(opened,'BODY_0').position);
+  const txt=app.post('/api/workbench/open',{name:'synthetic.txt',content:Buffer.from('문단\n다음').toString('base64')}) as Open;
+  assert(txt.paragraphs.every(r=>r.position===undefined));
+});
+
+test('linked workspace viewer positions: the 3000-row opening limit returns display positions without changing IDs',t=>{
+  const source=buildHwpx([Array.from({length:3000},(_,i)=>textPara('문단 '+i)).join('')]),app=api();
+  const started=performance.now(),opened=open(app,source),elapsed=performance.now()-started;
+  assert.equal(opened.paragraphs.length,3000);assert.equal(opened.paragraphs.filter(r=>r.position).length,3000);
+  for(const index of [0,1499,2999]) {
+    const target=opened.paragraphs[index]!;assert.equal(target.id,'p:0:'+index);
+    assert.deepEqual(target.position,{sectionIndex:0,paragraphIndex:index,charOffset:0});
+  }
+  t.diagnostic('rows=3000; mapped=3000; open_parse_analysis_mapping_ms='+elapsed.toFixed(1));
 });

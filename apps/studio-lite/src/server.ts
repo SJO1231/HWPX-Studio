@@ -45,7 +45,7 @@ export function createApp(database=':memory:') {
         }
         if(path==='/api/demo')return send(200,demo());
         if(path==='/api/demo-sources')return send(200,demoSources);
-        const files:Record<string,string>={'/':'web/workbench.html','/workbench':'web/workbench.html','/workbench.js':'web/workbench.js','/workbench.css':'web/workbench.css','/quick':'web/quick.html','/template':'web/index.html','/quick.js':'web/quick.js','/quick.css':'web/quick.css','/app.js':'web/app.js','/style.css':'web/style.css','/rhwp.js':'vendor/rhwp/rhwp.js','/rhwp_bg.wasm':'vendor/rhwp/rhwp_bg.wasm'};
+        const files:Record<string,string>={'/':'web/workbench.html','/workbench':'web/workbench.html','/workbench.js':'web/workbench.js','/workbench.css':'web/workbench.css','/editor-model.js':'src/editor-model.ts','/quick':'web/quick.html','/template':'web/index.html','/quick.js':'web/quick.js','/quick.css':'web/quick.css','/app.js':'web/app.js','/style.css':'web/style.css','/rhwp.js':'vendor/rhwp/rhwp.js','/rhwp_bg.wasm':'vendor/rhwp/rhwp_bg.wasm'};
         const shared=cleanPath(path);
         const sharedFile=shared===undefined?undefined:resolveShared(shared);
         if(sharedFile){
@@ -55,7 +55,8 @@ export function createApp(database=':memory:') {
         }
         if(files[path]) {
           const types:Record<string,string>={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.wasm':'application/wasm'};
-          return send(200,readFileSync(resolve(ROOT,files[path])),types[extname(files[path])]);
+          const file=files[path];
+          return send(200,file.endsWith('.ts')?stripTypeScriptTypes(readFileSync(resolve(ROOT,file),'utf8'),{mode:'strip'}):readFileSync(resolve(ROOT,file)),file.endsWith('.ts')?types['.js']:types[extname(file)]);
         }
         return send(404,{error:'없는 경로입니다.'});
       }

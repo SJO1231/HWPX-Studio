@@ -1,3 +1,4 @@
+import {editorLayout, editorSelection, unitAt, replaceEditorText, groupEditorSelection, editorChange} from '/editor-model.js';
 import { createPageView, createLatest, toPagePoint } from '/packages/viewer/src/dom/index.ts';
 import { loadRhwp, openDocument, runPosition, sameParagraph } from '/packages/viewer/src/rhwp/index.ts';
 
@@ -6,12 +7,12 @@ const state = {
   session: undefined, kind: 'hwpx', sourceText: '', name: '', paragraphs: [], edits: new Map(), headings: new Map(), blocks: [],
   keys: [], records: 0, index: 0, chosen: undefined, selection: undefined,
   sourceDoc: undefined, resultDoc: undefined, view: undefined, viewMode: 'source', output: undefined,
-  busy: false, dirty: false, range: undefined, rangeEditing: undefined, caret: undefined,
+  busy: false, dirty: false, caret: undefined,
+  comparison: undefined, comparisonText: '', layout: {text: '', units: []}, history: [], future: [],
   marks: new Map(), invalidations: Promise.resolve(), revision: 0, openTicket: 0,
 };
 const opens = createLatest(), picks = createLatest(), views = createLatest(), dataLoads = createLatest();
 const keyCopies = createLatest(), bodyCopies = createLatest();
-const rowElements = new Map();
 let resizeFrame, contextRequest = 0;
 
 function status(text, kind = '') {
@@ -26,47 +27,28 @@ function setBusy(value, message) {
 }
 function paragraph(id) { return state.paragraphs.find((item) => item.id === id); }
 function textOf(item) { return state.edits.get(item.id) ?? item.text; }
-function prefixOf(id) { const level = state.headings.get(id); return level === 1 ? '# ' : level === 2 ? '## ' : ''; }
-function displayText(item) { return prefixOf(item.id) + textOf(item); }
-function coveredBy(id) {
-  const item = paragraph(id); if (!item) return undefined;
-  return state.blocks.find((block) => {
-    const a = paragraph(block.from), b = paragraph(block.to);
-    return a && b && sameParent(a, item) && item.path.at(-1) >= a.path.at(-1) && item.path.at(-1) <= b.path.at(-1);
-  });
-}
-function editable(item) { return Boolean(item?.editable) && !coveredBy(item.id); }
+
 function controls() {
-  const available = Boolean(state.session) && !state.busy;
-  const item = paragraph(state.chosen), canEdit = available && editable(item);
-  for (const id of ['open-document', 'empty-open', 'load-work']) { const button = $('#' + id); if (button) button.disabled = state.busy; }
-  for (const id of ['save-work', 'generate', 'open-data', 'load-data-text']) $('#' + id).disabled = !available;
-  $('#record-select').disabled = !available || state.records === 0;
-  $('#source-view').disabled = !(state.sourceDoc || (state.kind === 'text' && state.session)) || state.busy;
-  $('#result-view').disabled = !state.output || state.busy;
-  for (const id of ['scale', 'zoom-in', 'zoom-out']) $('#' + id).disabled = !(state.view || (state.kind === 'text' && state.session)) || state.busy;
-  $('#copy-body').disabled = state.busy || typeof state.output?.text !== 'string';
-  $('#key-select').disabled = !available;
-  $('#make-template').disabled = !available || state.kind !== 'hwpx';
-  for (const button of document.querySelectorAll('[data-action]')) {
-    const action = button.dataset.action;
-    button.disabled = !(action === 'heading1' || action === 'heading2' || action === 'anchor' ? available && Boolean(item)
-      : action === 'copyKey' ? available && Boolean($('#key-select').value)
-      : action === 'rangeStart' || action === 'rangeEnd' ? canEdit && item.rangeEditable !== false : canEdit);
+  const available=Boolean(state.session)&&!state.busy, item=paragraph(state.chosen), canEdit=available&&item?.editable;
+  for(const id of ['open-document','empty-open','load-work']) {const button=$('#'+id);if(button)button.disabled=state.busy;}
+  $('#open-comparison').disabled=!available;
+  for(const id of ['save-work','generate','open-data','load-data-text']) $('#'+id).disabled=!available;
+  $('#record-select').disabled=!available||!state.records;
+  $('#source-view').disabled=!available; $('#result-view').disabled=!state.output||state.busy;
+  $('#comparison-view').disabled=!available;
+  for(const id of ['scale','zoom-in','zoom-out']) $('#'+id).disabled=!available;
+  $('#key-select').disabled=!available; $('#make-template').disabled=!available||state.kind!=='hwpx';
+  $('#copy-body').disabled=state.busy||typeof state.output?.text!=='string';
+  $('#document-editor').disabled=!state.session; $('#document-editor').readOnly=state.busy;
+  $('#undo').disabled=!available||!state.history.length; $('#redo').disabled=!available||!state.future.length;
+  for(const button of document.querySelectorAll('[data-action]')) {
+    const name=button.dataset.action;
+    button.disabled=name==='copyKey'?!available||!$('#key-select').value.trim():name==='importSelection'?!canEdit||!state.comparisonText:name==='copySelection'?!available:!canEdit;
   }
-  $('#confirm-block').disabled = !available || !state.range?.from || !state.range?.to;
-  $('#block-text').disabled = !state.range?.to || state.busy;
-  $('#block-alias').disabled = state.busy;
-  $('#cancel-selection').hidden = !state.chosen;
-  $('#dirty-state').hidden = !state.dirty;
-  const download = $('#download'), downloadable = Boolean(state.output) && !state.busy;
-  download.classList.toggle('disabled', !downloadable); download.setAttribute('aria-disabled', String(!downloadable));
-  download.tabIndex = downloadable ? 0 : -1;
-  if (!downloadable) download.removeAttribute('href'); else download.href = state.output.outputUrl;
-  for (const [id, entry] of rowElements) {
-    entry.input.readOnly = state.busy || !editable(paragraph(id));
-    entry.reset.disabled = state.busy || Boolean(coveredBy(id));
-  }
+  $('#dirty-state').hidden=!state.dirty;
+  const download=$('#download'),ready=Boolean(state.output)&&!state.busy;
+  download.classList.toggle('disabled',!ready);download.setAttribute('aria-disabled',String(!ready));download.tabIndex=ready?0:-1;
+  if(ready)download.href=state.output.outputUrl;else download.removeAttribute('href');
 }
 async function api(path, body) {
   const response = await fetch('/api/workbench/' + path, {
@@ -105,29 +87,33 @@ function invalidateOutput() {
   });
 }
 function changed() { state.dirty = true; invalidateOutput(); }
-function autosize(input) {
-  input.style.height = '0px'; input.style.height = Math.max(34, input.scrollHeight + 2) + 'px';
+function editorWork() { return {edits:[...state.edits].map(([id,text])=>({id,text})),blocks:state.blocks.map(b=>({...b}))}; }
+function historyEntry() { return {...editorWork(),headings:[...state.headings],caret:state.caret?{...state.caret}:undefined}; }
+function remember() { state.history.push(historyEntry()); if(state.history.length>100)state.history.shift();state.future=[]; }
+function setWork(work) {state.edits=new Map(work.edits.map(e=>[e.id,e.text]));state.blocks=work.blocks;}
+function renderEditor() {
+  state.layout=editorLayout(state.paragraphs,editorWork());const input=$('#document-editor');
+  if(input.value!==state.layout.text)input.value=state.layout.text;
+  input.style.height='0px'; input.style.height=Math.max($('#editor-scroll').clientHeight,input.scrollHeight)+'px';
+  const mirror=$('#editor-mirror');mirror.replaceChildren();
+  for(const unit of state.layout.units) {
+    const row=paragraph(unit.id),line=document.createElement('div');line.className='editor-unit'+(unit.block?' block-unit':'')+(!row.editable?' readonly-unit':'')+(state.headings.has(unit.id)?' heading-unit':'');line.dataset.id=unit.id;
+    const number=document.createElement('button');number.type='button';number.className='line-number';number.textContent=unit.from===unit.to?String(unit.from+1):(unit.from+1)+'–'+(unit.to+1);number.title=(unit.block?'블록 · ':'')+(!row.editable?reasonOf(row.reason):'원본 위치');number.setAttribute('aria-label','원본 '+number.textContent);number.tabIndex=-1;
+    number.addEventListener('click',()=>selectRow(unit.id,{focus:true}));line.append(number,document.createTextNode(unit.text+'​'));mirror.append(line);
+  }
+  markEditorSelection();controls();
 }
-function saveCaret(input, id) { state.caret = {id, start: input.selectionStart, end: input.selectionEnd}; }
-function updateRow(id) {
-  const item = paragraph(id), entry = rowElements.get(id);
-  if (!item || !entry) return;
-  const level = state.headings.get(id), block = coveredBy(id);
-  entry.article.className = 'paragraph-item' + (state.chosen === id ? ' selected' : '')
-    + (level ? ' heading-' + level : '') + (!item.editable ? ' readonly' : '') + (block ? ' covered' : '');
-  entry.article.setAttribute('aria-current', state.chosen === id ? 'true' : 'false');
-  const number = state.paragraphs.indexOf(item) + 1;
-  entry.label.textContent = '문단 ' + number;
-  entry.state.textContent = block ? block.alias : state.edits.has(id) ? '편집됨' : level ? '제목 ' + level : !item.editable ? '읽기 전용' : item.rangeEditable === false ? '일부 글 수정' : '클릭해서 편집';
-  entry.reset.hidden = !state.edits.has(id) && !state.headings.has(id); entry.reset.disabled = state.busy || Boolean(block);
-  entry.input.readOnly = state.busy || !editable(item);
-  entry.input.setAttribute('aria-label', '문단 ' + number + (block ? ' · 구간에 포함됨' : !item.editable ? ' · 읽기 전용' : ' 편집'));
-  entry.reason.hidden = (item.editable && item.rangeEditable !== false && !block) || state.chosen !== id;
-  const reason = block ? '확정한 구간에 포함되어 있습니다.' : !item.editable ? reasonOf(item.reason) : item.rangeEditable === false ? '서식이 같은 부분의 글을 고칠 수 있습니다. 서로 다른 서식에 걸친 변경은 적용할 때 알려드립니다.' : '';
-  entry.reason.textContent = reason; entry.state.title = reason; entry.input.title = !item.editable || block ? reason : '';
-  if (entry.input.value !== displayText(item)) entry.input.value = displayText(item);
-  autosize(entry.input);
+function markEditorSelection() {
+  const caret=state.caret??{start:0,end:0},chosen=editorSelection(state.layout,caret.start,caret.end);
+  for(const line of $('#editor-mirror').children)line.classList.toggle('selected-unit',chosen.some(u=>u.id===line.dataset.id));
+  const a=chosen[0],z=chosen.at(-1);$('#selection-info').textContent=a?(a.from+1)+(a.from!==z.to?'–'+(z.to+1):''):'';
 }
+function captureCaret(sync=true) {
+  const input=$('#document-editor');state.caret={start:input.selectionStart,end:input.selectionEnd};
+  const unit=unitAt(state.layout.units,input.selectionStart),old=state.chosen;state.chosen=unit?.id;
+  markEditorSelection();controls();if(sync&&state.chosen&&state.chosen!==old)void showRowInSource(state.chosen);
+}
+
 function renderOutline() {
   const outline = $('#outline'); outline.replaceChildren();
   for (const item of state.paragraphs) {
@@ -140,65 +126,16 @@ function renderOutline() {
   }
   $('#outline-menu').hidden = state.headings.size === 0;
 }
-function renderParagraphs() {
-  rowElements.clear(); const container = $('#paragraphs'); container.replaceChildren();
-  for (const item of state.paragraphs) {
-    const article = document.createElement('article'); article.dataset.id = item.id;
-    const meta = document.createElement('div'); meta.className = 'paragraph-meta';
-    const label = document.createElement('span'); label.className = 'paragraph-label';
-    const marker = document.createElement('span'); marker.className = 'paragraph-state';
-    const reset = document.createElement('button'); reset.type = 'button'; reset.textContent = '되돌리기';
-    reset.title = '이 문단의 글과 제목 지정을 원본으로 되돌리기';
-    const input = document.createElement('textarea'); input.className = 'paragraph-text'; input.rows = 1; input.spellcheck = false;
-    const reason = document.createElement('p'); reason.className = 'paragraph-reason';
-    meta.append(label, marker, reset); article.append(meta, input, reason); container.append(article);
-    rowElements.set(item.id, {article, input, label, state: marker, reset, reason});
-    input.addEventListener('focus', () => { if (state.chosen !== item.id) selectRow(item.id, {scroll: false}); saveCaret(input, item.id); });
-    for (const event of ['select', 'keyup', 'mouseup']) input.addEventListener(event, () => saveCaret(input, item.id));
-    input.addEventListener('input', () => {
-      if (state.busy || !editable(item)) return;
-      const start = input.selectionStart, end = input.selectionEnd;
-      const heading = /^(#{1,2})[ \t]+/.exec(input.value), originalHeading = /^(#{1,2})[ \t]+/.test(item.text);
-      let text = input.value;
-      if (heading && (!originalHeading || state.headings.has(item.id))) {
-        state.headings.set(item.id, heading[1].length); text = text.slice(heading[0].length);
-      } else state.headings.delete(item.id);
-      if (text === item.text) state.edits.delete(item.id); else state.edits.set(item.id, text);
-      changed(); updateRow(item.id); input.setSelectionRange(start, end); saveCaret(input, item.id);
-      renderOutline(); status('문단 편집 중 · 적용하면 문서에 반영됩니다.');
-    });
-    input.addEventListener('contextmenu', (event) => {
-      event.preventDefault(); if (state.busy) return;
-      hideMenu(); selectRow(item.id, {scroll: false}); saveCaret(input, item.id); showMenu(event.clientX, event.clientY);
-    });
-    reset.addEventListener('click', () => {
-      if (state.busy || coveredBy(item.id)) return;
-      state.edits.delete(item.id); state.headings.delete(item.id); changed(); updateRow(item.id); renderOutline();
-      status('이 문단의 편집과 제목 지정을 되돌렸습니다.');
-    });
-    article.addEventListener('click', () => { if (state.chosen !== item.id) selectRow(item.id, {scroll: false}); });
-    updateRow(item.id);
-  }
-  $('#paragraph-count').textContent = state.paragraphs.length ? state.paragraphs.length + '개 문단' : '';
-  renderOutline(); renderBlocks();
+function renderParagraphs() {renderEditor();$('#paragraph-count').textContent=String(state.paragraphs.length||'');renderOutline();}
+function selectRow(id,options={}) {
+  const unit=state.layout.units.find(u=>state.paragraphs.slice(u.from,u.to+1).some(r=>r.id===id));if(!unit)return false;
+  state.chosen=id;state.caret={start:unit.start,end:unit.end};const input=$('#document-editor');input.setSelectionRange(unit.start,unit.end);
+  if(options.focus)input.focus({preventScroll:true});
+  if(options.scroll!==false)$('#editor-mirror').querySelector('[data-id="'+unit.id+'"]')?.scrollIntoView({block:'nearest'});
+  markEditorSelection();highlightTextRow(id);if(!options.fromPick)void showRowInSource(id);controls();return true;
 }
-function selectRow(id, options = {}) {
-  const item = paragraph(id); if (!item) return false;
-  const previous = state.chosen; state.chosen = id; updateRow(previous); updateRow(id);
-  $('#selection-info').textContent = '문단 ' + (state.paragraphs.indexOf(item) + 1)
-    + (!item.editable ? ' · 직접 글 편집은 제한됩니다.' : coveredBy(id) ? ' · 확정한 구간에 포함됨' : ' 선택');
-  if (state.viewMode === 'source') state.view?.setMarks(state.marks.get(id) ?? []);
-  if (options.scroll !== false) rowElements.get(id)?.article.scrollIntoView({block: 'nearest'});
-  if (state.kind === 'text' && state.viewMode === 'source') highlightTextRow(id);
-  if (!options.fromPick) void showRowInSource(id);
-  controls(); return true;
-}
-function clearSelection() {
-  picks.cancel(); hideMenu(); const old = state.chosen;
-  state.chosen = undefined; state.selection = undefined; state.caret = undefined; updateRow(old); state.view?.setMarks([]);
-  highlightTextRow(undefined);
-  $('#selection-info').textContent = '왼쪽 글을 누르면 오른쪽에서 내용을 수정할 수 있습니다.'; controls();
-}
+function clearSelection(){picks.cancel();hideMenu();state.selection=undefined;state.chosen=undefined;state.caret=undefined;state.view?.setMarks([]);$('#selection-info').textContent='';highlightTextRow(undefined);controls();}
+
 function requestOf(event) {
   const from = event.cell ? {cell: event.cell} : {position: event.hit.position};
   if (!event.cell) {
@@ -237,22 +174,22 @@ async function selectPicked(event, options = {}) {
     if (!result.id || result.location.precision === 'none') {
       clearSelection();
       status(result.location.reason === 'RANGE_PARAGRAPHS_DIFFER'
-        ? '여러 문단의 구간은 시작 문단과 끝 문단을 따로 선택해주세요.'
+        ? '같은 본문이나 표 칸 안의 글을 선택하세요.'
         : '이 위치에서는 연결할 문단을 확인할 수 없습니다.');
       return false;
     }
     state.selection = result.location;
     state.marks.set(result.id, marksOf(result.location, result.id));
     selectRow(result.id, {...options, fromPick: true});
-    const entry = rowElements.get(result.id), item = paragraph(result.id);
-    if (entry && editable(item)) {
-      const selected = result.location.drafts.find(draft => draft.anchor?.kind === 'word' && !draft.blocked)?.anchor;
-      const prefix = prefixOf(result.id).length;
-      const caret = !state.edits.has(result.id) && selected ? {start: prefix + selected.start, end: prefix + selected.end}
-        : state.caret?.id === result.id ? state.caret : {start: entry.input.value.length, end: entry.input.value.length};
-      entry.input.focus({preventScroll: true}); entry.input.setSelectionRange(caret.start, caret.end); saveCaret(entry.input, result.id);
-      status('오른쪽에서 선택한 글을 고치거나 필드 이름을 넣으세요.');
-    } else if (item) status(reasonOf(item.reason), 'error');
+    const span=result.location.span;
+    const a=span?state.paragraphs.find(r=>r.sectionIndex===span.sectionIndex&&r.path.length===span.parentPath.length+1&&r.path.at(-1)===span.from&&r.path.slice(0,-1).every((n,i)=>n===span.parentPath[i])):paragraph(result.id);
+    const z=span?state.paragraphs.find(r=>r.sectionIndex===span.sectionIndex&&r.path.length===span.parentPath.length+1&&r.path.at(-1)===span.to&&r.path.slice(0,-1).every((n,i)=>n===span.parentPath[i])):a;
+    const first=state.layout.units.find(u=>state.paragraphs.slice(u.from,u.to+1).some(r=>r.id===a?.id)),last=state.layout.units.find(u=>state.paragraphs.slice(u.from,u.to+1).some(r=>r.id===z?.id));
+    if(first&&last){
+      const word=paragraph(result.id)?.editable?result.location.drafts.find(d=>d.anchor?.kind==='word'&&!d.blocked)?.anchor:undefined;
+      const start=first.start+(!span&&!state.edits.has(result.id)&&!first.block&&word?word.start:0),end=span?last.end:first.start+(!state.edits.has(result.id)&&!first.block&&word?word.end:first.text.length);
+      state.caret={start,end};const input=$('#document-editor');input.focus({preventScroll:true});input.setSelectionRange(start,end);markEditorSelection();
+    }
     return true;
   } catch (error) {
     if (picks.current(ticket) && session === state.session) { clearSelection(); status(errorMessage(error), 'error'); }
@@ -290,11 +227,12 @@ function mountDocument(doc, mode) {
     onPick: (event) => { hideMenu(); void selectPicked(event); },
     onError: (error) => status('문서 표시: ' + errorMessage(error), 'error'),
   });
-  $('#original-title').textContent = mode === 'source' ? '원본 문서' : '생성 결과';
+  $('#original-title').textContent = mode === 'source' ? '원본' : '결과';
+  $('#comparison-view').setAttribute('aria-pressed','false');
   $('#source-view').setAttribute('aria-pressed', String(mode === 'source'));
   $('#result-view').setAttribute('aria-pressed', String(mode === 'result'));
   if (mode === 'source' && state.chosen) state.view.setMarks(state.marks.get(state.chosen) ?? []);
-  controls();
+  requestAnimationFrame(renderViewerNumbers);controls();
 }
 async function openViewer(url, mode, openTicket) {
   const ticket = views.begin();
@@ -360,9 +298,9 @@ async function installWorkspace(result, ticket) {
   state.edits = new Map((result.edits ?? []).map((item) => [item.id, item.text]));
   state.headings = new Map((result.headings ?? []).map((item) => [item.id, item.level]));
   state.blocks = (result.blocks ?? []).map((item) => ({...item}));
-  state.marks.clear(); state.range = undefined; state.rangeEditing = undefined;
+  state.marks.clear();
   state.output = undefined; state.viewMode = 'source'; state.dirty = false; state.revision++;
-  $('#range-panel').hidden = true; $('#output-info').textContent = ''; $('#data-text').value = '';
+  state.history=[];state.future=[];state.comparison=undefined; $('#output-info').textContent = ''; $('#data-text').value = '';
   $('#document-name').textContent = state.name; $('#document-name').title = state.name;
   renderParagraphs(); updateData(result.dataInfo);
   if (result.index !== undefined) { state.index = result.index; $('#record-select').value = String(result.index); }
@@ -380,7 +318,7 @@ async function installWorkspace(result, ticket) {
       status('문단은 불러왔지만 원본을 표시하지 못했습니다.', 'error'); return;
     }
   }
-  if (opens.current(ticket)) status('원본을 열었습니다. 글을 클릭하거나 오른쪽 문단을 편집하세요.');
+  if (opens.current(ticket)) status('');
 }
 function base64(bytes) {
   const chunk = 0x8000; let binary = '';
@@ -446,7 +384,7 @@ async function generate(asTemplate = false) {
     const textTemplate = state.kind === 'text' && result.template === true;
     $('#download').download = state.name.replace(/\.(hwpx|txt)$/i, '') + (asTemplate ? '-서식.hwpx' : textTemplate ? '-서식.txt' : '-결과.' + (state.kind === 'text' ? 'txt' : 'hwpx'));
     $('#download-label').textContent = asTemplate ? '서식 HWPX 저장' : textTemplate ? '서식 TXT 저장' : state.kind === 'text' ? 'TXT 저장' : 'HWPX 저장';
-    $('#body-text').value = result.text ?? ''; $('#body-result-panel').hidden = typeof result.text !== 'string';
+    $('#body-text').value = result.text ?? ''; $('#body-result-panel').hidden = true;
     $('#body-result').open = state.kind === 'text';
     $('#output-info').textContent = asTemplate ? '누름틀 ' + result.promoted + '개 생성' : textTemplate ? '서식 반영 · 미연결 ' + result.unresolved + '곳' : result.changed + '개 편집 · ' + result.filled + '곳 채움';
     try {
@@ -463,118 +401,31 @@ async function generate(asTemplate = false) {
     state.output = undefined; disposeResult(); $('#output-info').textContent = ''; status(errorMessage(error), 'error');
   } finally { setBusy(false); }
 }
-function sameParent(a, b) {
-  return a.sectionIndex === b.sectionIndex && a.path.length === b.path.length
-    && a.path.slice(0, -1).every((part, index) => part === b.path[index]);
+function applyEditorChange(start,end,value) {
+  const next=replaceEditorText(state.paragraphs,editorWork(),start,end,value,'b-'+crypto.randomUUID());
+  remember();setWork(next);state.caret={start:start+value.length,end:start+value.length};changed();renderEditor();
+  const input=$('#document-editor');input.focus();input.setSelectionRange(state.caret.start,state.caret.end);captureCaret(false);
 }
-function rangeItems(range) {
-  const a = paragraph(range.from), z = paragraph(range.to);
-  if (!a || !z || !sameParent(a, z) || a.path.at(-1) > z.path.at(-1)) return [];
-  return state.paragraphs.filter((item) => sameParent(a, item)
-    && item.path.at(-1) >= a.path.at(-1) && item.path.at(-1) <= z.path.at(-1));
+function groupSelection() {
+  const caret=state.caret;if(!caret)return;
+  const next=groupEditorSelection(state.paragraphs,editorWork(),caret.start,caret.end,'b-'+crypto.randomUUID());
+  remember();setWork(next);changed();renderEditor();const input=$('#document-editor');input.focus();input.setSelectionRange(caret.start,caret.end);status('블록으로 묶었습니다.');
 }
-function cancelRange() {
-  state.range = undefined; state.rangeEditing = undefined; $('#range-panel').hidden = true;
-  $('#block-text').value = ''; $('#block-alias').value = ''; controls();
+function resetSelection() {
+  const caret=state.caret;if(!caret)return;const chosen=editorSelection(state.layout,caret.start,caret.end);remember();
+  const ids=new Set(chosen.flatMap(u=>state.paragraphs.slice(u.from,u.to+1).map(r=>r.id)));
+  for(const id of ids){state.edits.delete(id);state.headings.delete(id);}state.blocks=state.blocks.filter(b=>!ids.has(b.from));changed();renderEditor();renderOutline();status('선택한 부분을 원본으로 되돌렸습니다.');
 }
-function renderRange() {
-  $('#range-panel').hidden = !state.range;
-  if (!state.range) return;
-  const from = state.paragraphs.findIndex((item) => item.id === state.range.from) + 1;
-  const to = state.paragraphs.findIndex((item) => item.id === state.range.to) + 1;
-  $('#range-info').textContent = state.range.to ? '문단 ' + from + '부터 ' + to + '까지'
-    : '문단 ' + from + '에서 시작 · 끝 문단을 선택해주세요.';
-  $('#range-note').textContent = state.rangeEditing ? '다시 확정하면 이 구간이 바뀝니다.' : '확정한 뒤 적용됩니다.';
-  controls();
+function undo(redo=false) {
+  const from=redo?state.future:state.history,to=redo?state.history:state.future;if(state.busy||!from.length)return;
+  to.push(historyEntry());const previous=from.pop();setWork(previous);state.headings=new Map(previous.headings);state.caret=previous.caret;changed();renderEditor();renderOutline();
+  const input=$('#document-editor');input.focus();if(state.caret)input.setSelectionRange(state.caret.start,state.caret.end);status('');
 }
-function startRange(id) {
-  const item = paragraph(id); if (!editable(item) || item.rangeEditable === false) return;
-  state.range = {from: id}; state.rangeEditing = undefined;
-  $('#block-alias').value = '구간' + (state.blocks.length + 1); $('#block-text').value = '';
-  renderRange(); status('구간의 끝 문단을 선택한 뒤 구간 끝을 누르세요.');
-}
-function endRange(id) {
-  if (!state.range?.from) { status('먼저 구간 시작을 지정해주세요.'); return; }
-  const from = paragraph(state.range.from), to = paragraph(id);
-  if (!to || !from || !sameParent(from, to)) { status('같은 본문 또는 같은 표 칸 안의 문단끼리 선택해주세요.', 'error'); return; }
-  const candidate = {from: from.id, to: to.id}, items = rangeItems(candidate);
-  if (!items.length) { status('끝 문단은 시작 문단보다 뒤에 있어야 합니다.', 'error'); return; }
-  if (items.some((item) => !item.editable || item.rangeEditable === false || (coveredBy(item.id) && coveredBy(item.id).id !== state.rangeEditing))) {
-    status('직접 편집할 수 없는 문단이나 다른 구간이 포함되어 있습니다.', 'error'); return;
-  }
-  state.range = candidate; $('#block-text').value = items.map((item) => textOf(item)).join('\n');
-  renderRange(); $('#block-text').focus(); status('바꿀 글을 확인한 뒤 구간 확정을 눌러주세요.');
-}
-function confirmRange() {
-  if (!state.range?.to || state.busy) return;
-  if (rangeItems(state.range).some((item) => state.edits.has(item.id))) {
-    status('이 구간의 개별 문단 편집을 되돌린 뒤 구간을 확정해주세요.', 'error'); return;
-  }
-  const block = {id: state.rangeEditing ?? 'b-' + crypto.randomUUID(), from: state.range.from, to: state.range.to,
-    text: $('#block-text').value, alias: $('#block-alias').value.trim() || '구간' + (state.blocks.length + 1)};
-  if (state.rangeEditing) state.blocks = state.blocks.map((item) => item.id === state.rangeEditing ? block : item);
-  else state.blocks.push(block);
-  changed(); cancelRange(); renderBlocks();
-  for (const item of state.paragraphs) updateRow(item.id);
-  status('구간을 확정했습니다. 적용하면 바뀐 글이 반영됩니다.');
-}
-function renderBlocks() {
-  const list = $('#blocks'); list.replaceChildren(); list.hidden = state.blocks.length === 0;
-  for (const block of state.blocks) {
-    const chip = document.createElement('div'); chip.className = 'block-chip';
-    const edit = document.createElement('button'); edit.type = 'button'; edit.textContent = block.alias; edit.title = '이 구간의 글 편집';
-    edit.addEventListener('click', () => {
-      if (state.busy) return;
-      state.range = {from: block.from, to: block.to}; state.rangeEditing = block.id;
-      $('#block-alias').value = block.alias; $('#block-text').value = block.text; renderRange(); $('#block-text').focus();
-    });
-    const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = '해제';
-    remove.setAttribute('aria-label', block.alias + ' 구간 해제');
-    remove.addEventListener('click', () => {
-      if (state.busy) return;
-      state.blocks = state.blocks.filter((item) => item.id !== block.id); changed();
-      if (state.rangeEditing === block.id) cancelRange();
-      renderBlocks(); for (const item of state.paragraphs) updateRow(item.id);
-      status('구간 지정을 해제했습니다. 원본 글은 그대로 있습니다.');
-    });
-    chip.append(edit, remove); list.append(chip);
-  }
-}
-function useHeading(id, level) {
-  if (!paragraph(id)) return;
-  state.headings.set(id, level); changed(); updateRow(id); renderOutline(); status('문단을 제목 ' + level + '로 등록했습니다.');
-}
-function replaceSelected(value) {
-  const id = state.chosen, item = paragraph(id), entry = rowElements.get(id);
-  if (!editable(item) || !entry) return;
-  const input = entry.input, prefix = prefixOf(id);
-  const caret = state.caret?.id === id ? state.caret : {start: input.value.length, end: input.value.length};
-  const start = Math.max(prefix.length, caret.start), end = Math.max(start, caret.end);
-  input.setRangeText(value, start, end, 'end');
-  const text = input.value.slice(prefix.length);
-  if (text === item.text) state.edits.delete(id); else state.edits.set(id, text);
-  changed(); updateRow(id); input.focus(); input.setSelectionRange(start + value.length, start + value.length); saveCaret(input, id);
-}
-function insertKey() {
-  const input = $('#key-select'), key = input.value.trim();
-  if (!editable(paragraph(state.chosen))) { status('먼저 바꿀 글이나 문단을 선택해주세요.'); return; }
-  if (!key || !/^[\p{L}\p{N}_-]+(?:\.[\p{L}\p{N}_-]+)*$/u.test(key)) {
-    input.focus(); status('필드 이름을 입력하세요. 글자·숫자·밑줄·하이픈을 사용할 수 있습니다.', 'error'); return;
-  }
-  input.value = key;
-  replaceSelected('{{' + key + '}}');
-  status('데이터 자리를 넣었습니다. 누름틀 서식으로 저장하거나 데이터를 연결해 생성할 수 있습니다.');
-}
-function makeBold() {
-  const id = state.chosen, entry = rowElements.get(id), item = paragraph(id);
-  if (!editable(item) || !entry || state.busy) return;
-  const caret = state.caret?.id === id ? state.caret : undefined;
-  if (!caret || caret.end <= caret.start) { status('굵게 할 글을 먼저 선택해주세요.'); return; }
-  const start = Math.max(prefixOf(id).length, caret.start), selected = entry.input.value.slice(start, caret.end);
-  const replacement = selected.startsWith('**') && selected.endsWith('**') && selected.length > 4
-    ? selected.slice(2, -2) : '**' + selected + '**';
-  replaceSelected(replacement); status('선택한 글의 굵기 표시를 바꿨습니다. 적용하면 반영됩니다.');
-}
+function useHeading(id,level){remember();state.headings.set(id,level);changed();renderEditor();renderOutline();}
+function replaceSelected(value){const c=state.caret??{start:0,end:0};applyEditorChange(c.start,c.end,value);}
+function insertKey(){const key=$('#key-select').value.trim();if(!key||!/^[\p{L}\p{N}_-]+(?:\.[\p{L}\p{N}_-]+)*$/u.test(key)){ $('#key-select').focus();status('공백 없는 필드 이름을 입력하세요.','error');return;} replaceSelected('{{'+key+'}}');}
+function makeBold(){const c=state.caret;if(!c||c.start===c.end)return;const text=state.layout.text.slice(c.start,c.end);replaceSelected(text.startsWith('**')&&text.endsWith('**')?text.slice(2,-2):'**'+text+'**');}
+
 async function copyKey() {
   const key = $('#key-select').value.trim(); if (!key || state.busy) return;
   const text = '{{' + key + '}}', session = state.session, revision = state.revision, ticket = keyCopies.begin();
@@ -592,24 +443,19 @@ async function copyKey() {
   }
 }
 function action(name) {
-  const id = state.chosen, item = paragraph(id); hideMenu();
-  if (name === 'copyKey') { void copyKey(); return; }
-  if (state.busy || !item) return;
-  if (name === 'heading1') useHeading(id, 1);
-  else if (name === 'heading2') useHeading(id, 2);
-  else if (name === 'bold') makeBold();
-  else if (name === 'key') insertKey();
-  else if (name === 'anchor') {
-    if (state.kind === 'text') renderTextDocument('source'); else if (state.sourceDoc) mountDocument(state.sourceDoc, 'source');
-    void showRowInSource(id); status('선택한 문단의 원본 위치를 확인합니다.');
-  }
-  else if (name === 'rangeStart') startRange(id);
-  else if (name === 'rangeEnd') endRange(id);
-  else if (name === 'edit' && editable(item)) {
-    const input = rowElements.get(id).input, caret = state.caret?.id === id ? state.caret : undefined;
-    input.focus(); if (caret) input.setSelectionRange(caret.start, caret.end); status('선택한 문단의 글을 편집하세요.');
-  }
+  hideMenu();if(state.busy)return;
+  try {
+    if(name==='copyKey'){void copyKey();return;}
+    if(name==='copySelection'){const c=state.caret;void navigator.clipboard.writeText(state.comparisonText||(c?state.layout.text.slice(c.start,c.end):'')).then(()=>status('복사했습니다.')).catch(()=>status('브라우저가 복사를 허용하지 않았습니다. Ctrl+C를 사용하세요.','error'));return;}
+    if(name==='importSelection'){replaceSelected(state.comparisonText);return;}
+    if(name==='menuKey'){$('#key-select').value=$('#menu-key').value;insertKey();return;}
+    if(name==='group')groupSelection();else if(name==='reset')resetSelection();else if(name==='bold')makeBold();else if(name==='key')insertKey();
+    else if(name==='heading1'||name==='heading2')useHeading(state.chosen,name==='heading1'?1:2);
+    else if(name==='edit'){$('#document-editor').focus();if(state.caret)$('#document-editor').setSelectionRange(state.caret.start,state.caret.end);}
+    else if(name==='anchor'){if(state.kind==='text')renderTextDocument('source');else if(state.sourceDoc)mountDocument(state.sourceDoc,'source');void showRowInSource(state.chosen);}
+  }catch(error){status(errorMessage(error),'error');}
 }
+
 function showMenu(x, y) {
   if (!state.chosen) return;
   controls(); const menu = $('#context-menu'); menu.hidden = false; menu.style.left = '0px'; menu.style.top = '0px';
@@ -663,8 +509,8 @@ $('#save-work').addEventListener('click', saveWork);
 $('#generate').addEventListener('click', () => generate());
 $('#make-template').addEventListener('click', () => generate(true));
 $('#cancel-selection').addEventListener('click', clearSelection);
-$('#cancel-range').addEventListener('click', cancelRange);
-$('#confirm-block').addEventListener('click', confirmRange);
+$('#undo').addEventListener('click',()=>undo());
+$('#redo').addEventListener('click',()=>undo(true));
 $('#key-select').addEventListener('input', () => { $('#copy-fallback').hidden = true; controls(); });
 $('#key-select').addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); insertKey(); } });
 $('#record-select').addEventListener('change', () => {
@@ -692,11 +538,13 @@ document.addEventListener('pointerdown', (event) => {
   if (!(event.target instanceof Element) || !event.target.closest('details.menu')) closeMenus();
 });
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') { hideMenu(); closeMenus(); if (state.range) cancelRange(); else clearSelection(); }
+  if (event.key === 'Escape') { hideMenu(); closeMenus(); clearSelection(); }
   if (event.ctrlKey || event.metaKey) {
     if (event.key.toLowerCase() === 's') { event.preventDefault(); void saveWork(); }
     else if (event.key === 'Enter') { event.preventDefault(); void generate(); }
-    else if (event.key.toLowerCase() === 'b' && document.activeElement?.classList.contains('paragraph-text')) { event.preventDefault(); makeBold(); }
+    else if (event.key.toLowerCase() === 'b' && document.activeElement?.id==='document-editor') { event.preventDefault(); makeBold(); }
+    else if (event.key.toLowerCase()==='z' && document.activeElement?.id==='document-editor') {event.preventDefault();undo(event.shiftKey);}
+    else if (event.key.toLowerCase()==='g' && document.activeElement?.id==='document-editor') {event.preventDefault();action('group');}
     else if (event.key.toLowerCase() === 'o') { event.preventDefault(); if (!state.busy) $('#document-file').click(); }
   }
   const menu = $('#context-menu');
@@ -714,7 +562,7 @@ $('#page-scroll').addEventListener('drop', (event) => {
 });
 window.addEventListener('resize', () => {
   cancelAnimationFrame(resizeFrame);
-  resizeFrame = requestAnimationFrame(() => { for (const entry of rowElements.values()) autosize(entry.input); }); hideMenu();
+  resizeFrame = requestAnimationFrame(() => { renderEditor();renderViewerNumbers(); }); hideMenu();
 });
 window.addEventListener('pagehide', () => {
   opens.cancel(); picks.cancel(); views.cancel(); dataLoads.cancel(); keyCopies.cancel(); bodyCopies.cancel();
@@ -734,43 +582,45 @@ function applyScale() {
     const text = $('#pages').querySelector('.text-document');
     if (text) text.style.fontSize = 14 * Number($('#scale').value) + 'px';
   } else state.view?.setScale(Number($('#scale').value));
+  renderViewerNumbers();
 }
 function renderTextDocument(mode) {
-  state.view?.destroy(); state.view = undefined; state.viewMode = mode;
-  const container = $('#pages'); container.classList.remove('page-view'); container.replaceChildren();
-  const source = document.createElement('pre'); source.className = 'text-document';
-  if (mode === 'result') source.textContent = state.output?.text ?? '';
-  else {
-    const parts = state.sourceText.split(/(\r\n|\r|\n)/);
-    for (let index = 0; index < parts.length; index += 2) {
-      const row = state.paragraphs[index / 2], span = document.createElement('span'); span.className = 'text-line';
-      if (row) span.dataset.sourceId = row.id;
-      span.textContent = parts[index] + (parts[index + 1] ?? ''); source.append(span);
-    }
-  }
-  container.append(source); applyScale(); highlightTextRow(state.chosen);
-  $('#original-title').textContent = mode === 'source' ? '원본 문서' : '생성 결과';
-  $('#source-view').setAttribute('aria-pressed', String(mode === 'source'));
-  $('#result-view').setAttribute('aria-pressed', String(mode === 'result')); controls();
+  state.view?.destroy();state.view=undefined;state.viewMode=mode;
+  const container=$('#pages');container.classList.remove('page-view');container.replaceChildren();
+  const sheet=document.createElement('div');sheet.className='text-document';
+  const lines=mode==='comparison'?state.comparison.paragraphs.map(p=>p.text):mode==='result'?(state.output?.text??'').split(/\r\n|\r|\n/):state.paragraphs.map(r=>r.text);
+  lines.forEach((text,index)=>{const line=document.createElement('div');line.className='text-line';
+    if(mode==='source')line.dataset.sourceId=state.paragraphs[index].id;
+    if(mode==='comparison')line.dataset.comparison=String(index);
+    const number=document.createElement('span');number.className='source-number';number.textContent=String(index+1);number.setAttribute('aria-hidden','true');
+    const content=document.createElement('span');content.className='source-text';content.textContent=text||'\u200b';line.append(number,content);sheet.append(line);
+  });
+  container.append(sheet);applyScale();highlightTextRow(state.chosen);
+  $('#original-title').textContent=mode==='comparison'?'비교 · '+state.comparison.name:mode==='source'?'원본':'결과';
+  for(const [id,value] of [['source-view','source'],['result-view','result'],['comparison-view','comparison']])$('#'+id).setAttribute('aria-pressed',String(mode===value));controls();
 }
-function highlightTextRow(id, scroll = false) {
-  if (state.kind !== 'text' || state.viewMode !== 'source') return;
-  for (const line of $('#pages').querySelectorAll('[data-source-id]')) {
-    line.classList.toggle('selected', line.dataset.sourceId === id);
-    if (scroll && line.dataset.sourceId === id) line.scrollIntoView({block: 'nearest'});
+function highlightTextRow(id,scroll=false) {
+  if(state.kind!=='text'||state.viewMode!=='source')return;
+  const c=state.caret,selected=c?editorSelection(state.layout,c.start,c.end).flatMap(u=>state.paragraphs.slice(u.from,u.to+1).map(r=>r.id)):[];
+  for(const line of $('#pages').querySelectorAll('[data-source-id]')){
+    line.classList.toggle('selected',selected.length?selected.includes(line.dataset.sourceId):line.dataset.sourceId===id);
+    if(scroll&&line.dataset.sourceId===id)line.scrollIntoView({block:'nearest'});
   }
 }
-async function selectTextSource(id, context) {
-  if (state.busy || state.kind !== 'text' || state.viewMode !== 'source') return false;
-  const ticket = picks.begin(), session = state.session;
-  try {
-    const result = await api('select', {session, id});
-    if (!picks.current(ticket) || session !== state.session || (context !== undefined && context !== contextRequest)) return false;
-    if (!result.id || result.location.precision === 'none') { clearSelection(); return false; }
-    selectRow(result.id, {fromPick: true}); return true;
-  } catch (error) {
-    if (picks.current(ticket) && session === state.session) { clearSelection(); status(errorMessage(error), 'error'); }
-    return false;
+function renderViewerNumbers(){
+  for(const old of $('#pages').querySelectorAll('.viewer-number'))old.remove();
+  if(state.kind==='text'||state.viewMode!=='source'||!state.sourceDoc)return;
+  const scale=Number($('#scale').value);
+  if(!Number.isFinite(scale)||scale<=0)return;
+  for(const page of $('#pages').querySelectorAll('.page')){
+    const index=Number(page.dataset.page),info=state.sourceDoc.pageInfo(index);
+    const runs=state.sourceDoc.pageLayout(index).runs.filter(run=>Number.isFinite(run.x)&&Number.isFinite(run.y)&&Number.isFinite(run.w)&&Number.isFinite(run.h)
+      &&run.x>=0&&run.y>=0&&run.x<info.width&&run.y<info.height&&run.w>0&&run.h>0&&run.text.replaceAll('\uFFFC','').trim());
+    state.paragraphs.forEach((row,i)=>{if(!row.position)return;const run=runs.find(r=>{const p=runPosition(r);return p&&sameParagraph(row.position,p);});if(!run)return;
+      const badge=document.createElement('button');badge.type='button';badge.className='viewer-number';badge.textContent=String(i+1);badge.title='원본 '+(i+1);badge.style.left=Math.max(1,run.x*scale-29)+'px';badge.style.top=Math.max(0,run.y*scale)+'px';
+      badge.addEventListener('mousedown',e=>e.stopPropagation());
+      badge.addEventListener('click',e=>{e.stopPropagation();selectRow(row.id,{focus:true});});page.append(badge);
+    });
   }
 }
 async function copyBody() {
@@ -790,13 +640,37 @@ async function copyBody() {
   }
 }
 $('#copy-body').addEventListener('click', copyBody);
-$('#pages').addEventListener('click', (event) => {
-  const line = event.target instanceof Element ? event.target.closest('[data-source-id]') : null;
-  if (line) void selectTextSource(line.dataset.sourceId);
+
+const editor=$('#document-editor');
+function typed(){
+  if(state.busy||editor.value===state.layout.text)return;
+  const caret={start:editor.selectionStart,end:editor.selectionEnd},diff=editorChange(state.layout.text,editor.value);
+  try{const next=replaceEditorText(state.paragraphs,editorWork(),diff.start,diff.end,diff.value,'b-'+crypto.randomUUID());remember();setWork(next);state.caret=caret;changed();renderEditor();editor.setSelectionRange(caret.start,caret.end);captureCaret(false);status('');}
+  catch(error){renderEditor();const c=state.caret; if(c)editor.setSelectionRange(c.start,c.end);status(errorMessage(error),'error');}
+}
+editor.addEventListener('input',event=>{if(!event.isComposing)typed();});editor.addEventListener('compositionend',typed);
+for(const type of ['mouseup','keyup','select'])editor.addEventListener(type,()=>captureCaret());
+editor.addEventListener('contextmenu',event=>{event.preventDefault();captureCaret();state.comparisonText='';$('#menu-key').value=$('#key-select').value;showMenu(event.clientX,event.clientY);});
+$('#menu-key').addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();action('menuKey');}});
+new ResizeObserver(()=>{if(state.session)renderEditor();}).observe($('#editor-scroll'));
+new MutationObserver(records=>{if(records.some(r=>[...r.addedNodes].some(n=>n instanceof Element&&(n.classList.contains('page')||n.classList.contains('page-img')))))renderViewerNumbers();}).observe($('#pages'),{childList:true,subtree:true});
+function sourceSelection(){
+  const selection=window.getSelection();if(!selection||selection.isCollapsed||!selection.anchorNode||!selection.focusNode)return false;
+  const line=node=>(node.nodeType===1?node:node.parentElement)?.closest('[data-source-id]');const from=line(selection.anchorNode),to=line(selection.focusNode);
+  if(!from||!to)return false;
+  const x=state.layout.units.find(u=>state.paragraphs.slice(u.from,u.to+1).some(r=>r.id===from.dataset.sourceId)),y=state.layout.units.find(u=>state.paragraphs.slice(u.from,u.to+1).some(r=>r.id===to.dataset.sourceId));if(!x||!y)return false;
+  const first=x.start<=y.start?x:y,last=x.start<=y.start?y:x;state.chosen=first.id;state.caret={start:first.start,end:last.end};editor.setSelectionRange(first.start,last.end);markEditorSelection();highlightTextRow(first.id);controls();return true;
+}
+$('#pages').addEventListener('mouseup',()=>{if(state.viewMode==='source'&&state.kind==='text')sourceSelection();});
+$('#pages').addEventListener('click',event=>{const line=event.target instanceof Element?event.target.closest('[data-source-id]'):null;if(line&&!sourceSelection())selectRow(line.dataset.sourceId,{fromPick:true});});
+$('#pages').addEventListener('contextmenu',event=>{
+  if(state.viewMode==='comparison'){event.preventDefault();state.comparisonText=window.getSelection()?.toString()||event.target.closest('.text-line')?.querySelector('.source-text')?.textContent||'';showMenu(event.clientX,event.clientY);return;}
+  const line=event.target instanceof Element?event.target.closest('[data-source-id]'):null;if(!line)return;event.preventDefault();if(!sourceSelection())selectRow(line.dataset.sourceId,{fromPick:true});state.comparisonText='';$('#menu-key').value=$('#key-select').value;showMenu(event.clientX,event.clientY);
 });
-$('#pages').addEventListener('contextmenu', async (event) => {
-  const line = event.target instanceof Element ? event.target.closest('[data-source-id]') : null;
-  if (!line) return;
-  event.preventDefault(); clearSelection(); const ticket = ++contextRequest;
-  if (await selectTextSource(line.dataset.sourceId, ticket)) showMenu(event.clientX, event.clientY);
+$('#open-comparison').addEventListener('click',()=>$('#compare-file').click());
+$('#comparison-view').addEventListener('click',()=>{if(state.comparison)renderTextDocument('comparison');else $('#compare-file').click();});
+$('#compare-file').addEventListener('change',async event=>{
+  const file=event.target.files[0];event.target.value='';if(!file||state.busy)return;const session=state.session;setBusy(true,'비교 문서 여는 중');
+  try{const result=await api('open',{name:file.name,content:base64(new Uint8Array(await file.arrayBuffer()))});if(session!==state.session)return;state.comparison={name:result.name,paragraphs:result.paragraphs};renderTextDocument('comparison');status('');}
+  catch(error){status(errorMessage(error),'error');}finally{setBusy(false);}
 });

@@ -6,6 +6,7 @@ import {
   verifyPreservation, walkParagraphs, type CompileTarget, type Dataset, type HwpxDocument,
 } from '@hwpx-studio/engine';
 import { HostError, isObj, locate, markOf, resolveDrafts } from '../../../packages/viewer/src/host/index.ts';
+import { toRhwpPosition, type RhwpPosition } from '../../../packages/viewer/src/map/index.ts';
 import { parseCsv } from './core.ts';
 import { analyzePlaces, listKeys, parseQuickData, type QuickData } from './quick.ts';
 
@@ -15,7 +16,7 @@ const schema = 'hwpx-studio/lite-workspace@1';
 const hash = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 const fail = (code: string, message: string): never => { throw new HostError(400, code, message); };
 function need(ok: unknown, code = 'WORKBENCH_INPUT'): asserts ok { if (!ok) fail(code, '입력과 원본 위치를 다시 확인하세요.'); }
-type Row = { id: string; sectionIndex: number; path: number[]; text: string; editable: boolean; rangeEditable: boolean; reason?: string };
+type Row = { id: string; sectionIndex: number; path: number[]; text: string; editable: boolean; rangeEditable: boolean; reason?: string; position?: RhwpPosition };
 type Edit = { id: string; text: string };
 type Heading = { id: string; level: 1 | 2 };
 type Block = { id: string; from: string; to: string; text: string; alias: string };
@@ -35,8 +36,9 @@ function rowsOf(doc: HwpxDocument): Row[] {
     const draft = drafts.find(d => d.kind === (length ? 'word' : 'line'));
     const reason = p.fieldMarks.length || p.objects.length || p.subLists.length || p.bookmarks.length
       ? 'WORKBENCH_STRUCTURE_READONLY' : draft?.blocked ?? (draft === undefined || !p.runs.length ? 'WORKBENCH_FORMAT_READONLY' : undefined);
+    const position = toRhwpPosition(doc, { sectionIndex: s.index, path: p.path, offset: 0 });
     rows.push({ id: rowId(s.index, p.path), sectionIndex: s.index, path: [...p.path], text: p.logicalText,
-      editable: reason === undefined || reason === 'FILL_MIXED_FORMAT', rangeEditable: reason === undefined, ...(reason ? { reason } : {}) });
+      editable: reason === undefined || reason === 'FILL_MIXED_FORMAT', rangeEditable: reason === undefined, ...(reason ? { reason } : {}), ...(position ? { position } : {}) });
   }
   return rows;
 }
