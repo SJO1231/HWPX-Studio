@@ -10,6 +10,9 @@ const field = (blocked?: string) => ({ anchor: { kind: "field", name: "이름", 
 const word = (blocked?: string) => ({ anchor: { kind: "word", at, start: 0, end: 1, print } as unknown as AnchorDraftJson, ...(blocked === undefined ? {} : { blocked }) });
 const line = (blocked?: string) => ({ anchor: { kind: "line", at, print } as unknown as AnchorDraftJson, ...(blocked === undefined ? {} : { blocked }) });
 const cell = (blocked?: string) => ({ anchor: { kind: "cell", table: { sectionIndex: 0, ordinal: 0 }, row: 0, col: 0 } as AnchorDraftJson, ...(blocked === undefined ? {} : { blocked }) });
+const span = { at: { sectionIndex: 0, parentPath: [] }, print: { first: { text: "글", sha256: "x" }, last: { text: "끝", sha256: "y" }, count: 3, sha256: "z" } };
+const range = (blocked?: string) => ({ anchor: { kind: "range", ...span, from: 1, to: 3 } as unknown as AnchorDraftJson, ...(blocked === undefined ? {} : { blocked }) });
+const headingRange = () => ({ anchor: { kind: "headingRange", ...span, index: 1, marker: { form: "digitDot", level: 1 }, heading: { text: "글", sha256: "x" } } as unknown as AnchorDraftJson });
 
 test("기본 선택: 누름틀·낱말·셀 초안이 있으면 막히지 않은 첫 것을 고른다", () => {
   assert.equal(defaultDraftIndex([word(), line()]), 0);
@@ -30,4 +33,11 @@ test("기본 선택: 문단 초안은 그것이 유일한 초안일 때(빈 곳�
   assert.equal(defaultDraftIndex([line("FILL_HAS_OBJECT")]), undefined);
   assert.equal(defaultDraftIndex([line(), cell()]), 1, "문단 정밀도의 표 칸: 문단과 셀이 있으면 셀이다");
   assert.equal(defaultDraftIndex([]), undefined);
+});
+
+test("기본 선택: 여러 문단 끌기의 범위(range) 초안이 막히지 않았으면 순서와 상관없이 그것이다. 막혔으면 기존 규칙", () => {
+  assert.equal(defaultDraftIndex([range(), headingRange()]), 0);
+  assert.equal(defaultDraftIndex([headingRange(), range()]), 1, "제목 범위가 앞에 있어도 범위");
+  assert.equal(defaultDraftIndex([line(), word(), range()]), 2);
+  assert.equal(defaultDraftIndex([range("FILL_HAS_OBJECT"), headingRange()]), 1);
 });
