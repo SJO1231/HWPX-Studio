@@ -1,0 +1,25 @@
+{
+  "schema": "hwpx-studio/case@1",
+  "template": {
+    "id": "t0e5a0001",
+    "version": 1,
+    "sha256": "bed0b1eadcfb416487ef10ed02ea20f8b96e74855346b10306759d7b9fab27c3"
+  },
+  "record": {
+    "dataset": "d0e5a0001",
+    "version": 1,
+    "row": 0,
+    "sha256": "c975ee30bbbdfc9cc0fbf7b037b59a2bdfa5c914fbe36f39e4704eb1694ca076"
+  },
+  "selections": {
+    "s2": {
+      "block": "b4",
+      "basis": "manual",
+      "content": "af8938d69c0fa52471532c30eea7943124c1cc777b209469a7c12219c2032b60"
+    }
+  },
+  "valueEdits": {
+    "v3": "2026. 11. 2.(월) 10:00 ~ 11. 9.(월) 18:00 (기간 연장)"
+  },
+  "blockEdits": {}
+}

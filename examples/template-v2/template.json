@@ -1,0 +1,239 @@
+{
+  "schema": "hwpx-studio/template@2",
+  "id": "t0e5a0001",
+  "version": 1,
+  "meta": {
+    "name": "입찰 공고 예시"
+  },
+  "source": {
+    "kind": "hwpx",
+    "sha256": "17e46e2f271f04b643641f66e411fd2fe679c5b7749ac22b469e15063f72590d"
+  },
+  "anchors": [
+    {
+      "id": "a1",
+      "kind": "headingRange",
+      "at": {
+        "sectionIndex": 0,
+        "parentPath": []
+      },
+      "index": 8,
+      "marker": {
+        "form": "digitDot",
+        "level": 1
+      },
+      "heading": {
+        "text": "3. 참가 자격",
+        "sha256": "65bf171d9c4d4483704b17f199320bf26da68764cafdfb427170b35f3a5ce61a"
+      },
+      "print": {
+        "first": {
+          "text": "3. 참가 자격",
+          "sha256": "65bf171d9c4d4483704b17f199320bf26da68764cafdfb427170b35f3a5ce61a"
+        },
+        "last": {
+          "text": "나. 최근 3년 안에 비슷한 사업을 수행한 실적이 있는 업체",
+          "sha256": "064ab5d8e65e24306a655a81f10cade370fb67acd4d43c632fea4fa5ddee212a"
+        },
+        "count": 3,
+        "sha256": "2f360c2cfd10411b5952a9df18a15ab8642294bf3d75164f6f020931f3e44627"
+      }
+    },
+    {
+      "id": "a2",
+      "kind": "range",
+      "at": {
+        "sectionIndex": 0,
+        "parentPath": []
+      },
+      "from": 12,
+      "to": 13,
+      "print": {
+        "first": {
+          "text": "입찰 참가 신청서 1부",
+          "sha256": "4900b4fce2d5c506d7d8a7234d690a3f72267cbd532475042644d87bf0c17c6b"
+        },
+        "last": {
+          "text": "사업자등록증 사본 1부",
+          "sha256": "f7585a2a987086ef3ec2776a1b3a6b02b6d5c08a7ba11dab7eaa646060bd71c1"
+        },
+        "count": 2,
+        "sha256": "4dbe1a2bb2481bd543057f94f0cf821e15a9a92c4e2bdefdcd0db6a1fb90af41"
+      }
+    }
+  ],
+  "values": [
+    {
+      "id": "v1",
+      "name": "사업명",
+      "format": "text"
+    },
+    {
+      "id": "v2",
+      "name": "추정가격",
+      "format": "money"
+    },
+    {
+      "id": "v3",
+      "name": "접수기간",
+      "format": "text"
+    },
+    {
+      "id": "v4",
+      "name": "담당자",
+      "format": "text"
+    },
+    {
+      "id": "v5",
+      "name": "연락처",
+      "format": "text"
+    },
+    {
+      "id": "v6",
+      "name": "추가안내",
+      "format": "text"
+    }
+  ],
+  "bindings": [
+    {
+      "value": "v1",
+      "key": "사업명"
+    },
+    {
+      "value": "v2",
+      "key": "추정 가격(원)",
+      "aliases": [
+        "추정가격"
+      ]
+    },
+    {
+      "value": "v3",
+      "key": "접수 기간"
+    },
+    {
+      "value": "v4",
+      "key": "담당자"
+    },
+    {
+      "value": "v5",
+      "key": "연락처"
+    },
+    {
+      "value": "v6",
+      "key": "추가 안내"
+    }
+  ],
+  "places": [
+    {
+      "id": "p1",
+      "kind": "placeholder",
+      "key": "사업명",
+      "value": "v1"
+    },
+    {
+      "id": "p2",
+      "kind": "placeholder",
+      "key": "추정가격",
+      "value": "v2"
+    },
+    {
+      "id": "p3",
+      "kind": "placeholder",
+      "key": "접수기간",
+      "value": "v3"
+    },
+    {
+      "id": "p4",
+      "kind": "placeholder",
+      "key": "담당자",
+      "value": "v4"
+    },
+    {
+      "id": "p5",
+      "kind": "placeholder",
+      "key": "연락처",
+      "value": "v5"
+    },
+    {
+      "id": "p6",
+      "kind": "placeholder",
+      "key": "추가안내",
+      "value": "v6"
+    }
+  ],
+  "slots": [
+    {
+      "id": "s1",
+      "name": "참가 자격",
+      "anchors": [
+        "a1"
+      ],
+      "parent": null
+    },
+    {
+      "id": "s2",
+      "name": "제출 서류",
+      "anchors": [
+        "a2"
+      ],
+      "parent": null
+    }
+  ],
+  "blocks": [
+    {
+      "id": "b1",
+      "slot": "s1",
+      "name": "1억 원 이상",
+      "content": {
+        "text": "3. 참가 자격\n가. 입찰 공고일 현재 관련 법령에 따라 업종을 등록한 업체\n나. 추정가격이 1억 원 이상이므로, 최근 3년 안에 한 건에 5천만 원 이상인 비슷한 사업을 수행한 실적이 있는 업체"
+      },
+      "when": {
+        "path": "v2",
+        "op": "ge",
+        "value": 100000000
+      }
+    },
+    {
+      "id": "b2",
+      "slot": "s1",
+      "name": "1억 원 미만(조건 없음)",
+      "content": {
+        "text": "3. 참가 자격\n가. 입찰 공고일 현재 관련 법령에 따라 업종을 등록한 업체\n나. 추정가격이 1억 원 미만이므로 실적 제한 없이 {{사업명}}에 참가할 수 있습니다."
+      }
+    },
+    {
+      "id": "b3",
+      "slot": "s1",
+      "name": "10억 원 이상 공동 수급(표가 든 조각)",
+      "content": {
+        "fragment": "38e4f9b02a816cb49c35db107da07442040cbc0a9bba72e8fb4d08c96bd081ce"
+      },
+      "when": {
+        "path": "v2",
+        "op": "ge",
+        "value": 1000000000
+      },
+      "priority": 10
+    },
+    {
+      "id": "b4",
+      "slot": "s2",
+      "name": "기본 서류",
+      "content": {
+        "text": "입찰 참가 신청서 1부\n사업자등록증 사본 1부\n법인 인감증명서 1부"
+      }
+    },
+    {
+      "id": "b5",
+      "slot": "s2",
+      "name": "공동 수급 서류",
+      "content": {
+        "text": "입찰 참가 신청서 1부\n공동 수급 협정서 1부\n구성원별 사업자등록증 사본 각 1부"
+      }
+    }
+  ],
+  "options": {
+    "missing": "error",
+    "unregistered": "error"
+  }
+}
