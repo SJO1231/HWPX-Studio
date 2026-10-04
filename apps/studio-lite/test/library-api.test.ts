@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { test } from 'node:test';
-import { type StudioTemplate } from '@hwpx-studio/engine';
+import { canonicalStudioJson, templateSha256, type StudioTemplate } from '@hwpx-studio/engine';
 import { createApp } from '../src/server.ts';
 import { demo } from '../src/demo.ts';
 
@@ -74,4 +74,34 @@ test('보관함 HTTP: 다른 출처와 잘못된 입력/경로를 거부하고 �
     assert.equal((await post(host.base,'save',null)).status,400);assert.equal((await post(host.base,'unknown',{})).status,404);
     assert.deepEqual(await (await get(host.base,'templates')).json(),[]);assert.deepEqual(await (await get(host.base,'datasets')).json(),[]);
   }finally{await host.close();}
+});
+
+test('보관함 HTTP: 이번 건 진행본·행 해시·별도 정정을 복원하고 실제 Markdown을 생성한다',async()=>{
+  const directory=mkdtempSync(join(resolve(tmpdir()),'hwpx-library-case-http-'));let host:Awaited<ReturnType<typeof serve>>|undefined;
+  try{
+    const database=join(directory,'synthetic.sqlite');host=await serve(database);
+    assert.equal((await post(host.base,'save',payload())).status,200);
+    const row={zero:0,flag:false,identifier:'000123','flat.key':'평면 값',nested:{value:'중첩 값'},'𐀀':'보조 키','\uE000':'범위 키'};
+    const raw=JSON.stringify([row]),data=await (await post(host.base,'data',{name:'합성 이번 건 데이터',content:raw})).json() as any;
+    const c={schema:'hwpx-studio/case@1',template:{id:template.id,version:1,sha256:templateSha256(template)},record:{dataset:data.id,version:1,row:0,sha256:createHash('sha256').update(canonicalStudioJson(row)).digest('hex')},selections:{},valueEdits:{v1:'합성 정정 값'},blockEdits:{}};
+    const saved=await post(host.base,'case',{document:JSON.stringify(c)});assert.equal(saved.status,200);const item=await saved.json() as any;assert.equal(item.revision,1);
+    const query='preview?'+at(template.id)+'&dataset='+data.id+'&dataVersion=1&row=0&case='+item.id;
+    const preview=await (await get(host.base,query)).json() as any;assert.equal(preview.values[0].state,'edited');assert.equal(preview.values[0].text,'합성 정정 값');
+    const request={id:template.id,version:1,dataset:data.id,dataVersion:1,row:0,case:item.id};
+    const made=await post(host.base,'generate',request);assert.equal(made.status,200);assert.match(made.headers.get('content-type')!,/^text\/markdown/);const output=Buffer.from(await made.arrayBuffer());assert.equal(output.toString(),'합성 정정 값 false 000123 평면 값 중첩 값\n合成本文');
+    const generationId=made.headers.get('X-Generation-Id');assert(generationId);
+    const snapshot=await (await get(host.base,'generation?id='+generationId)).json() as any;
+    assert.equal(snapshot.caseRevision,1);assert.deepEqual(JSON.parse(snapshot.caseDocument),c);assert.equal(snapshot.ledger,null);
+    assert.deepEqual(Buffer.from(await (await get(host.base,'generation?id='+generationId+'&output=1')).arrayBuffer()),output);
+    const invalid=await post(host.base,'case',{document:JSON.stringify({...c,record:{...c.record,sha256:'0'.repeat(64)}})});assert.equal(invalid.status,400);assert.equal((await invalid.json() as any).code,'LIBRARY_INPUT');assert.equal((await (await get(host.base,'cases')).json() as any[]).length,1);
+    const updated=await post(host.base,'case',{document:JSON.stringify(c),id:item.id});assert.equal(updated.status,200);assert.equal((await updated.json() as any).revision,2);
+    await host.close();host=undefined;host=await serve(database);
+    const restored=await (await get(host.base,'case?id='+item.id)).json() as any;assert.equal(restored.revision,2);assert.deepEqual(restored.case,c);
+    assert.deepEqual(await (await get(host.base,query)).json(),preview);
+    assert.deepEqual(await (await get(host.base,'generation?id='+generationId)).json(),snapshot);
+    assert.deepEqual(Buffer.from(await (await get(host.base,'generation?id='+generationId+'&output=1')).arrayBuffer()),output);
+    const regenerated=await post(host.base,'generate',request);assert.equal(regenerated.status,200);assert.deepEqual(Buffer.from(await regenerated.arrayBuffer()),output);
+    assert.equal((await (await get(host.base,'dataset?'+at(data.id))).json() as any).document,raw);assert.deepEqual(Buffer.from(await (await get(host.base,'source?'+at(template.id))).arrayBuffer()),source);
+    const noData=await post(host.base,'generate',{...request,dataset:'missing'});assert.equal(noData.status,404);assert.match(noData.headers.get('content-type')!,/^application\/json/);
+  }finally{await host?.close();assert.equal(dirname(directory),resolve(tmpdir()));rmSync(directory,{recursive:true,force:true});}
 });

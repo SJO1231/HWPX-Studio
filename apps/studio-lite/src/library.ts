@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import { readBlockProto, writeBlockProto, readStudioTemplate, writeStudioTemplate, templateSha256, contentSha256, parseFragment, openPackage, parseDocument, readDataset, readBatchRecords, bindValues, selectSlots, type BlockContent, type StudioTemplate, type BlockProto, type BatchRecord } from '@hwpx-studio/engine';
+import { readCase, writeCase, caseSha256, canonicalStudioJson, generateFromTemplate, readBlockProto, writeBlockProto, readStudioTemplate, writeStudioTemplate, templateSha256, contentSha256, parseFragment, openPackage, parseDocument, readDataset, readBatchRecords, bindValues, selectSlots, type BlockContent, type StudioTemplate, type BlockProto, type BatchRecord, type StudioCase } from '@hwpx-studio/engine';
 import { HostError } from '../../../packages/viewer/src/host/index.ts';
 
 const hash=(bytes:Uint8Array)=>createHash('sha256').update(bytes).digest('hex');
@@ -11,6 +11,8 @@ const text=(v:unknown):string=>{input(typeof v==='string','파일 내용을 확�
 /** Immutable contract revisions. Legacy project_revision is neither read nor written here. */
 export function createLibrary(db:DatabaseSync) {
   db.exec(`
+    CREATE TABLE IF NOT EXISTS studio_generation (id INTEGER PRIMARY KEY, document TEXT NOT NULL, sha TEXT NOT NULL, output BLOB NOT NULL);
+    CREATE TABLE IF NOT EXISTS studio_case (id INTEGER PRIMARY KEY, revision INTEGER NOT NULL, document TEXT NOT NULL, sha TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS studio_blob (sha TEXT PRIMARY KEY, bytes BLOB NOT NULL);
     CREATE TABLE IF NOT EXISTS studio_proto (id TEXT NOT NULL, version INTEGER NOT NULL, document TEXT NOT NULL, PRIMARY KEY(id,version));
     CREATE TABLE IF NOT EXISTS studio_template (id TEXT NOT NULL, version INTEGER NOT NULL, name TEXT NOT NULL, document TEXT NOT NULL, sha TEXT NOT NULL, PRIMARY KEY(id,version));
@@ -82,7 +84,84 @@ export function createLibrary(db:DatabaseSync) {
     if(table==='studio_proto')db.prepare('INSERT INTO studio_proto VALUES(?,?,?)').run(id,version,document);
     else db.prepare('INSERT INTO studio_template VALUES(?,?,?,?,?)').run(id,version,name!,document,sha!);
   };
+  const importBlobs=(rawBlobs:unknown):void=>{
+    input(Array.isArray(rawBlobs),'원본 파일 목록을 확인하세요.');
+    for(const raw of rawBlobs as unknown[]) {
+      const encoded=text(raw),bytes=Buffer.from(encoded,'base64');
+      input(bytes.toString('base64')===encoded,'원본 파일 인코딩을 확인하세요.');
+      const sha=hash(bytes),old=db.prepare('SELECT bytes FROM studio_blob WHERE sha=?').get(sha);
+      if(old)input(Buffer.from(old.bytes as Uint8Array).equals(bytes),'같은 해시의 원본 바이트가 다릅니다.');
+      else db.prepare('INSERT INTO studio_blob VALUES(?,?)').run(sha,bytes);
+    }
+  };
+  const rowOf=(dataId:string,version:number,row:number):Record<string,unknown>=>{
+    const d=dataset(dataId,version);
+    input(Number.isInteger(row)&&row>=0&&row<d.records.length,'확인할 데이터 행을 선택하세요.');
+    const record=d.records[row]!;
+    if('error' in record)throw new HostError(400,record.error.code,record.error.message);
+    return record.dataset.data;
+  };
+  const checkedCase=(document:string):StudioCase=>{
+    let raw:unknown;try{raw=JSON.parse(document);}catch{throw new HostError(400,'LIBRARY_INPUT','이번 건 JSON을 확인하세요.');}
+    const reference=(raw as any)?.template;
+    const t=template(text(reference?.id),Number(reference?.version));
+    const c=readCase(document,t),record=rowOf(c.record.dataset,c.record.version,c.record.row);
+    input(hash(new TextEncoder().encode(canonicalStudioJson(record)))===c.record.sha256,'이번 건이 참조하는 원본 행의 해시가 맞지 않습니다.');
+    for(const edit of Object.values(c.blockEdits))content(edit);
+    return c;
+  };
+  const savedCase=(id:number)=>{
+    input(Number.isInteger(id)&&id>0,'저장한 이번 건을 선택하세요.');
+    const row=db.prepare('SELECT * FROM studio_case WHERE id=?').get(id);missing(row,'저장한 이번 건이 없습니다.');
+    const c=checkedCase(row!.document as string);input(caseSha256(c)===row!.sha,'보관된 이번 건의 해시가 맞지 않습니다.');
+    return {id,revision:Number(row!.revision),document:row!.document as string,sha:row!.sha as string,case:c};
+  };
+  const appliedCase=(t:StudioTemplate,dataId:string,dataVersion:number,row:number,id?:number)=>{
+    if(id===undefined)return;
+    const c=savedCase(id).case;
+    input(c.record.dataset===dataId&&c.record.version===dataVersion&&c.record.row===row,'이번 건에 저장한 데이터 판과 행을 선택하세요.');
+    return readCase(writeCase(c),t);
+  };
+  const generation=(id:number)=>{
+    input(Number.isInteger(id)&&id>0,'생성 기록을 선택하세요.');
+    const row=db.prepare('SELECT * FROM studio_generation WHERE id=?').get(id);missing(row,'생성 기록이 없습니다.');
+    const document=row!.document as string,output=row!.output as Uint8Array;
+    input(hash(new TextEncoder().encode(document))===row!.sha,'생성 기록의 해시가 맞지 않습니다.');
+    const saved=JSON.parse(document);
+    input(hash(output)===saved.outputSha,'생성 출력의 해시가 맞지 않습니다.');
+    return {id,...saved,output};
+  };
   return {
+    generations:()=>db.prepare("SELECT id,json_extract(document,'$.template') AS template,json_extract(document,'$.templateVersion') AS templateVersion,json_extract(document,'$.dataset') AS dataset,json_extract(document,'$.dataVersion') AS dataVersion,json_extract(document,'$.row') AS row,json_extract(document,'$.caseId') AS caseId,json_extract(document,'$.caseRevision') AS caseRevision,json_extract(document,'$.kind') AS kind,json_extract(document,'$.outputSha') AS outputSha FROM studio_generation ORDER BY id DESC").all(),
+    generation,
+    cases:()=>db.prepare("SELECT id,revision,json_extract(document,'$.template.id') AS template,json_extract(document,'$.template.version') AS templateVersion,json_extract(document,'$.record.dataset') AS dataset,json_extract(document,'$.record.version') AS dataVersion,json_extract(document,'$.record.row') AS row FROM studio_case ORDER BY id DESC").all(),
+    case:savedCase,
+    saveCase(inputData:Record<string,unknown>) {
+      const document=text(inputData.document);
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        importBlobs(inputData.blobs??[]);
+        const c=checkedCase(document),previous=inputData.id===undefined?undefined:savedCase(Number(inputData.id));
+        if(previous) {
+          const old=previous.case;
+          if(c.template.id!==old.template.id||c.template.version!==old.template.version||c.record.dataset!==old.record.dataset||c.record.version!==old.record.version||c.record.row!==old.record.row)throw new HostError(409,'LIBRARY_CASE_RECORD','이번 건의 템플릿 판과 데이터 판·행은 바꿀 수 없습니다. 새 건으로 보관하세요.');
+        }
+        const canonical=writeCase(c),sha=caseSha256(c),revision=(previous?.revision??0)+1;
+        const id=previous?.id??Number(db.prepare('INSERT INTO studio_case (revision,document,sha) VALUES(?,?,?)').run(revision,canonical,sha).lastInsertRowid);
+        if(previous)db.prepare('UPDATE studio_case SET revision=?,document=?,sha=? WHERE id=?').run(revision,canonical,sha,id);
+        db.exec('COMMIT');return {id,revision};
+      }catch(e){db.exec('ROLLBACK');throw e;}
+    },
+    generate(id:string,version:number,dataId:string,dataVersion:number,row:number,caseId?:number) {
+      const t=template(id,version),record=rowOf(dataId,dataVersion,row),c=appliedCase(t,dataId,dataVersion,row,caseId);
+      const result=generateFromTemplate(source(t),t,record,c,sha=>hasBlob(sha)?blob(sha):undefined,{mode:'baseline'});
+      if(!result.ok||result.dryRun)return result;
+      const output=typeof result.output==='string'?new TextEncoder().encode(result.output):result.output;
+      const snapshot={template:id,templateVersion:version,templateSha:templateSha256(t),dataset:dataId,dataVersion,row,recordSha:hash(new TextEncoder().encode(canonicalStudioJson(record))),caseId:caseId??null,caseRevision:caseId===undefined?null:savedCase(caseId).revision,caseDocument:c===undefined?null:writeCase(c),caseSha:c===undefined?null:caseSha256(c),kind:t.source.kind,outputSha:hash(output),ledger:result.ledger??null,report:result.report};
+      const document=canonicalStudioJson(snapshot);
+      const generationId=Number(db.prepare('INSERT INTO studio_generation (document,sha,output) VALUES(?,?,?)').run(document,hash(new TextEncoder().encode(document)),output).lastInsertRowid);
+      return {...result,generationId};
+    },
     templates:()=>db.prepare('SELECT id,version,name FROM studio_template ORDER BY name,id,version DESC').all(),
     datasets:()=>db.prepare('SELECT id,version,name,records FROM studio_dataset ORDER BY name,id,version DESC').all(),
     template,
@@ -95,13 +174,7 @@ export function createLibrary(db:DatabaseSync) {
       input(Array.isArray(rawProtos)&&Array.isArray(rawBlobs),'원형과 원본 파일 목록을 확인하세요.');
       db.exec('BEGIN IMMEDIATE');
       try {
-        for(const raw of rawBlobs as unknown[]) {
-          const encoded=text(raw),bytes=Buffer.from(encoded,'base64');
-          input(bytes.toString('base64')===encoded,'원본 파일 인코딩을 확인하세요.');
-          const sha=hash(bytes),old=db.prepare('SELECT bytes FROM studio_blob WHERE sha=?').get(sha);
-          if(old)input(Buffer.from(old.bytes as Uint8Array).equals(bytes),'같은 해시의 원본 바이트가 다릅니다.');
-          else db.prepare('INSERT INTO studio_blob VALUES(?,?)').run(sha,bytes);
-        }
+        importBlobs(rawBlobs);
         const imported=(rawProtos as unknown[]).map(raw=>readBlockProto(text(raw)));
         for(const p of imported){content(p.content);immutable('studio_proto',p.id,p.version,writeBlockProto(p));}
         for(const p of imported)if(p.previous) {
@@ -128,13 +201,10 @@ export function createLibrary(db:DatabaseSync) {
       db.prepare('INSERT INTO studio_dataset VALUES(?,?,?,?,?,?)').run(id,version,name,document,hash(new TextEncoder().encode(document)),rows.length);
       return {id,version,records:rows.length};
     },
-    preview(id:string,version:number,dataId:string,dataVersion:number,row:number) {
-      const t=template(id,version),d=dataset(dataId,dataVersion);
-      input(Number.isInteger(row)&&row>=0&&row<d.records.length,'확인할 데이터 행을 선택하세요.');
-      const record=d.records[row]!;
-      if('error' in record)throw new HostError(400,record.error.code,record.error.message);
-      const values=bindValues(t,record.dataset.data,undefined);
-      return {values,slots:selectSlots(t,values,undefined)};
+    preview(id:string,version:number,dataId:string,dataVersion:number,row:number,caseId?:number) {
+      const t=template(id,version),record=rowOf(dataId,dataVersion,row),c=appliedCase(t,dataId,dataVersion,row,caseId);
+      const values=bindValues(t,record,c);
+      return {values,slots:selectSlots(t,values,c)};
     }
   };
 }
