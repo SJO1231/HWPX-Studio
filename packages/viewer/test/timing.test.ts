@@ -18,7 +18,7 @@ test("V8: 시험 문서의 rhwp 쪽 수와 가장 큰 문서의 시간 기록", 
       doc.free();
     }
   });
-  assert.equal(rows.length, 30);
+  assert.equal(rows.length, 31);
   t.diagnostic(`rhwp 쪽 수: ${rows.map((r) => `${r.name}=${r.pages}`).join(" ")}`);
   const biggest = [...rows].sort((a, b) => b.pages - a.pages || b.bytes - a.bytes)[0];
   assert.ok(biggest !== undefined);

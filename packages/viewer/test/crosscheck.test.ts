@@ -9,7 +9,7 @@ before(ensureRhwp);
 
 test("V1: 저장소 시험 문서 전부를 rhwp와 엔진 양쪽으로 열고, 못 여는 문서는 없다", () => {
   const names = fixtureNames();
-  assert.equal(names.length, 30, "시험 문서 수가 달라졌다(이 시험의 기대 수량을 함께 확인한다)");
+  assert.equal(names.length, 31, "시험 문서 수가 달라졌다(이 시험의 기대 수량을 함께 확인한다)");
   const failures: Record<string, number> = {};
   for (const name of names) {
     const bytes = readFixture(name);

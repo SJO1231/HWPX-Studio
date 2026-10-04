@@ -35,7 +35,11 @@ const enc = (v: unknown): Uint8Array => new TextEncoder().encode(typeof v === "s
 /** 엔진이 막는 곳의 분류(시험 쪽 기준): 여러 문단 곳은 crossBlocked, 그림·표가 든 곳은 object, 다른 칸·구역은 crossContainer, 나머지(끝 표식 없음 등)는 unpaired */
 const blockedShape = (t: FieldTarget): string => (t.info.shape === "crossParagraph" ? "crossBlocked" : t.info.shape === "object" || t.info.shape === "crossContainer" ? t.info.shape : "unpaired");
 
-test("Q4: 모든 시험 문서에서 자리 목록이 listFields(CLICK_HERE만)·findCandidates와 같다", () => {
+// 자리로 세는 필드: 누름틀(CLICK_HERE, 키 = 이름)과 키가 있는 메일 머지 필드(키 = mergeKey). 엔진 암묵 채움과 같은 기준
+const isPlaceField = (f: { type: string; mergeKey?: string }): boolean => f.type === "CLICK_HERE" || (f.type === "MAILMERGE" && f.mergeKey !== undefined);
+const keyOf = (f: { type: string; name: string; mergeKey?: string }): string => (f.type === "CLICK_HERE" ? f.name : (f.mergeKey ?? ""));
+
+test("Q4: 모든 시험 문서에서 자리 목록이 listFields(CLICK_HERE와 키 있는 메일 머지)·findCandidates와 같다", () => {
   const names = fixtureNames();
   assert.ok(names.length >= 20);
   let withFields = 0;
@@ -46,12 +50,12 @@ test("Q4: 모든 시험 문서에서 자리 목록이 listFields(CLICK_HERE만)�
     const places = analyzePlaces(bytes);
 
     // 곳마다 채울 수 있는지는 엔진의 fieldFillBlock이 정한다(데이터와 무관하다). 모양만 보면 여러 문단 곳이 막히는 경우를 놓친다
-    const infos = listFields(doc).filter((f) => f.type === "CLICK_HERE");
-    const targets = collectFields(doc).filter((t) => t.info.type === "CLICK_HERE");
+    const infos = listFields(doc).filter(isPlaceField);
+    const targets = collectFields(doc).filter((t) => isPlaceField(t.info));
     assert.equal(targets.length, infos.length, `${name}: collectFields가 누름틀을 빠뜨리지 않는다`);
-    const fieldNames = [...new Set(infos.map((f) => f.name))];
+    const fieldNames = [...new Set(infos.map(keyOf))];
     const expected = fieldNames.map((n) => {
-      const here = targets.filter((t) => t.info.name === n);
+      const here = targets.filter((t) => keyOf(t.info) === n);
       const open = here.filter((t) => fieldFillBlock(t) === undefined);
       const shut = here.filter((t) => fieldFillBlock(t) !== undefined);
       const unfillable = (["object", "crossContainer", "unpaired", "crossBlocked"] as const).flatMap((shape): PlacesView["fields"][number]["unfillable"] => {
@@ -357,7 +361,7 @@ test("Q4: 모든 시험 문서와 합성 문서에서 곳 수 = 채울 수 있�
   const seen = { fields: 0, fillable: 0, blocked: 0, crossBlocked: 0, merging: 0, failedAll: 0 };
   for (const [label, bytes] of docs) {
     const places = analyzePlaces(bytes);
-    const infos = listFields(parseDocument(openPackage(bytes))).filter((f) => f.type === "CLICK_HERE");
+    const infos = listFields(parseDocument(openPackage(bytes))).filter(isPlaceField);
     assert.equal(places.fields.reduce((n, f) => n + f.count, 0), infos.length, `${label}: 곳 수`);
     for (const f of places.fields) {
       assert.equal(f.fillable + f.unfillable.reduce((n, u) => n + u.count, 0), f.count, `${label}: ${f.name}: 곳 수 = 채울 수 있는 수 + 채울 수 없는 수`);
@@ -384,7 +388,7 @@ test("Q4: 모든 시험 문서와 합성 문서에서 곳 수 = 채울 수 있�
     }
     assert.deepEqual([g?.view.ok, g?.view.filled, g?.view.errors], [true, fillable, []], `${label}: 채울 수 있다고 센 곳은 모두 채워진다`);
     const after = listFields(parseDocument(openPackage(g?.output ?? new Uint8Array(0))));
-    assert.equal(after.filter((f) => f.type === "CLICK_HERE" && f.valueText === VALUE).length, fillable, `${label}: 결과에서 다시 읽은 값`);
+    assert.equal(after.filter((f) => isPlaceField(f) && f.valueText === VALUE).length, fillable, `${label}: 결과에서 다시 읽은 값`);
   }
   // 시험이 비어 있지 않다: 채울 수 있는 곳, 모양이 다른 막힌 곳, 막힌 여러 문단 곳, 합쳐지는 곳, 아무것도 못 채우는 문서가 모두 있다
   assert.ok(seen.fields >= 15 && seen.fillable >= 12 && seen.blocked >= 8 && seen.crossBlocked >= 6 && seen.merging >= 4 && seen.failedAll >= 1, JSON.stringify(seen));
