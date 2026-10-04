@@ -14,6 +14,7 @@ import {
   lookupPath,
   openPackage,
   parseDocument,
+  planBatchNames,
   readBatchRecords,
   readDataset,
   resolvePathValue,
@@ -30,7 +31,7 @@ import { plainOf } from "./quick-messages.ts";
 
 /** 한 번에 만들 수 있는 건수 */
 export const MAX_RECORDS = 1000;
-/** 결과 바이트 총합의 한도(건수 × 원본 크기로 미리 가늠한다) */
+/** 성공 결과 바이트 총합의 한도 */
 export const MAX_RESULT_BYTES = 512 * 1024 * 1024;
 export const MAX_KEYS = 1000;
 export const MAX_CANDIDATES = 200;
@@ -272,14 +273,22 @@ function toGenerated(item: BatchItem, places: PlacesView, record: BatchRecord): 
 
 /**
  * 모든 건을 차례로 만든다(엔진의 `generateBatch`: 템플릿 없이 `{{키}}`·누름틀을 채우고, 한 건이 실패해도 나머지는 만든다. 이름은 엔진의 `planBatchNames`).
- * 결과가 너무 클 것 같으면 시작하지 않고 `QUICK_TOO_LARGE`(413)다.
+ * 실제 성공 출력 바이트를 누적한다. 한도를 넘는 건부터 실패로 보고하고 이후 엔진 생성을 중단한다.
  */
 export function generateAll(source: Uint8Array, places: PlacesView, data: QuickData, fileName: string, missing: MissingPolicy, template: Template = emptyTemplate()): Generated[] {
-  if (data.records.length * source.length > MAX_RESULT_BYTES) {
-    throw new HostError(413, "QUICK_TOO_LARGE", `결과가 ${Math.floor(MAX_RESULT_BYTES / 1024 / 1024)} MiB를 넘을 것 같아 만들지 않았습니다.`);
-  }
   const out: Generated[] = [];
+  let resultBytes = 0;
   for (const item of generateBatch(source, template, data.records, { baseName: fileName, missing })) {
+    const bytes = item.ok ? item.output?.byteLength ?? 0 : 0;
+    if (resultBytes + bytes > MAX_RESULT_BYTES) {
+      const names = planBatchNames(data.records, fileName);
+      for (let index = item.index - 1; index < data.records.length; index++) {
+        out.push({ view: { index, name: names[index]!, ok: false, filled: 0, skipped: [], notes: [],
+          errors: [entry("QUICK_TOO_LARGE", `성공 결과 총합이 ${MAX_RESULT_BYTES / 1024 / 1024} MiB를 넘어 이 건부터 만들지 않았습니다.`)] } });
+      }
+      break;
+    }
+    resultBytes += bytes;
     out.push(toGenerated(item, places, data.records[item.index - 1] as BatchRecord));
   }
   return out;
