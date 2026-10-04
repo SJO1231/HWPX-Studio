@@ -37,8 +37,9 @@ export type AnchorResolution = {
   issues: Issue[];
 };
 
-/** `field` 앵커가 가리키는 `{{이름}}`들: 경로가 이름과 같은 것 전부(순번을 주면 그 순번의 것만). */
+/** `field` 앵커가 가리키는 `{{이름}}`들: 경로가 이름과 같은 것 전부(순번을 주면 그 순번의 것만). 메일 머지 필드(`mergeKey`)는 HWPX 문서에만 있어 텍스트 문서에서는 아무것도 가리키지 않는다. */
 export function fieldHitsOf(hits: Hit[], anchor: FieldAnchor): Hit[] {
+  if (anchor.mergeKey !== undefined) return [];
   const same = hits.filter((h) => h.path === anchor.name);
   if (anchor.occurrence === undefined) return same;
   const one = same[anchor.occurrence];
@@ -139,7 +140,16 @@ export function resolveTextAnchors(doc: TextDoc, template: Template, only: Reado
       case "field": {
         const found = fieldHitsOf(hits, a);
         if (found.length === 0) {
-          issues.push(makeIssue("error", "ANCHOR_NOT_FOUND", `앵커 ${a.id}: 이름이 같은 {{${a.name}}}${a.occurrence === undefined ? "" : `(순번 ${a.occurrence})`}이 문서에 없습니다.`, a.id));
+          issues.push(
+            makeIssue(
+              "error",
+              "ANCHOR_NOT_FOUND",
+              a.mergeKey === undefined
+                ? `앵커 ${a.id}: 이름이 같은 {{${a.name}}}${a.occurrence === undefined ? "" : `(순번 ${a.occurrence})`}이 문서에 없습니다.`
+                : `앵커 ${a.id}: 메일 머지 필드(mergeKey)는 HWPX 문서에만 있어 텍스트 문서에서는 찾지 못합니다.`,
+              a.id,
+            ),
+          );
         } else {
           resolved = { kind: "field", hits: found };
         }

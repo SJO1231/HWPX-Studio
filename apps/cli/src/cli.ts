@@ -20,7 +20,9 @@ export const USAGE = `사용법: hwpx <명령> [옵션]
        [--report r.json] [--overwrite]                       표 설정·크기 변경(저장 게이트 포함, 최상위 표만)
   validate <파일> [--baseline 원본] [--strict] [--json]  검사
   diff <원본> <결과> [--json]                            항목별 동일 여부와 수량 비교
-  compile <파일> -o 승격본 --experimental                {{}}를 누름틀로(실험)
+  compile <파일> -o 승격본 --experimental [--merge-fields to-placeholder|to-field]
+                                                        {{}}를 누름틀로(실험). --merge-fields는 {{}} 승격 없이 메일 머지 필드만
+                                                        {{키}} 글(to-placeholder)이나 누름틀(to-field)로 바꾼다
 
 .md·.txt는 inspect와 fill만 받는다. 나머지 명령은 .hwpx만 받는다.
 옵션 --reissue-internal: 조각 안에서 겹치는 id를 새 값으로 바꾼다(기본은 소스 원문 그대로).

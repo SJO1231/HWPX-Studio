@@ -92,6 +92,20 @@ PDF의 글을 읽을 때 주의: 한컴은 잘려 보이지 않는 글도 PDF에
 한컴은 `Contents/content.hpf` 에 작성자·마지막 저장자로 이 PC 의 사용자 이름을 적는다. 그 두 값(`creator`, `lastsaveby`)만 `synthetic` 으로 바꿔 ZIP 을 다시 묶는다(항목 순서·압축 방식 유지, `mimetype` 은 첫 항목에 무압축). 구역·머리 XML 은 한컴이 저장한 그대로다. 바꾼 뒤 한컴으로 다시 열어 쪽 수를 읽는다. 문서 제목(`opf:title`)은 한컴이 첫 문단 글로 채운 값이다.
 스크립트는 사용자 이름·임시 폴더·작업 폴더 경로가 산출물 어느 항목에도 남아 있지 않은지 검사해 `privacy_clean` 으로 기록한다.
 
+## 메일 머지 필드 서식 (`make_merge_fixtures.py`, 한컴 13.0.0.711)
+
+```
+python tools/com/make_merge_fixtures.py
+```
+
+`merge-fields.hwpx`(+ `merge-report.json`)를 만든다. 사본은 `packages/hwpx-engine/test/fixtures/merge/`다. 규칙은 `make_fixtures.py`와 같다(문서 하나씩 작업자 프로세스, 60초 한도, 창 숨김, `Quit`, 떠 있던 `Hwp.exe` 불간섭). 다시 실행하면 한컴이 문서 ID를 새로 적어 sha256이 달라지므로 사본과 `SHA256SUMS`를 함께 갱신해야 한다.
+
+- **내용**: 메일 머지 필드(`MAILMERGE`) 33개(머리말 2·꼬리말 3·본문 28, 같은 키가 여러 번, 경로 꼴이 아닌 키 4곳), 누름틀 4개, `{{경로}}` 글 8곳이 한 문서에 든다. 본문 문단과 두 표(6행 3열, 4행 2열)의 칸에 흩어져 있다. 문서의 구조와 필드 관측은 `merge-report.json`.
+- **필드를 넣는 법**: 한컴의 메일 머지 필드 넣기에 해당하는 동작은 `MailMergeInsert`(파라미터 세트 `FieldCtrl`)다. `HParameterSet.HFieldCtrl.Command`에 키를 넣어 `Execute`하면 `fieldBegin type="MAILMERGE" name="" editable="0" dirty="0"`와 매개변수 `Fiexde`(sic)·`Prop=8`·`Command`·`FieldType=USER_DEFINE`·`FieldValue`(둘 다 키)가 저장되고, 표시 글은 `{{키}}`다. 실제 업무 서식의 구조와 같다(`fieldid`도 같은 값). `InsertFieldTemplate`(필드 입력)의 `TemplateType`은 0 누름틀·1 사용자 정보·2 문서 요약·3 날짜·4 경로만 있고 메일 머지는 없다.
+- **한컴이 못 하는 것**: 메일 머지 필드는 한컴 필드 API에 보이지 않는다(`GetFieldList`는 빈 글, `FieldExist`는 거짓, `PutFieldText`는 아무 일도 안 한다). 필드 안의 글(표시 글)도 편집할 수 없다(`editable="0"`: 캐럿 이동·선택이 필드 전체를 한 글자처럼 다룬다). 그래서 표시 글이 `{{키}}`가 아닌 안내 글 꼴(예전 값)인 필드 8개는 한컴이 저장한 뒤 그 `hp:t`의 글만 XML로 바꿔 만들었다(`apply_guides`: 문서 순서로 1·5·9…번째. 엔진이 한 번 채운 문서의 꼴과 같다). 바꾼 문서는 한컴으로 다시 열어 쪽 수를 읽었다.
+- **쓰지 않은 것**: 한컴의 메일 머지 만들기(`MailMergeGenerate`, 도구 - 메일 머지 - 만들기)는 쓰지 않는다. 제품은 XML 처리만 한다(사용자 결정 2026-10-04). 탐색에서 알게 된 것만 적는다: 자료 종류는 `Input`(1 한/글 파일, 3 DBF), 출력은 `Output=2`(파일)로 되고, DBF·한셀은 "주소록 레코드 선택" 창이 떠서 이 창에 Enter를 보내야 끝난다. 결과 문서에는 메일 머지 필드가 남지 않고 값이 글로 풀려 있다.
+- **엔진 결과를 한컴으로 확인**: 엔진이 이 서식을 채운 문서와 `compile --merge-fields`로 바꾼 문서를 `read_text.py`로 한컴에서 열어 값·필드 수·PDF 글을 확인하는 시험이 있다(`HWPX_COM=1 node --test --test-concurrency=1 packages/hwpx-engine/test/fill-merge.test.ts packages/hwpx-engine/test/fill-merge-compile.test.ts`, 한 번에 하나씩). 한컴은 `dirty="1"`로 채운 메일 머지 필드를 그대로 열고 다시 저장해도 필드·키·`dirty`를 유지한다.
+
 ## 한계
 
 - 한컴 13.0.0.711 한 가지 버전에서만 만들었다. 버전이 다르면 run 나뉨·`dirty` 등이 다를 수 있다.

@@ -26,6 +26,7 @@ export {
   type BatchItem,
   type GateMode,
   type GenerateResult,
+  type MergeFieldsMode,
 } from "../../../packages/hwpx-engine/src/fill/index.ts";
 export {
   readTemplate,

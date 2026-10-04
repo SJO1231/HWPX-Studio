@@ -18,7 +18,11 @@ export type WordPrint = { text: string; before: string; after: string };
 /** `line` 앵커의 지문: 문단 글 앞 40자와 문단 글 전체의 sha256 */
 export type LinePrint = { text: string; sha256: string };
 
-export type FieldAnchor = { id: string; kind: "field"; name: string; occurrence?: number };
+/**
+ * 필드 앵커. `name`(누름틀 이름)이나 `mergeKey`(메일 머지 필드의 키) 가운데 하나로 가리키고, 둘을 함께 줄 수 없다(`readTemplate`이 거절한다).
+ * 메일 머지 필드(`type="MAILMERGE"`)는 `name`이 비어 있어 키(`FieldValue` 인자)로만 가리킨다. `occurrence`는 같은 이름(또는 같은 키) 안의 순번이다.
+ */
+export type FieldAnchor = { id: string; kind: "field"; name?: string; mergeKey?: string; occurrence?: number };
 export type WordAnchor = { id: string; kind: "word"; at: AnchorAt; start: number; end: number; print: WordPrint };
 export type LineAnchor = { id: string; kind: "line"; at: AnchorAt; print: LinePrint };
 export type CellAnchor = {

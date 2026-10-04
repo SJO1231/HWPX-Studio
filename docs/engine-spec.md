@@ -221,7 +221,7 @@ type HwpxDocument = {
 
 - `FieldInfo = { name, type, occurrence(같은 이름 안 순번, 0부터), sectionIndex, path, valueText, dirty, shape }`
 - `shape`(2026-10-04 7종): `simple`(begin·end가 같은 문단, 사이에 글이 있고 인라인·객체 조각 없음) / `empty`(사이가 빔) / `inline`(같은 문단, 사이에 탭·줄바꿈 같은 인라인 조각만 있고 객체 없음) / `object`(같은 문단, 사이에 표·그림·중첩 컨트롤 같은 객체 조각이 있음) / `crossParagraph`(끝 표식이 같은 컨테이너의 다른 문단에 있음. `endPath`에 끝 문단 경로) / `crossContainer`(끝 표식이 다른 컨테이너·구역에 있음) / `unpaired`(끝 없음). `crossParagraph`의 `valueText`는 빈 문자열이다.
-- `type`이 `HYPERLINK`인 필드는 목록에서 뺀다. 그 밖의 알 수 없는 type은 포함한다. 단, 누름틀 암묵 채움(8.3)과 빠른 생성 화면([스튜디오 명세](studio-spec.md) 4a)은 `type`이 `CLICK_HERE`인 것만 누름틀로 다룬다(책갈피·날짜·메일 머지 같은 다른 type은 건드리지 않는다).
+- `type`이 `HYPERLINK`인 필드는 목록에서 뺀다. 그 밖의 알 수 없는 type은 포함한다. 단, 누름틀 암묵 채움(8.3)과 빠른 생성 화면([스튜디오 명세](studio-spec.md) 4a)은 `type`이 `CLICK_HERE`인 누름틀과 **키가 있는 메일 머지 필드**(`type`이 `MAILMERGE`, `name`은 비어 있고 `parameters`의 `stringParam name="FieldValue"`가 키. `FieldInfo.mergeKey`, 2026-10-04 이슈 #18)만 자리로 다룬다(책갈피·날짜·키 없는 메일 머지 같은 다른 필드는 건드리지도 보고하지도 않는다). 메일 머지 필드의 `occurrence`는 같은 키 안에서 센다.
 
 ### 5.4 모델 내보내기 `src/store/` `exportModel(doc): ModelJson`
 
@@ -846,13 +846,13 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 
 **앵커 해석 `resolveAnchors(doc, template)`**
 
-- `field`: 이름이 같은 누름틀 전부(순번을 주면 그것만). 없으면 `ANCHOR_NOT_FOUND`.
+- `field`: 이름이 같은 누름틀 전부(순번을 주면 그것만). 없으면 `ANCHOR_NOT_FOUND`. `{ kind: "field", mergeKey, occurrence? }`는 키가 같은 메일 머지 필드를 가리킨다(2026-10-04). `name`과 `mergeKey`를 함께 주거나 둘 다 없거나 키가 비면 `TPL_ANCHOR`. 규칙이 가리킨 메일 머지 필드는 키가 경로 꼴이 아니어도 규칙이 채운다. md·txt에서 `mergeKey` 앵커는 대상이 없어 `ANCHOR_NOT_FOUND`로 실패한다(무시하지 않는다).
 - `word`·`line`: 주소의 문단을 찾고 `print`와 대조한다. 맞으면 exact. 안 맞으면 같은 구역에서 `print`로 다시 찾는다: 유일하면 `ANCHOR_RELOCATED`(경고), 여럿이면 `ANCHOR_AMBIGUOUS`(오류), 없으면 `ANCHOR_NOT_FOUND`(오류).
 - `cell`·`object`: 서수로 찾는다. 범위 밖이면 `ANCHOR_NOT_FOUND`.
 
 **자리별 채움**
 
-- **누름틀 암묵 채움**(2026-10-03): 대상은 `type`이 `CLICK_HERE`인 필드만이다(다른 type의 필드는 채우지도 보고하지도 않는다. 독립 검증에서 책갈피 범위 필드가 `DATA_MISSING`으로 생성을 막는 것을 보고 2026-10-03 고침). 템플릿이 없거나 그 누름틀을 가리키는 `field` 규칙이 없으면, 이름이 데이터 경로 문법에 맞는 누름틀은 "이름 = 경로"로 채운다(`{{}}`의 암묵 규칙과 같은 자리, 같은 누락 정책). 이름이 경로가 아니면 건너뜀 `FIELD_NAME_NOT_PATH`, 채울 수 없는 모양이면 건너뜀 `FIELD_UNSUPPORTED_SHAPE`(오류가 아니다). 이 건너뜀은 `ruleId: "implicit"`로 보고되며, 호출자가 요청하지 않은 자리에 대한 정보다. 구조 변경만 하는 템플릿(inject·delete)을 돌리는 호출자는 `implicit` 건너뜀을 실패로 세지 않는다(2026-10-04 이슈 #3). 같은 이름은 전부 같은 값. 삭제·교체되는 문단과 반복 원형 행 안의 누름틀은 `dropped`.
+- **누름틀 암묵 채움**(2026-10-03): 대상은 `type`이 `CLICK_HERE`인 필드(이름 = 데이터 경로)와 **키가 있는 `MAILMERGE` 필드(키 = 데이터 경로, 2026-10-04 이슈 #18)**다(다른 type의 필드는 채우지도 보고하지도 않는다. 독립 검증에서 책갈피 범위 필드가 `DATA_MISSING`으로 생성을 막는 것을 보고 2026-10-03 고침). 메일 머지 필드는 보고 앵커가 `merge:키`이고 키가 경로 꼴이 아니면 건너뜀 `MERGE_KEY_NOT_PATH`(ruleId `implicit`). 필드의 `parameters`·`type`·`fieldid`·`editable`은 바이트 그대로 두고 값이 비어 있지 않으면 `dirty`만 `"1"`로 한다(빈 값은 누름틀과 같이 `dirty`를 건드리지 않는다. 한컴이 다시 저장해도 유지됨을 확인). 모양·구간 치환·건너뜀 조건·경고는 누름틀과 같다. 필드가 맡는(규칙이 가리키거나 암묵 채움이 채울 수 있는) 메일 머지 필드의 표시 글 안 `{{}}`는 placeholder 경로가 채우지 않고 `dropped`로 보고한다. 필드를 못 채우는 경우(키가 경로 꼴 아님, 키 없는 메일 머지 필드 등)에는 전처럼 그 표시 글 안의 `{{}}`를 일반 `{{}}`로 채운다(표시 글이 바뀌고 필드 표식은 남는다). 한컴의 필드 API(`GetFieldList`·`PutFieldText`)는 메일 머지 필드를 보지 못하므로 한컴 대조는 열림·재저장 뒤 재읽기로 한다. 템플릿이 없거나 그 누름틀을 가리키는 `field` 규칙이 없으면, 이름이 데이터 경로 문법에 맞는 누름틀은 "이름 = 경로"로 채운다(`{{}}`의 암묵 규칙과 같은 자리, 같은 누락 정책). 이름이 경로가 아니면 건너뜀 `FIELD_NAME_NOT_PATH`, 채울 수 없는 모양이면 건너뜀 `FIELD_UNSUPPORTED_SHAPE`(오류가 아니다). 이 건너뜀은 `ruleId: "implicit"`로 보고되며, 호출자가 요청하지 않은 자리에 대한 정보다. 구조 변경만 하는 템플릿(inject·delete)을 돌리는 호출자는 `implicit` 건너뜀을 실패로 세지 않는다(2026-10-04 이슈 #3). 같은 이름은 전부 같은 값. 삭제·교체되는 문단과 반복 원형 행 안의 누름틀은 `dropped`.
 - **적용된 액션이 0이면 실패**: `FILL_NOTHING_APPLIED`(출력 없음, 메시지에 건너뜀 코드별 건수). CLI도 종료 코드 1. 예외: `generate` 옵션 `allowNothingApplied`를 켜면 실패로 보지 않고 원본과 같은 결과를 낸다(이미 조립한 문서에 채울 자리가 없을 수 있는 studio-lite의 블록 교체 뒤 채움 단계용. CLI·빠른 생성은 켜지 않는다. 2026-10-04 합치기 때 추가).
 - 누름틀(shape별): `simple` → 시작과 끝 사이 첫 글 조각에 값을 넣고 나머지 글 조각은 비운다. `empty` → 시작 컨트롤 바로 뒤에 `<접두사:t>값</접두사:t>`를 넣는다. 둘 다 시작 요소의 `dirty`를 `"1"`로 한다(없으면 속성 추가). 안내문과 값을 비교하지 않는다. `object`·`crossContainer`·`unpaired`는 `FIELD_UNSUPPORTED_SHAPE`.
   - **`inline`·`crossParagraph`(2026-10-04, 한컴이 직접 채워 저장한 정답 `test/fixtures/span/`과 대조)**: 시작 표식 조각(`hp:ctrl`)의 끝부터 끝 표식 조각의 시작까지를 한 번의 구간 치환으로 `<접두사:t>값</접두사:t>`로 바꾼다(값이 비면 삭제만). 결과는 시작 run의 여는 태그 + 시작 컨트롤 + 값 + 끝 컨트롤 + 끝 run의 나머지 + 끝 문단의 나머지이고, 시작 run과 끝 run의 여는 태그가 다르면 끝 run을 다시 열어 끝 뒤 글의 글자모양을 지킨다. `crossParagraph`에서는 사이 문단(표 포함)이 사라지고 끝 표식 뒤 글이 첫 문단에 합쳐지며 첫 문단의 속성은 그대로다(한컴과 같다). 건너뜀(`FIELD_UNSUPPORTED_SHAPE`, 사유를 메시지에): 사이·끝 문단에 `secPr`(시작 문단은 표식 뒤에 있을 때만), 구간을 가로질러 짝이 끊기는 다른 필드(모든 type), 구간 경계에 걸친 형광펜·변경 추적 표식(짝 없는 표식이 남게 되는 경우). 지워지는 부분(시작 문단 꼬리·끝 문단 머리·사이 문단)의 표·그림·책갈피·쪽 번호 같은 개체는 한컴처럼 함께 지운다(독립 검증이 한컴 COM으로 확인: 꼬리의 표·책갈피, 머리의 표·쪽 번호가 있어도 한컴은 채우고 지운다). 구간 안에 통째로 든 다른 필드(모든 type)·책갈피는 함께 지우고 `dropped`에 적는다. 구간 안의 `{{}}`와 다른 누름틀의 암묵 채움은 `dropped`. 구간(시작 문단부터 끝 문단까지)을 가리키는 **명시** 규칙(line·cell 채움, insertText, inject, tableProps, 안쪽 누름틀의 명시 채움, 삭제, 행 반복)은 규칙 순서와 무관하게 `TPL_CONFLICT`이고, 시작·끝 문단을 앵커로 쓰는 삽입·주입은 앞뒤 어디든 `TPL_CONFLICT`다(2026-10-04 독립 검증 M1·L2 반영). 수량 예상은 치환 전후 구간을 다시 읽어 센 차이로 `report.expected`에 더한다. `crossParagraph`를 채우면 경고 `FIELD_PARAGRAPHS_MERGED`("누름틀 <이름>이 걸친 문단 N개를 합쳤고 사이의 문단 M개를 지웠습니다(그 안의 표 T개 포함)." T는 지워진 부분 전체의 표 수로, 꼬리·머리의 표도 센다)를 낸다(`generateBatch`의 `BatchItem.warnings`, `--report`의 `items[].warnings`, 단건은 `report.issues`의 severity `warning`). 같은 문단 `inline`은 경고 없음.
@@ -962,6 +962,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | `hwpx validate <파일> [--baseline 원본] [--strict] [--json]` | 검사 |
 | `hwpx diff <원본> <결과> [--json]` | 항목별 동일 여부와 수량 비교 |
 | `hwpx compile <파일> -o 승격본 --experimental` | `{{}}`를 누름틀로 |
+| `compile <원본> -o <출력> --merge-fields to-placeholder\|to-field` | 키가 있는 메일 머지 필드를 `{{키}}` 자리(표식 제거, 표시 글을 `{{키}}` 하나로)나 누름틀(CLICK_HERE, 이름 = 키, `dirty=1`)로 바꾼다. 키가 경로 꼴이 아니거나 채울 수 없는 모양이면 `COMPILE_SKIPPED` 경고. `--merge-fields`가 있으면 `{{}}`를 누름틀로 올리는 기본 승격은 하지 않는다(같은 변환을 두 번 적용하면 두 번째는 변환 0·바이트 동일). 게이트: 필드 쌍 수·값 재읽기·`{{키}}` 수 대조. `CompileReport.mergeConverted`(2026-10-04 #18) |
 | `hwpx table list <파일> [--json]` | 표 목록: 위치, 행×열, 너비, 글자처럼 취급, 쪽 나눔, 제목 행 반복, 병합 수. 글 내용은 내지 않는다 |
 | `hwpx table set <파일> --table 구역:순번 [--treat-as-char on\|off] [--page-break cell\|none\|table] [--repeat-header on\|off] [--width N \| --scale X \| --columns a,b,c] -o 출력 [--mode …] [--report r.json]` | 최상위 표 하나의 설정·크기 변경(게이트 포함) |
 

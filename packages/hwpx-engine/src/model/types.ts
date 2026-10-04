@@ -107,6 +107,8 @@ export type FieldMark = {
   name?: string;
   type?: string;
   dirty?: string;
+  /** 메일 머지 필드(`type="MAILMERGE"`)의 키: `hp:parameters` 안 `stringParam name="FieldValue"`의 값. 없거나 비면 없다. */
+  mergeKey?: string;
   beginIDRef?: string;
   element: XElement;
   /** 이 표식을 담은 ctrl의 `object` Piece 위치 */
@@ -161,6 +163,9 @@ export type FieldShape = "simple" | "empty" | "inline" | "object" | "crossParagr
 export type FieldInfo = {
   name: string;
   type: string;
+  /** 메일 머지 필드(`type="MAILMERGE"`)의 키(`FieldValue` 인자). 메일 머지 필드는 `name`이 비어 있어 이 키로 가리킨다. 없거나 비면 없다. */
+  mergeKey?: string;
+  /** 같은 이름 안의 순번. 키가 있는 메일 머지 필드는 같은 키 안의 순번이다. */
   occurrence: number;
   sectionIndex: number;
   path: number[];

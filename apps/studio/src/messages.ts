@@ -34,6 +34,7 @@ const TABLE: Readonly<Record<string, string>> = {
   BOOKMARK_DUP: "문서에 같은 이름의 책갈피가 둘 이상 있습니다.",
   BOOKMARK_NO_NAME: "이름이 없는 책갈피가 문서에 있습니다.",
   FIELD_NAME_NOT_PATH: "누름틀 이름이 데이터 키로 쓸 수 있는 꼴(글자·숫자·_·-, 안쪽 항목은 점으로 이음)이 아니라 채우지 않고 그대로 두었습니다. 한컴에서 누름틀 이름을 고쳐 주세요.",
+  MERGE_KEY_NOT_PATH: "메일 머지 필드의 키가 데이터 키로 쓸 수 있는 꼴(글자·숫자·_·-, 안쪽 항목은 점으로 이음)이 아니라 채우지 않고 그대로 두었습니다. 한컴에서 메일 머지 필드의 키를 고쳐 주세요.",
   FIELD_FIELDID_MISMATCH: "누름틀의 시작과 끝에 적힌 번호가 서로 다릅니다.",
   FIELD_MULTI_END: "누름틀의 끝 표식이 한 시작에 둘 이상 이어져 있습니다.",
   FIELD_ORDER: "누름틀의 끝이 시작보다 앞에 있습니다.",
