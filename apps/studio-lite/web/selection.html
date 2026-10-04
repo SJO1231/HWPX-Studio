@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="ko">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HWPX Studio · 블록 선택</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/quick.css"></head>
+<body>
+<header class="topbar"><div class="brand"><span class="mark">H</span><strong>HWPX Studio <small>lite</small></strong></div><nav class="actions" aria-label="작업 방식"><a href="/">템플릿 준비 · 빠른 생성</a><a href="/template">저장한 템플릿으로 생성</a><a class="active" href="/selection">블록 선택</a></nav><span class="pill">내 PC에서 처리</span></header>
+<div id="status" role="status" aria-live="polite">템플릿과 데이터를 올려 자리별 블록을 확인하세요.</div>
+<main class="quick-workspace">
+<aside class="quick-left">
+<section><h1>블록 선택</h1><p>조건에 따른 기본값을 확인하고, 이번 건에 사용할 블록을 고릅니다.</p><label class="file-button full">템플릿 파일 올리기<input id="template-file" type="file" accept=".json" hidden></label><label class="file-button full">데이터 파일 올리기<input id="data-file" type="file" accept=".json" hidden></label><p id="data-info" class="muted">JSON 객체 하나 또는 객체 배열을 지원합니다.</p><label for="row">확인할 데이터 행</label><input id="row" type="number" min="1" step="1" value="1" disabled><button id="preview" class="primary full" type="button" disabled>연결·기본 블록 확인</button></section>
+<section><h2>참조하는 파일</h2><label class="file-button full">블록 원형 파일 올리기<input id="proto-files" type="file" accept=".json" multiple hidden></label><label class="file-button full">원본 문서·조각 파일 올리기<input id="source-files" type="file" accept=".hwpx,.md,.txt,.json" multiple hidden></label><p class="muted">템플릿이 참조하는 원본·원형·조각을 함께 선택하세요. 올린 원본은 덮어쓰지 않습니다.</p></section>
+<section><h2>이번 건 선택 보관</h2><label class="file-button full">저장한 이번 건 불러오기<input id="case-file" type="file" accept=".json" hidden disabled></label><button id="clear-case" class="full" type="button" disabled>이번 건 없이 새로 시작</button><button id="export-case" class="full" type="button" disabled>이번 건 JSON 내려받기</button><p class="muted">템플릿과 데이터를 먼저 올린 뒤 이번 건을 불러오세요. 직접 선택과 확정은 해당 데이터 행에만 적용됩니다. 다른 데이터 파일에는 이전 선택을 자동 적용하지 않습니다.</p></section>
+<section><details><summary>현재 지원 범위</summary><p>새 템플릿 형식의 한 단계 블록 선택을 지원합니다. 중첩 블록과 기존 프로젝트 자동 이관은 후속 작업입니다. 파일은 현재 화면 메모리에서 다루며, 재사용할 선택은 이번 건 JSON으로 내려받으세요.</p></details></section>
+</aside>
+<section class="quick-center"><div class="pane-heading"><div><h2>자리별 블록 선택</h2><p>직접 고른 선택은 조건이 달라져도 유지됩니다.</p></div><span id="template-info" class="pill">템플릿 확인 전</span></div><div id="slots" class="recommendations"><p class="empty">파일을 올린 뒤 연결·기본 블록 확인을 누르세요.</p></div></section>
+<aside class="quick-right">
+<section><h2>데이터 연결 확인</h2><p class="muted">원본 값을 수정하지 않고 템플릿의 연결로 읽습니다.</p><div class="quick-table"><table id="values" aria-label="연결된 데이터 값"></table></div></section>
+<section><h2>문서 생성</h2><p id="selection-note" class="muted">자리마다 선택 상태를 먼저 확인하세요.</p><button id="generate" class="primary full" type="button" disabled>선택한 블록으로 문서 생성</button><a id="download" class="file-button full" hidden>생성 문서 내려받기</a><p id="output-note" class="muted">파일 형식에 따라 Markdown 또는 HWPX를 생성합니다.</p><details id="text-output" hidden><summary>생성한 Markdown 보기</summary><pre id="output-text" style="white-space:pre-wrap;overflow-wrap:anywhere;font:inherit"></pre></details></section>
+</aside>
+</main>
+<script type="module" src="/selection.js"></script>
+</body></html>
