@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import { stripTypeScriptTypes } from 'node:module';
 import { cleanPath, resolveShared, HostError } from '../../../packages/viewer/src/host/index.ts';
 import { createQuick } from './quick-api.ts';
+import { createWorkbench } from './workbench.ts';
 import { plainOf } from './quick-messages.ts';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, mkdirSync } from 'node:fs';
@@ -20,6 +21,7 @@ export function createApp(database=':memory:') {
   db.exec('CREATE TABLE IF NOT EXISTS project_revision (id INTEGER PRIMARY KEY, name TEXT NOT NULL, document TEXT NOT NULL, saved_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)');
   const g2b=createG2B(db);
   const quick=createQuick();
+  const workbench=createWorkbench();
   const server=createServer(async(req,res)=>{
     const send=(status:number,body:unknown,type='application/json; charset=utf-8',headers:Record<string,string>={})=>{
       const data=body instanceof Uint8Array ? body : type.startsWith('application/json') ? JSON.stringify(body) : String(body);
@@ -32,8 +34,8 @@ export function createApp(database=':memory:') {
       const url=new URL(req.url??'/',origins[0]);
       const path=url.pathname;
       if(req.method==='GET') {
-        const result=quick.get(path,url.searchParams);
-        if(result)return send(200,result.body,'application/vnd.hancom.hwpx',result.name?{'Content-Disposition':`attachment; filename="document.hwpx"; filename*=UTF-8''${encodeURIComponent(result.name)}`}:{});
+        const result=workbench.get(path,url.searchParams)??quick.get(path,url.searchParams);
+        if(result)return send(200,result.body,'type' in result && typeof result.type==='string'?result.type:'application/vnd.hancom.hwpx',result.name?{'Content-Disposition':`attachment; filename="document.hwpx"; filename*=UTF-8''${encodeURIComponent(result.name)}`}:{});
         if(path==='/api/health')return send(200,{ok:true});
         if(path==='/api/g2b/profiles')return send(200,{profiles:g2b.profiles()});
         if(path==='/api/projects')return send(200,db.prepare('SELECT name, MAX(id) AS id, MAX(saved_at) AS saved_at FROM project_revision GROUP BY name ORDER BY id DESC').all());
@@ -43,7 +45,7 @@ export function createApp(database=':memory:') {
         }
         if(path==='/api/demo')return send(200,demo());
         if(path==='/api/demo-sources')return send(200,demoSources);
-        const files:Record<string,string>={'/':'web/quick.html','/template':'web/index.html','/quick.js':'web/quick.js','/quick.css':'web/quick.css','/app.js':'web/app.js','/style.css':'web/style.css','/rhwp.js':'vendor/rhwp/rhwp.js','/rhwp_bg.wasm':'vendor/rhwp/rhwp_bg.wasm'};
+        const files:Record<string,string>={'/':'web/workbench.html','/workbench':'web/workbench.html','/workbench.js':'web/workbench.js','/workbench.css':'web/workbench.css','/editor-model.js':'src/editor-model.ts','/quick':'web/quick.html','/template':'web/index.html','/quick.js':'web/quick.js','/quick.css':'web/quick.css','/app.js':'web/app.js','/style.css':'web/style.css','/rhwp.js':'vendor/rhwp/rhwp.js','/rhwp_bg.wasm':'vendor/rhwp/rhwp_bg.wasm'};
         const shared=cleanPath(path);
         const sharedFile=shared===undefined?undefined:resolveShared(shared);
         if(sharedFile){
@@ -53,7 +55,8 @@ export function createApp(database=':memory:') {
         }
         if(files[path]) {
           const types:Record<string,string>={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.wasm':'application/wasm'};
-          return send(200,readFileSync(resolve(ROOT,files[path])),types[extname(files[path])]);
+          const file=files[path];
+          return send(200,file.endsWith('.ts')?stripTypeScriptTypes(readFileSync(resolve(ROOT,file),'utf8'),{mode:'strip'}):readFileSync(resolve(ROOT,file)),file.endsWith('.ts')?types['.js']:types[extname(file)]);
         }
         return send(404,{error:'없는 경로입니다.'});
       }
@@ -63,6 +66,7 @@ export function createApp(database=':memory:') {
       for await(const chunk of req){size+=chunk.length;if(size>32*1024*1024)return send(413,{error:'요청은 32MB 이내여야 합니다.'});chunks.push(chunk);}
       const input=JSON.parse(Buffer.concat(chunks).toString('utf8'));
       if(path.startsWith('/api/quick/'))return send(200,quick.post(path,input));
+      if(path.startsWith('/api/workbench/'))return send(200,workbench.post(path,input));
       if(path==='/api/g2b/profiles') {
         if(!req.headers.origin)return send(403,{error:'생성 프로필은 Studio의 Helper 연결 화면에서 설정하세요.'});
         return send(200,{profile:g2b.saveProfile(input)});
