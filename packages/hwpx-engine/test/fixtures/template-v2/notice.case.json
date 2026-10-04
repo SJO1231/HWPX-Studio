@@ -1,0 +1,29 @@
+{
+  "schema": "hwpx-studio/case@1",
+  "template": {
+    "id": "t3f9a01c2",
+    "version": 4,
+    "sha256": "044ef8a6b93ba67b64038304fb48e33c7ba35628f5d6f8955689f25f90806ac9"
+  },
+  "record": {
+    "dataset": "d71c0e5a2",
+    "version": 1,
+    "row": 3,
+    "sha256": "fe86cad5ea99769d8ffa8963a423dfaae0128d83261f906d5e928ff485466cd3"
+  },
+  "selections": {
+    "s1": {
+      "block": "b2",
+      "basis": "manual",
+      "content": "b91b1051861772257ea3ac9f3b4daf8f4c8878b08e1977161844fed3798c5c55"
+    }
+  },
+  "valueEdits": {
+    "v1": "예시 사업(정정)"
+  },
+  "blockEdits": {
+    "b2": {
+      "text": "{{사업명}}에는 자격을 갖춘 업체가 참가할 수 있습니다(이번 건만)."
+    }
+  }
+}
