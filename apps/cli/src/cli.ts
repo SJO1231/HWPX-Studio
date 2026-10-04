@@ -15,6 +15,8 @@ export const USAGE = `사용법: hwpx <명령> [옵션]
        .hwpx 전용: [--mode baseline|strict|repair] [--reissue-internal]
        .hwpx 여러 건(데이터가 배열): --batch -o 폴더 [--name "{{경로}}"]   원소마다 <원본 이름>-001.hwpx …
        .md·.txt 전용: [--fill-in-code]
+  fill <파일> --template t2.json --data 한건.json [--case c.json] [--blobs 폴더] -o 출력 [--dry-run] [--report r.json] [--overwrite]
+                                                        2판 템플릿(template@2): 슬롯 블록 교체 뒤 자리 채움(.hwpx·.md)
   table list <파일> [--json]                            표마다 위치·행×열·너비·글자처럼 취급·쪽 나눔·제목 행 반복·병합 수(글 내용은 없음)
   table set <파일> --table 구역:순번 -o 출력.hwpx [--treat-as-char on|off] [--page-break cell|none|table]
        [--repeat-header on|off] [--width N | --scale X | --columns a,b,c] [--mode baseline|strict|repair]
