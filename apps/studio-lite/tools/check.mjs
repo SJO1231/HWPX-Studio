@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 const run=(args)=>{const r=spawnSync(process.execPath,args,{stdio:'inherit'});assert.equal(r.status,0,`검사 실패: ${args.join(' ')}`);};
 run(['--check','web/app.js']);
 run(['--check','web/quick.js']);
+run(['--check','web/library.js']);
 run([resolve(dirname(createRequire(import.meta.url).resolve('typescript/package.json')),'bin/tsc'),'--noEmit']);
 assert.equal(fileURLToPath(import.meta.resolve('@hwpx-studio/engine')),resolve('../../packages/hwpx-engine/src/index.ts'),'공통 엔진 경로');
 const hashes=JSON.parse(readFileSync('vendor/provenance.json','utf8'));
