@@ -606,7 +606,7 @@ function pathOfNameSpec(spec: string, usage: string): string {
 }
 
 /** 건별 결과 한 줄(보고서의 `items` 원소). 값 원문은 없다(`name`은 `--name` 값에서 온 파일 이름이다). */
-type BatchRow = Pick<BatchItem, "index" | "name" | "ok" | "filled" | "skipped" | "warnings" | "errorCodes" | "errors">;
+type BatchRow = Pick<BatchItem, "index" | "name" | "ok" | "filled" | "skipped" | "warnings" | "dropped" | "errorCodes" | "errors">;
 
 /**
  * `fill --batch`: 데이터가 배열이면 원소마다 결과 파일 하나를 `folder`에 만든다. 건마다 `generate`를 거치고(엔진의 `generateBatch`),
@@ -650,8 +650,8 @@ async function fillBatch(
   for (const item of generateBatch(bytes, c.template, records, call)) {
     // 만든 문서는 바로 쓰고 놓는다(건수가 많아도 문서를 모두 쥐지 않는다)
     if (item.output !== undefined && folder !== undefined) writeSafely(join(folder, item.name), item.output, inputs, overwrite);
-    const { index, name, ok, filled, skipped, errorCodes, errors, warnings } = item;
-    rows.push({ index, name, ok, filled, skipped, warnings, errorCodes, errors });
+    const { index, name, ok, filled, skipped, errorCodes, errors, warnings, dropped } = item;
+    rows.push({ index, name, ok, filled, skipped, warnings, dropped, errorCodes, errors });
     const label = `${String(index).padStart(3, "0")} ${name}`;
     if (ok) {
       out.log(`성공 ${label} (채움 ${filled}, 건너뜀 ${skipped.length})`);

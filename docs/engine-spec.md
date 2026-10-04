@@ -878,7 +878,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 **계획 조립 `buildFillPlan(doc, template, dataset, options): { plan, report }`**
 
 1. 규칙을 순서대로 평가해 참인 것만 남긴다.
-2. 삭제 범위 안의 채움·삽입은 버리고 `report.dropped`에 적는다. 같은 자리에 값이 다른 채움이 둘이면 `TPL_CONFLICT`.
+2. 삭제 범위 안의 채움·삽입은 버리고 `report.dropped`에 적는다. 같은 자리에 값이 다른 채움이 둘이면 `TPL_CONFLICT`. `dropped` 항목은 `{ ruleId, anchor, reason, kind }`이고 `kind`는 `covered`(삭제·교체·구간 치환으로 지워졌거나 반복 원형 행이라 채우지 않은 자리. 결과에 값이 들어가지 않는다)나 `mergeDisplay`(메일 머지 필드의 표시 글 안이라 그 필드 자리가 맡는 `{{}}`. 보통 필드가 값을 넣으므로 잃은 것이 아니지만, 그 필드를 가리키는 규칙이 조건으로 비활성이면 값이 들어가지 않을 수 있다)다. 삭제·교체·구간 치환으로 실제로 지워지는 자리는 `mergeDisplay`보다 `covered`가 앞선다(2026-10-04 이슈 #16).
 3. 글이 바뀌는 구역(채움·삽입·삭제가 있는 구역)의 줄 배치 캐시 요소를 전부 지우는 편집을 더한다(삭제 범위와 겹치는 것은 뺀다).
 4. `report`: 적용할 액션 목록, 건너뛴 자리와 사유, 필요한 데이터 경로 목록, 재배치된 앵커, 예상 수량 증감.
 
@@ -950,6 +950,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 ### 8.36 여러 건 생성 (`src/fill/batch.ts`, 2026-10-03)
 
 - `generateBatch(bytes, template, records, options): Generator<BatchItem>` — 데이터 원소마다 `generate`를 부르고 건별 결과를 내놓는다(한 건이 실패해도 계속). `readBatchRecords(input)`: 최상위 배열 또는 묶음 형식의 `data` 배열을 건 목록으로(`derived`는 공유).
+- `BatchItem.dropped`(2026-10-04 이슈 #16): 건마다 `generate` 보고의 `plan.dropped`와 같은 형(`{ ruleId, anchor, reason, kind }`, 8.3)·같은 내용으로 버린 자리(여러 문단에 걸친 바깥 누름틀의 구간 치환으로 함께 지워진 안쪽 누름틀·메일 머지 필드·`{{}}`·책갈피 등)를 싣는다. 값 원문은 없고, 계획 전에 실패한 건(데이터 원소 오류·문서 예외)은 빈 배열이다. CLI `fill --batch --report`는 `items[].dropped`로, `apps/studio` 빠른 생성은 성공한 건의 알림 `QUICK_DROPPED`(자리 이름·엔진 사유)로 `kind`가 `covered`인 것만 낸다.
 - 이름: `planBatchNames(records, baseName, nameFrom?)`. 기본 `<원본 이름>-<번호 3자리>`, `nameFrom`이 `{{경로}}`이면 그 값(문자열·숫자만. 비면 기본 이름). `safeFileStem(value)`: 금지 문자 `_`, 앞뒤 공백·뒤쪽 `.` 제거, 100 코드 포인트, Windows 장치 이름 뒤 `_`. `sanitizeFileStem(input)`: 폴더 부분과 `.hwpx`를 뗀 뒤 `safeFileStem`, 비면 `문서`. 중복은 대소문자 무시로 `-2`, `-3`.
 
 ### 8.4 CLI (`apps/cli`) — S3b

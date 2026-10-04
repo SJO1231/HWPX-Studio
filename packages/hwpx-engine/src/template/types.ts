@@ -179,7 +179,11 @@ export type ReportAction = {
 };
 
 export type ReportSkip = { ruleId: string; anchor: string; code: string; message: string; where?: string };
-export type ReportDrop = { ruleId: string; anchor: string; reason: string };
+/**
+ * 버린 자리. `kind`: `covered`는 삭제·교체·구간 치환으로 실제로 지워진 자리, `mergeDisplay`는 메일 머지 필드의 표시 글 안이라
+ * 그 필드 자리가 맡는(필드가 값을 넣으므로 잃은 것이 아닌) `{{}}` 자리다.
+ */
+export type ReportDrop = { ruleId: string; anchor: string; reason: string; kind: "covered" | "mergeDisplay" };
 export type ReportKept = { path: string; count: number };
 
 export type FillReport = {
