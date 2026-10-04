@@ -1,4 +1,4 @@
-import { walkParagraphs } from "./paragraph.ts";
+import { fieldTypeOf, walkParagraphs } from "./paragraph.ts";
 import type { FieldInfo, FieldMark, FieldShape, HwpxDocument, ParagraphNode } from "./types.ts";
 
 type Located = { sectionIndex: number; paragraph: ParagraphNode; mark: FieldMark };
@@ -18,6 +18,7 @@ function siblingPaths(a: number[], b: number[]): boolean {
 
 /**
  * 문서의 필드(fieldBegin)를 문서 순서로 나열한다. type이 HYPERLINK인 필드는 뺀다.
+ * `type`은 `fieldTypeOf`로 정한 종류다(`CLICK_HERE`·`MAILMERGE`·`HYPERLINK`는 대소문자 무시, type 속성이 없거나 비면 `UNKNOWN`).
  * 메일 머지 필드(`MAILMERGE`)는 `name`이 비어 있어 `mergeKey`(키)를 함께 돌려주고, 순번은 같은 키 안에서 센다.
  */
 export function listFields(doc: HwpxDocument): FieldInfo[] {
@@ -47,7 +48,7 @@ export function listFields(doc: HwpxDocument): FieldInfo[] {
   const occurrences = new Map<string, number>();
   const out: FieldInfo[] = [];
   for (const { begin, end } of pairs) {
-    const type = begin.mark.type ?? "";
+    const type = fieldTypeOf(begin.mark.type);
     if (type === "HYPERLINK") continue;
     const name = begin.mark.name ?? "";
     const { mergeKey } = begin.mark;
