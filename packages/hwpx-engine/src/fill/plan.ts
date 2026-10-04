@@ -401,7 +401,7 @@ export function buildFillPlan(
     const tableRange = rangeOf(anchor.section, anchor.table.element);
     if (clashRange(tableRange, rule.id)) continue;
     if (doomed.some((d) => within(d, tableRange))) {
-      report.dropped.push({ ruleId: rule.id, anchor: action.anchor, reason: "표가 삭제·교체되는 범위 안이라 버렸습니다." });
+      report.dropped.push({ ruleId: rule.id, anchor: action.anchor, reason: "표가 삭제·교체되는 범위 안이라 버렸습니다.", kind: "covered" });
       continue;
     }
     const claimKey = `${anchor.section.entryName}:${tr.start}`;
@@ -511,7 +511,7 @@ export function buildFillPlan(
     if (tr === undefined || repeatRuleIds.has(req.rule.ruleId)) return true;
     const range = rangeOf(req.section, tr);
     if (!activeRows.some((x) => same(x.range, range))) return true;
-    report.dropped.push({ ruleId: req.rule.ruleId, anchor: req.rule.anchor, reason: "반복하는 원형 행을 지우는 규칙이라 버렸습니다." });
+    report.dropped.push({ ruleId: req.rule.ruleId, anchor: req.rule.anchor, reason: "반복하는 원형 행을 지우는 규칙이라 버렸습니다.", kind: "covered" });
     return false;
   });
   const tables = groupBy(effectiveRowReqs, (r) => r.table);
@@ -572,7 +572,7 @@ export function buildFillPlan(
     const outer = cands.find((o) => o !== cand && o.kind !== "rows" && within(o.range, cand.range) && !(cand.kind !== "rows" && same(o.range, cand.range)));
     const replaced = replaceRanges.some((x) => within(x.range, cand.range) && !same(x.range, cand.range));
     if (outer === undefined && !replaced) kept.push(cand);
-    else for (const r of cand.rules) report.dropped.push({ ruleId: r.ruleId, anchor: r.anchor, reason: "다른 삭제나 교체의 범위 안이라 버렸습니다." });
+    else for (const r of cand.rules) report.dropped.push({ ruleId: r.ruleId, anchor: r.anchor, reason: "다른 삭제나 교체의 범위 안이라 버렸습니다.", kind: "covered" });
   }
   // 마지막 남은 문단은 지울 수 없다(같은 목록의 형제 문단이 모두 지워지면 문서 순서상 마지막 삭제가 막힌다)
   const lists = groupBy(
@@ -673,7 +673,7 @@ export function buildFillPlan(
     const removed = new Map<string, number>();
     for (const x of sp.removed) removed.set(`${x.kind}:${x.name}`, (removed.get(`${x.kind}:${x.name}`) ?? 0) + 1);
     for (const [anchor, n] of removed) {
-      report.dropped.push({ ruleId: "implicit", anchor, reason: `${subjectOf(target)} 지우는 구간 안에 있어 함께 지웠습니다${n > 1 ? `(${n}곳)` : ""}.` });
+      report.dropped.push({ ruleId: "implicit", anchor, reason: `${subjectOf(target)} 지우는 구간 안에 있어 함께 지웠습니다${n > 1 ? `(${n}곳)` : ""}.`, kind: "covered" });
     }
   };
   /** 이 누름틀이 삭제·교체되는 문단 안인가 */
@@ -762,7 +762,7 @@ export function buildFillPlan(
         continue;
       }
       if (isDeleted(tableRange) || isReplaced(tableRange)) {
-        report.dropped.push({ ruleId: rule.id, anchor: action.anchor, reason: "표가 삭제·교체되는 범위 안이라 버렸습니다." });
+        report.dropped.push({ ruleId: rule.id, anchor: action.anchor, reason: "표가 삭제·교체되는 범위 안이라 버렸습니다.", kind: "covered" });
         continue;
       }
       try {
@@ -771,7 +771,7 @@ export function buildFillPlan(
         for (const c of readTableGrid(target.element).cells) if (isDeleted(rangeOf(target.section, c.tr))) goneAddrs.add(c.row);
         const gone = goneAddrs.size === 0 ? undefined : { rows: goneAddrs, covers: (start: number, end: number) => isDeleted({ entry: target.section.entryName, start, end }) };
         const done = planTableAction(doc, target.section, target.element, action, gone);
-        for (const reason of done.dropped) report.dropped.push({ ruleId: rule.id, anchor: action.anchor, reason });
+        for (const reason of done.dropped) report.dropped.push({ ruleId: rule.id, anchor: action.anchor, reason, kind: "covered" });
         for (const edit of done.edits) tagged.push({ edit, label: rule.id });
         // 편집이 없으면(비율 1, 이미 그 값인 설정) 구역을 바뀐 것으로 치지 않는다: 줄 배치 캐시를 그대로 둔다
         if (done.edits.length > 0) touchedEntries.add(target.section.entryName);
@@ -891,7 +891,7 @@ export function buildFillPlan(
           }
         }
       }
-      if (droppedCount > 0) report.dropped.push({ ruleId: rule.id, anchor: action.anchor, reason: `삭제·교체되는 범위 안의 자리 ${droppedCount}곳을 버렸습니다.` });
+      if (droppedCount > 0) report.dropped.push({ ruleId: rule.id, anchor: action.anchor, reason: `삭제·교체되는 범위 안의 자리 ${droppedCount}곳을 버렸습니다.`, kind: "covered" });
       if (targets > 0) explicit.push({ ruleId: rule.id, type: "fill", anchor: action.anchor, targets, value: digest });
       continue;
     }
@@ -916,7 +916,7 @@ export function buildFillPlan(
     // 앵커 문단(range의 `replace`는 범위 전체, 앞뒤 삽입은 삽입 지점 문단)이 지워지거나, 다른 문단의 교체 범위 안(자기 자신을 교체하는 것은 제외)이면 버린다
     const edgeRange = action.position === "replace" ? anchorRange : rangeOf(anchor.section, edgePar.element);
     if (isDeleted(edgeRange) || replaceRanges.some((x) => within(x.range, edgeRange) && !same(x.range, anchorRange))) {
-      report.dropped.push({ ruleId: rule.id, anchor: action.anchor, reason: "앵커 문단이 삭제·교체되는 범위 안이라 버렸습니다." });
+      report.dropped.push({ ruleId: rule.id, anchor: action.anchor, reason: "앵커 문단이 삭제·교체되는 범위 안이라 버렸습니다.", kind: "covered" });
       continue;
     }
     if (replaceRanges.some((x) => same(x.range, anchorRange) && x.type === "insertText" && x.ruleId !== rule.id)) {
@@ -1078,6 +1078,7 @@ export function buildFillPlan(
   // ── 3b. 문서 안 `{{경로}}` ──────────────────────────────────
   const implicit = new Map<string, { count: number; value: ValueDigest }>();
   const implicitDropped = new Map<string, number>();
+  const implicitMergeDisplay = new Map<string, number>();
   for (const section of doc.sections) {
     // 반복할 원형 행 안의 `{{}}`는 행 반복이 채운다(여기서는 건드리지 않고 `dropped`로도 세지 않는다)
     const inRepeatRow = (par: ParagraphNode): boolean => repeatRows.some((x) => within(x.range, rangeOf(section, par.element)));
@@ -1089,8 +1090,12 @@ export function buildFillPlan(
       mixed,
       (par, start, end) => {
         const r = rangeOf(section, par.element);
-        // 문단 전체가 삭제·교체·구간 치환의 구간 안이거나, 구간 치환이 지우는 문단 일부(시작 문단의 표식 뒤, 끝 문단의 표식 앞)에 자리가 걸치거나, 메일 머지 필드가 맡는 표시 글 안이다
-        return isDeleted(r) || isReplaced(r) || goneOver(par, start, end) !== undefined || mergeOwnedAt(par, start, end);
+        // 문단 전체가 삭제·교체·구간 치환의 구간 안이면 실제로 지워진다(메일 머지 필드의 표시 글이어도 covered가 앞선다)
+        if (isDeleted(r) || isReplaced(r)) return "covered";
+        // 메일 머지 필드가 맡는 표시 글 안이면 그 필드가 값을 넣는다(필드 자신의 구간 치환이 지우는 글도 여기다)
+        if (mergeOwnedAt(par, start, end)) return "mergeDisplay";
+        // 다른 누름틀의 구간 치환이 지우는 문단 일부(시작 문단의 표식 뒤, 끝 문단의 표식 앞)에 자리가 걸친다
+        return goneOver(par, start, end) !== undefined ? "covered" : undefined;
       },
       (par, path) => {
         const r = rangeOf(section, par.element);
@@ -1104,6 +1109,7 @@ export function buildFillPlan(
     for (const path of outcome.missing.keys()) missingPaths.add(path);
     for (const [path, n] of outcome.kept) keptPaths.set(path, (keptPaths.get(path) ?? 0) + n);
     for (const [path, n] of outcome.dropped) implicitDropped.set(path, (implicitDropped.get(path) ?? 0) + n);
+    for (const [path, n] of outcome.mergeDisplay) implicitMergeDisplay.set(path, (implicitMergeDisplay.get(path) ?? 0) + n);
     for (const s of outcome.skipped) {
       report.skipped.push({ ruleId: "implicit", anchor: `{{${s.path}}}`, code: s.code, message: s.message, where: `${section.entryName} [${s.address.join(", ")}]` });
     }
@@ -1122,7 +1128,10 @@ export function buildFillPlan(
     report.actions.push({ ruleId: "implicit", type: "fill", anchor: `{{${path}}}`, targets: x.count, value: x.value });
   }
   for (const [path, n] of [...implicitDropped].sort(([a], [b]) => (a < b ? -1 : 1))) {
-    report.dropped.push({ ruleId: "implicit", anchor: `{{${path}}}`, reason: `삭제·교체되는 범위나 메일 머지 필드가 맡는 표시 글 안의 자리 ${n}곳을 버렸습니다.` });
+    report.dropped.push({ ruleId: "implicit", anchor: `{{${path}}}`, reason: `삭제·교체되는 범위나 누름틀이 지우는 구간 안의 자리 ${n}곳을 버렸습니다.`, kind: "covered" });
+  }
+  for (const [path, n] of [...implicitMergeDisplay].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    report.dropped.push({ ruleId: "implicit", anchor: `{{${path}}}`, reason: `메일 머지 필드가 맡는 표시 글 안의 자리 ${n}곳을 버렸습니다(그 필드가 값을 넣습니다).`, kind: "mergeDisplay" });
   }
 
   // ── 3c. 누름틀·메일 머지 필드 암묵 채움 ──────────────────────
@@ -1186,7 +1195,7 @@ export function buildFillPlan(
     report.actions.push({ ruleId: "implicit", type: "fill", anchor: id, targets: x.count, value: x.value });
   }
   for (const [id, n] of [...implicitFieldDropped].sort(([a], [b]) => (a < b ? -1 : 1))) {
-    report.dropped.push({ ruleId: "implicit", anchor: id, reason: `삭제·교체되는 범위나 반복할 원형 행 안의 ${id.startsWith("merge:") ? "메일 머지 필드" : "누름틀"} ${n}곳을 채우지 않았습니다.` });
+    report.dropped.push({ ruleId: "implicit", anchor: id, reason: `삭제·교체되는 범위나 반복할 원형 행 안의 ${id.startsWith("merge:") ? "메일 머지 필드" : "누름틀"} ${n}곳을 채우지 않았습니다.`, kind: "covered" });
   }
 
   // ── 4. 같은 자리 충돌과 중복 정리 ───────────────────────────

@@ -17,6 +17,7 @@ const TABLE: Readonly<Record<string, string>> = {
   QUICK_NO_DATA: "데이터를 먼저 올려 주세요.",
   QUICK_TOO_LARGE: "결과가 너무 커서 한 번에 만들 수 없습니다. 건수를 줄여 다시 시도해 주세요.",
   QUICK_MULTILINE: "값에 줄바꿈·탭이 있어 문단을 나누지 않고 같은 문단 안의 줄바꿈·탭으로 넣었습니다.",
+  QUICK_DROPPED: "다른 자리(여러 문단에 걸친 누름틀 등)를 값으로 바꾸면서 그 안에 있던 이 자리가 함께 지워져 따로 채우지 않았습니다. 결과에 이 자리가 없어도 되는지 확인해 주세요.",
   QUICK_GENERATE_FAILED: "문서를 만들지 못했습니다.",
   QUICK_RESULT_NOT_FOUND: "그 결과가 없습니다(실패한 건은 파일이 없습니다).",
   QUICK_NO_FOLDER: "저장된 결과 폴더가 없습니다. 먼저 [생성]을 눌러 주세요.",

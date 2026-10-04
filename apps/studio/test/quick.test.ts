@@ -25,7 +25,7 @@ import { HostError } from "../../../packages/viewer/src/host/index.ts";
 import type { PlacesView } from "../src/api-types.ts";
 import { MAX_RECORDS, analyzePlaces, countInvalidRecords, generateAll, listKeys, matchPlaces, parseQuickData } from "../src/quick.ts";
 import { plainOf } from "../src/messages.ts";
-import { FIELD_BEGIN, FIELD_END, P, PIC, R, T, TBL, synth } from "../../../packages/viewer/test/helpers.ts";
+import { BOOKMARK, FIELD_BEGIN, FIELD_END, P, PIC, R, T, TBL, synth } from "../../../packages/viewer/test/helpers.ts";
 import { blockMessages, crossed, fixtureNames, mixedDoc, mutateSection, openCross, readFixture, secBetween } from "./helpers.ts";
 
 const enc = (v: unknown): Uint8Array => new TextEncoder().encode(typeof v === "string" ? v : JSON.stringify(v));
@@ -774,4 +774,51 @@ test("대조표의 badKey(usable:false)는 엔진이 FIELD_NAME_NOT_PATH로 건�
   // 대조표도 같은 자리를 badKey로 보인다
   const matches = matchPlaces(places, parseQuickData(enc(data)).records);
   assert.deepEqual(matches.filter((m) => m.state === "badKey").map((m) => m.key).sort(), [...skipped].sort());
+});
+
+// ── 함께 지워진 자리(이슈 #16) ─────────────────────────────────────
+
+test("알림: 여러 문단에 걸친 바깥 누름틀의 구간 안에서 함께 지워진 안쪽 누름틀·{{키}}·책갈피는 건마다 QUICK_DROPPED 알림(자리 이름·엔진 사유)으로 나온다. 값 원문은 없다", () => {
+  const doc = synth([
+    P(R(T("앞 ") + FIELD_BEGIN("61", "바깥", "1", "x") + T("안내"))),
+    P(R(FIELD_BEGIN("62", "안쪽", "1", "y") + T("안쪽 안내") + FIELD_END("62") + T(" {{안쪽키}} ") + BOOKMARK("책갈피1"))),
+    P(R(T("안내") + FIELD_END("61") + T(" 뒤"))),
+    P(R(T("성명 ") + FIELD_BEGIN("63", "성명", "1", "z") + T("값") + FIELD_END("63"))),
+  ]);
+  const places = analyzePlaces(doc);
+  const data = [
+    { 바깥: "바깥값하나", 안쪽: "안쪽값하나", 안쪽키: "키값하나", 성명: "성명값하나" },
+    { 바깥: "바깥값둘", 안쪽: "안쪽값둘", 안쪽키: "키값둘", 성명: "성명값둘" },
+  ];
+  const results = generateAll(doc, places, parseQuickData(enc(data)), "f.hwpx", "error");
+  assert.equal(results.length, 2);
+  for (const g of results) {
+    assert.deepEqual([g.view.ok, g.view.filled, g.view.skipped, g.view.errors], [true, 2, [], []]);
+    const dropped = g.view.notes.filter((n) => n.code === "QUICK_DROPPED");
+    assert.deepEqual(dropped.map((n) => n.place).sort(), ['누름틀 "안쪽"', '책갈피 "책갈피1"', "{{안쪽키}}"].sort());
+    assert.ok(dropped.every((n) => n.plain === plainOf("QUICK_DROPPED") && (n.detail ?? "").length > 0), "쉬운 말과 엔진 사유가 실린다");
+    assert.deepEqual(g.view.notes.filter((n) => n.code !== "QUICK_DROPPED").map((n) => [n.code, n.place]), [["FIELD_PARAGRAPHS_MERGED", '누름틀 "바깥"']]);
+    const text = JSON.stringify(g.view);
+    for (const v of ["바깥값", "안쪽값", "키값", "성명값"]) assert.ok(!text.includes(v), `알림에 값 원문(${v})이 없다`);
+  }
+  assert.match(plainOf("QUICK_DROPPED"), /함께 지워/);
+});
+
+test("알림: 한컴 메일 머지 서식(merge-fields)의 표시 글 안 {{키}}는 필드가 맡는 자리(mergeDisplay)라 QUICK_DROPPED 알림이 0이다", () => {
+  const bytes = readFixture("merge/merge-fields");
+  const places = analyzePlaces(bytes);
+  const keys = [...new Set([...places.fields.map((f) => f.name), ...places.placeholders.map((p) => p.key)])];
+  const record: Record<string, unknown> = {};
+  for (const k of keys) {
+    const parts = k.split(".");
+    let at = record;
+    for (const part of parts.slice(0, -1)) at = (at[part] ??= {}) as Record<string, unknown>;
+    at[parts[parts.length - 1] as string] = "값";
+  }
+  const [g] = generateAll(bytes, places, parseQuickData(enc([record])), "f.hwpx", "error");
+  assert.equal(g?.view.ok, true, JSON.stringify(g?.view.errors));
+  assert.deepEqual(g?.view.notes.filter((n) => n.code === "QUICK_DROPPED"), []);
+  // 엔진은 그 자리들을 mergeDisplay로 보고한다(알림만 빠진다)
+  const r = generate(bytes, emptyTemplate(), readDataset({ ...record }));
+  assert.ok(r.report.plan.dropped.length > 0 && r.report.plan.dropped.every((d) => d.kind === "mergeDisplay"));
 });

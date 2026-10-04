@@ -234,10 +234,11 @@ const entry = (code: string, detail?: string, place?: string): ReportEntry => {
   return e;
 };
 
-/** 엔진 보고의 앵커(`{{키}}`, `field:이름`)를 사람이 읽는 자리 이름으로 바꾼다. */
+/** 엔진 보고의 앵커(`{{키}}`, `field:이름`, `merge:키`, `bookmark:이름`)를 사람이 읽는 자리 이름으로 바꾼다. */
 function placeOf(anchor: string): string | undefined {
   if (anchor.startsWith("{{")) return anchor;
   if (anchor.startsWith("field:")) return `누름틀 "${anchor.slice("field:".length)}"`;
+  if (anchor.startsWith("bookmark:")) return `책갈피 "${anchor.slice("bookmark:".length)}"`;
   return anchor.startsWith("merge:") ? `메일 머지 "${anchor.slice("merge:".length)}"` : undefined;
 }
 
@@ -266,7 +267,15 @@ function toGenerated(item: BatchItem, places: PlacesView, record: BatchRecord): 
     filled: item.filled,
     skipped: item.skipped.map((s) => entry(s.code, s.message, placeOf(s.anchor))),
     errors: item.errors.map((e) => entry(e.code, e.message)),
-    notes: item.ok ? [...multilineNotes(places, record, item), ...item.warnings.map((w) => entry(w.code, w.message, w.anchor === undefined ? undefined : placeOf(w.anchor)))] : [],
+    notes: item.ok
+      ? [
+          ...multilineNotes(places, record, item),
+          ...item.warnings.map((w) => entry(w.code, w.message, w.anchor === undefined ? undefined : placeOf(w.anchor))),
+          // 함께 지워진 자리(엔진의 `BatchItem.dropped` 가운데 `covered`: 여러 문단에 걸친 바깥 누름틀의 구간 치환으로 사라진 안쪽 누름틀·{{키}} 등).
+          // 메일 머지 필드의 표시 글 안 {{키}}(`mergeDisplay`)는 그 필드가 값을 넣으므로 알리지 않는다
+          ...item.dropped.filter((d) => d.kind === "covered").map((d) => entry("QUICK_DROPPED", d.reason, placeOf(d.anchor))),
+        ]
+      : [],
   };
   if (!item.ok && view.errors.length === 0) view.errors.push(entry("QUICK_GENERATE_FAILED"));
   return item.ok && item.output !== undefined ? { view, output: item.output } : { view: { ...view, ok: false } };
