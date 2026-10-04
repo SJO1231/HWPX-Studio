@@ -22,6 +22,7 @@ export {
   findCandidates,
   compileDocument,
   makeLineAnchor,
+  makeRangeAnchor,
   censusOfDoc,
   type BatchItem,
   type GateMode,

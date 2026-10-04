@@ -1,0 +1,913 @@
+{
+  "schema": "hwpx-studio/template@2",
+  "id": "t0a55e7b9",
+  "version": 7,
+  "meta": {
+    "name": "용역 입찰 공고(시험)"
+  },
+  "source": {
+    "kind": "hwpx",
+    "sha256": "ea12bdeff23c028cd377c0ff342477d548ec7419380f020f1cf00b8eb4a85d0d"
+  },
+  "patterns": [
+    {
+      "id": "pt1",
+      "name": "1단 제목",
+      "marker": {
+        "form": "digitDot",
+        "level": 1
+      },
+      "char": {
+        "bold": true,
+        "height": 1200
+      },
+      "place": "body",
+      "match": [
+        "marker",
+        "bold",
+        "height",
+        "print"
+      ]
+    },
+    {
+      "id": "pt2",
+      "name": "2단 제목",
+      "marker": {
+        "form": "hangulDot",
+        "level": 2
+      },
+      "para": {
+        "print": "parapr-print-synthetic",
+        "align": "LEFT"
+      },
+      "place": "body",
+      "match": [
+        "marker",
+        "paraPrint"
+      ],
+      "rejected": [
+        {
+          "text": "가. 해제한 제안",
+          "sha256": "c84e0572f579deb32be4676e8164ebb40625348453e0043a9eaca66fcd4a422c"
+        }
+      ]
+    }
+  ],
+  "anchors": [
+    {
+      "id": "a1",
+      "kind": "range",
+      "at": {
+        "sectionIndex": 0,
+        "parentPath": []
+      },
+      "from": 10,
+      "to": 14,
+      "print": {
+        "first": {
+          "text": "2. 참가자격",
+          "sha256": "2347d622fd9c4afa13fc445eed3987af98ea6d2c51c0c83317fd83df85796fa2"
+        },
+        "last": {
+          "text": "마. 끝",
+          "sha256": "85d33cf05a5957c9ca014fcec6c58c4f88af328f61f2016f3999fac2d9f3d573"
+        },
+        "count": 5,
+        "sha256": "ee7e8d35213ae14ebc8b1f91b87a66c8cb189b0d981b26e172c76c6604d3c98d"
+      },
+      "pattern": "pt1"
+    },
+    {
+      "id": "a2",
+      "kind": "range",
+      "at": {
+        "sectionIndex": 0,
+        "parentPath": [
+          3,
+          0,
+          1,
+          0
+        ]
+      },
+      "from": 0,
+      "to": 1,
+      "print": {
+        "first": {
+          "text": "제출 서류",
+          "sha256": "33ae146b4c4f02242bb88d41eff41950b4dbcbb9da814c8cbf84230d2d2ea2a5"
+        },
+        "last": {
+          "text": "",
+          "sha256": "c6ca7ff373a9ca1a6c93a454ad14073c201d8d2a89f6053c13699c750fe290b8"
+        },
+        "count": 2,
+        "sha256": "c686b3e5db032405c6a5cd85cde7d06cf64e7399025893c6edbc6cffdfd68a5d"
+      },
+      "pattern": "pt2"
+    },
+    {
+      "id": "a3",
+      "kind": "line",
+      "at": {
+        "sectionIndex": 0,
+        "path": [
+          40
+        ]
+      },
+      "print": {
+        "text": "[특약 사항]",
+        "sha256": "0baff5d2e05ffafe04e8dfaa4aa531a0a231ff07c8164808546e4e77ca87a289"
+      }
+    },
+    {
+      "id": "a4",
+      "kind": "word",
+      "at": {
+        "sectionIndex": 0,
+        "path": [
+          5
+        ]
+      },
+      "start": 4,
+      "end": 7,
+      "print": {
+        "text": "○○○",
+        "before": "담당자: ",
+        "after": ""
+      }
+    },
+    {
+      "id": "a5",
+      "kind": "word",
+      "at": {
+        "sectionIndex": 0,
+        "path": [
+          6
+        ]
+      },
+      "start": 3,
+      "end": 15,
+      "print": {
+        "text": "000-000-0000",
+        "before": "전화: ",
+        "after": " (평일)"
+      }
+    },
+    {
+      "id": "a6",
+      "kind": "word",
+      "at": {
+        "sectionIndex": 1,
+        "path": [
+          2
+        ]
+      },
+      "start": 0,
+      "end": 5,
+      "print": {
+        "text": "0,000",
+        "before": "",
+        "after": "원"
+      }
+    },
+    {
+      "id": "a7",
+      "kind": "line",
+      "at": {
+        "sectionIndex": 1,
+        "path": [
+          9
+        ]
+      },
+      "print": {
+        "text": "단위: 식",
+        "sha256": "288d45146956808459ce5d43fa4975f86a9e6e956a471a218102ce318dd0988a"
+      }
+    },
+    {
+      "id": "a8",
+      "kind": "cell",
+      "table": {
+        "sectionIndex": 0,
+        "ordinal": 0
+      },
+      "row": 1,
+      "col": 1,
+      "print": {
+        "rows": 3,
+        "cols": 2,
+        "head": "267603edb605c918d3ee6714f3bb927483ab6432dda1ec0c31e146150e43daac",
+        "text": "24a399802e27e4f858083004b121e64c764b31eb92a2a14b18c928159e2fd4bb"
+      }
+    },
+    {
+      "id": "a9",
+      "kind": "cell",
+      "table": {
+        "sectionIndex": 0,
+        "ordinal": 0
+      },
+      "row": 2,
+      "col": 1
+    },
+    {
+      "id": "a10",
+      "kind": "mergeField",
+      "key": "계약번호",
+      "occurrence": 0
+    },
+    {
+      "id": "a11",
+      "kind": "field",
+      "name": "비고"
+    },
+    {
+      "id": "a12",
+      "kind": "object",
+      "objectType": "tbl",
+      "sectionIndex": 0,
+      "ordinal": 0,
+      "print": {
+        "objectType": "tbl",
+        "width": 42520,
+        "height": 8000,
+        "count": 6
+      }
+    }
+  ],
+  "values": [
+    {
+      "id": "v1",
+      "name": "사업명",
+      "format": "text"
+    },
+    {
+      "id": "v2",
+      "name": "공고번호",
+      "format": "text"
+    },
+    {
+      "id": "v3",
+      "name": "발주기관",
+      "format": "text"
+    },
+    {
+      "id": "v4",
+      "name": "담당 부서",
+      "format": "text"
+    },
+    {
+      "id": "v5",
+      "name": "담당자",
+      "format": "text"
+    },
+    {
+      "id": "v6",
+      "name": "전화",
+      "format": "text"
+    },
+    {
+      "id": "v7",
+      "name": "팩스",
+      "format": "text"
+    },
+    {
+      "id": "v8",
+      "name": "전자우편",
+      "format": "text"
+    },
+    {
+      "id": "v9",
+      "name": "입찰방식",
+      "format": "text"
+    },
+    {
+      "id": "v10",
+      "name": "계약방법",
+      "format": "text"
+    },
+    {
+      "id": "v11",
+      "name": "납품장소",
+      "format": "text"
+    },
+    {
+      "id": "v12",
+      "name": "납품기한",
+      "format": "text"
+    },
+    {
+      "id": "v13",
+      "name": "개찰일시",
+      "format": "text"
+    },
+    {
+      "id": "v14",
+      "name": "개찰장소",
+      "format": "text"
+    },
+    {
+      "id": "v15",
+      "name": "제출마감",
+      "format": "text"
+    },
+    {
+      "id": "v16",
+      "name": "신청마감",
+      "format": "text"
+    },
+    {
+      "id": "v17",
+      "name": "보증금률",
+      "format": "text"
+    },
+    {
+      "id": "v18",
+      "name": "지역제한",
+      "format": "text"
+    },
+    {
+      "id": "v19",
+      "name": "업종",
+      "format": "text"
+    },
+    {
+      "id": "v20",
+      "name": "계약기간",
+      "format": "text"
+    },
+    {
+      "id": "v21",
+      "name": "품목",
+      "format": "text"
+    },
+    {
+      "id": "v22",
+      "name": "수량",
+      "format": "text"
+    },
+    {
+      "id": "v23",
+      "name": "단위",
+      "format": "text"
+    },
+    {
+      "id": "v24",
+      "name": "특약 내용",
+      "format": "text"
+    },
+    {
+      "id": "v25",
+      "name": "계약금액",
+      "format": "money"
+    },
+    {
+      "id": "v26",
+      "name": "기초금액",
+      "format": "money"
+    },
+    {
+      "id": "v27",
+      "name": "업체구분",
+      "format": "text"
+    },
+    {
+      "id": "v28",
+      "name": "공동수급",
+      "format": "text"
+    },
+    {
+      "id": "v29",
+      "name": "특약여부",
+      "format": "text"
+    },
+    {
+      "id": "v30",
+      "name": "확인 메모",
+      "format": "text"
+    },
+    {
+      "id": "v31",
+      "name": "쓰지 않는 값",
+      "format": "text"
+    }
+  ],
+  "bindings": [
+    {
+      "value": "v1",
+      "key": "사업명"
+    },
+    {
+      "value": "v2",
+      "key": "공고번호"
+    },
+    {
+      "value": "v3",
+      "key": "발주기관"
+    },
+    {
+      "value": "v4",
+      "key": "담당.부서",
+      "aliases": [
+        "담당 부서",
+        "부서(담당)"
+      ]
+    },
+    {
+      "value": "v5",
+      "key": "담당자"
+    },
+    {
+      "value": "v6",
+      "path": "contact.phone"
+    },
+    {
+      "value": "v7",
+      "path": "contact.fax"
+    },
+    {
+      "value": "v8",
+      "key": "전자우편"
+    },
+    {
+      "value": "v9",
+      "key": "입찰방식"
+    },
+    {
+      "value": "v10",
+      "key": "계약방법"
+    },
+    {
+      "value": "v11",
+      "key": "납품장소"
+    },
+    {
+      "value": "v12",
+      "key": "납품기한"
+    },
+    {
+      "value": "v13",
+      "key": "개찰일시"
+    },
+    {
+      "value": "v14",
+      "key": "개찰장소"
+    },
+    {
+      "value": "v15",
+      "key": "제출마감"
+    },
+    {
+      "value": "v16",
+      "key": "신청마감"
+    },
+    {
+      "value": "v17",
+      "key": "보증금률"
+    },
+    {
+      "value": "v18",
+      "key": "지역제한"
+    },
+    {
+      "value": "v19",
+      "key": "업종"
+    },
+    {
+      "value": "v20",
+      "key": "계약기간"
+    },
+    {
+      "value": "v21",
+      "key": "품목"
+    },
+    {
+      "value": "v22",
+      "key": "수량"
+    },
+    {
+      "value": "v23",
+      "key": "단위"
+    },
+    {
+      "value": "v24",
+      "key": "특약 내용"
+    },
+    {
+      "value": "v25",
+      "key": "계약 금액(원)",
+      "aliases": [
+        "계약금액"
+      ]
+    },
+    {
+      "value": "v26",
+      "key": "기초 금액(원)"
+    },
+    {
+      "value": "v27",
+      "key": "업체구분"
+    },
+    {
+      "value": "v28",
+      "key": "공동수급"
+    },
+    {
+      "value": "v29",
+      "key": "특약여부"
+    },
+    {
+      "value": "v30",
+      "key": "확인 메모"
+    }
+  ],
+  "places": [
+    {
+      "id": "p1",
+      "kind": "placeholder",
+      "key": "사업명",
+      "value": "v1"
+    },
+    {
+      "id": "p2",
+      "kind": "placeholder",
+      "key": "공고번호",
+      "value": "v2"
+    },
+    {
+      "id": "p3",
+      "kind": "placeholder",
+      "key": "발주기관",
+      "value": "v3"
+    },
+    {
+      "id": "p4",
+      "kind": "placeholder",
+      "key": "담당 부서",
+      "value": "v4"
+    },
+    {
+      "id": "p5",
+      "kind": "placeholder",
+      "key": "담당자",
+      "value": "v5"
+    },
+    {
+      "id": "p6",
+      "kind": "placeholder",
+      "key": "전화",
+      "value": "v6"
+    },
+    {
+      "id": "p7",
+      "kind": "placeholder",
+      "key": "팩스",
+      "value": "v7"
+    },
+    {
+      "id": "p8",
+      "kind": "placeholder",
+      "key": "전자우편",
+      "value": "v8"
+    },
+    {
+      "id": "p9",
+      "kind": "placeholder",
+      "key": "입찰방식",
+      "value": "v9"
+    },
+    {
+      "id": "p10",
+      "kind": "placeholder",
+      "key": "계약방법",
+      "value": "v10"
+    },
+    {
+      "id": "p11",
+      "kind": "placeholder",
+      "key": "납품장소",
+      "value": "v11"
+    },
+    {
+      "id": "p12",
+      "kind": "placeholder",
+      "key": "납품기한",
+      "value": "v12"
+    },
+    {
+      "id": "p13",
+      "kind": "placeholder",
+      "key": "개찰일시",
+      "value": "v13"
+    },
+    {
+      "id": "p14",
+      "kind": "placeholder",
+      "key": "개찰장소",
+      "value": "v14"
+    },
+    {
+      "id": "p15",
+      "kind": "placeholder",
+      "key": "제출마감",
+      "value": "v15"
+    },
+    {
+      "id": "p16",
+      "kind": "placeholder",
+      "key": "신청마감",
+      "value": "v16"
+    },
+    {
+      "id": "p17",
+      "kind": "placeholder",
+      "key": "보증금률",
+      "value": "v17"
+    },
+    {
+      "id": "p18",
+      "kind": "placeholder",
+      "key": "지역제한",
+      "value": "v18"
+    },
+    {
+      "id": "p19",
+      "kind": "placeholder",
+      "key": "업종",
+      "value": "v19"
+    },
+    {
+      "id": "p20",
+      "kind": "placeholder",
+      "key": "계약기간",
+      "value": "v20"
+    },
+    {
+      "id": "p21",
+      "kind": "placeholder",
+      "key": "특약 내용",
+      "value": "v24",
+      "where": "b4"
+    },
+    {
+      "id": "p22",
+      "kind": "mailMerge",
+      "key": "사업명",
+      "value": "v1"
+    },
+    {
+      "id": "p23",
+      "kind": "mailMerge",
+      "key": "공고번호",
+      "value": "v2"
+    },
+    {
+      "id": "p24",
+      "kind": "mailMerge",
+      "key": "발주기관",
+      "value": "v3"
+    },
+    {
+      "id": "p25",
+      "kind": "mailMerge",
+      "key": "담당자",
+      "value": "v5"
+    },
+    {
+      "id": "p26",
+      "kind": "mailMerge",
+      "key": "개찰일시",
+      "value": "v13"
+    },
+    {
+      "id": "p27",
+      "kind": "mailMerge",
+      "key": "품목",
+      "value": "v21"
+    },
+    {
+      "id": "p28",
+      "kind": "mailMerge",
+      "key": "수량",
+      "value": "v22"
+    },
+    {
+      "id": "p29",
+      "kind": "mailMerge",
+      "key": "계약금액",
+      "value": "v25"
+    },
+    {
+      "id": "p30",
+      "kind": "clickHere",
+      "name": "사업명",
+      "value": "v1"
+    },
+    {
+      "id": "p31",
+      "kind": "clickHere",
+      "name": "담당 부서",
+      "value": "v4"
+    },
+    {
+      "id": "p32",
+      "kind": "clickHere",
+      "name": "담당자",
+      "value": "v5"
+    },
+    {
+      "id": "p33",
+      "kind": "clickHere",
+      "name": "전자우편",
+      "value": "v8"
+    },
+    {
+      "id": "p34",
+      "kind": "clickHere",
+      "name": "입찰방식",
+      "value": "v9"
+    },
+    {
+      "id": "p35",
+      "kind": "clickHere",
+      "name": "확인 메모",
+      "occurrence": 1,
+      "value": "v30"
+    },
+    {
+      "id": "p36",
+      "kind": "word",
+      "anchor": "a4",
+      "value": "v5"
+    },
+    {
+      "id": "p37",
+      "kind": "word",
+      "anchor": "a5",
+      "value": "v6"
+    },
+    {
+      "id": "p38",
+      "kind": "word",
+      "anchor": "a6",
+      "value": "v26"
+    },
+    {
+      "id": "p39",
+      "kind": "line",
+      "anchor": "a7",
+      "value": "v23"
+    },
+    {
+      "id": "p40",
+      "kind": "cell",
+      "anchor": "a8",
+      "value": "v21"
+    },
+    {
+      "id": "p41",
+      "kind": "cell",
+      "anchor": "a9",
+      "value": "v22"
+    }
+  ],
+  "slots": [
+    {
+      "id": "s1",
+      "name": "참가자격",
+      "anchors": [
+        "a1"
+      ],
+      "parent": null
+    },
+    {
+      "id": "s2",
+      "name": "특약",
+      "anchors": [
+        "a3"
+      ],
+      "parent": null
+    },
+    {
+      "id": "s3",
+      "name": "제출서류",
+      "anchors": [
+        "a2"
+      ],
+      "parent": null
+    }
+  ],
+  "blocks": [
+    {
+      "id": "b1",
+      "slot": "s1",
+      "name": "일반 경쟁",
+      "priority": 10,
+      "when": {
+        "path": "v25",
+        "op": "ge",
+        "value": 100000000
+      },
+      "content": {
+        "text": "{{사업명}}은(는) 일반 경쟁 입찰입니다."
+      }
+    },
+    {
+      "id": "b2",
+      "slot": "s1",
+      "name": "중소기업",
+      "priority": 20,
+      "when": {
+        "all": [
+          {
+            "path": "v27",
+            "op": "eq",
+            "value": "중소기업"
+          },
+          {
+            "path": "v25",
+            "op": "lt",
+            "value": 100000000
+          }
+        ]
+      },
+      "content": {
+        "text": "중소기업만 참가할 수 있습니다."
+      }
+    },
+    {
+      "id": "b3",
+      "slot": "s1",
+      "name": "직접생산",
+      "priority": 30,
+      "proto": {
+        "id": "k7d20a4e1",
+        "version": 3
+      },
+      "content": {
+        "fragment": "408d2074d39c5a8c1d8aa419f2e10ec55c8b674225e8402a2caf6e8c2b294283"
+      },
+      "when": {
+        "path": "v28",
+        "op": "eq",
+        "value": "예"
+      }
+    },
+    {
+      "id": "b4",
+      "slot": "s2",
+      "name": "특약 있음",
+      "when": {
+        "path": "v29",
+        "op": "eq",
+        "value": "있음"
+      },
+      "content": {
+        "text": "특약 사항\n{{특약 내용}}"
+      }
+    },
+    {
+      "id": "b5",
+      "slot": "s2",
+      "name": "특약 없음",
+      "content": {
+        "text": "해당 없음"
+      }
+    },
+    {
+      "id": "b6",
+      "slot": "s3",
+      "name": "기본 서류",
+      "content": {
+        "text": "1. 입찰서\n2. 사업자등록증"
+      }
+    },
+    {
+      "id": "b7",
+      "slot": "s3",
+      "name": "추가 서류",
+      "forkedFrom": {
+        "id": "k7d20a4e1",
+        "version": 2
+      },
+      "when": {
+        "path": "v26",
+        "op": "gt",
+        "value": 50000000
+      },
+      "content": {
+        "text": "3. 실적 증명서"
+      }
+    }
+  ],
+  "options": {
+    "missing": "error",
+    "unregistered": "keep",
+    "requireConfirm": false,
+    "mixedFormat": "first"
+  },
+  "origin": {
+    "kind": "lite",
+    "revision": 12
+  }
+}

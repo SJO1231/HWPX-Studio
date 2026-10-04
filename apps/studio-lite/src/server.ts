@@ -1,4 +1,8 @@
 import { createServer } from 'node:http';
+import { stripTypeScriptTypes } from 'node:module';
+import { cleanPath, resolveShared, HostError } from '../../../packages/viewer/src/host/index.ts';
+import { createQuick } from './quick-api.ts';
+import { plainOf } from './quick-messages.ts';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -9,15 +13,17 @@ import { demo, demoSources } from './demo.ts';
 import { createG2B, G2BRequestError } from './g2b.ts';
 import { parseDocument, openPackage } from '@hwpx-studio/engine';
 
+const pathCode=(e:unknown)=>e instanceof Error && 'code' in e && typeof e.code==='string'?{code:e.code,plain:plainOf(e.code)}:{};
 const ROOT=fileURLToPath(new URL('../',import.meta.url));
 export function createApp(database=':memory:') {
   const db=new DatabaseSync(database);
   db.exec('CREATE TABLE IF NOT EXISTS project_revision (id INTEGER PRIMARY KEY, name TEXT NOT NULL, document TEXT NOT NULL, saved_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)');
   const g2b=createG2B(db);
+  const quick=createQuick();
   const server=createServer(async(req,res)=>{
-    const send=(status:number,body:unknown,type='application/json; charset=utf-8')=>{
+    const send=(status:number,body:unknown,type='application/json; charset=utf-8',headers:Record<string,string>={})=>{
       const data=body instanceof Uint8Array ? body : type.startsWith('application/json') ? JSON.stringify(body) : String(body);
-      res.writeHead(status,{'Content-Type':type,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; connect-src 'self'"}); res.end(data);
+      res.writeHead(status,{'Content-Type':type,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; connect-src 'self'",...headers}); res.end(data);
     };
     try {
       const port=(server.address() as any)?.port;
@@ -26,6 +32,8 @@ export function createApp(database=':memory:') {
       const url=new URL(req.url??'/',origins[0]);
       const path=url.pathname;
       if(req.method==='GET') {
+        const result=quick.get(path,url.searchParams);
+        if(result)return send(200,result.body,'application/vnd.hancom.hwpx',result.name?{'Content-Disposition':`attachment; filename="document.hwpx"; filename*=UTF-8''${encodeURIComponent(result.name)}`}:{});
         if(path==='/api/health')return send(200,{ok:true});
         if(path==='/api/g2b/profiles')return send(200,{profiles:g2b.profiles()});
         if(path==='/api/projects')return send(200,db.prepare('SELECT name, MAX(id) AS id, MAX(saved_at) AS saved_at FROM project_revision GROUP BY name ORDER BY id DESC').all());
@@ -35,7 +43,14 @@ export function createApp(database=':memory:') {
         }
         if(path==='/api/demo')return send(200,demo());
         if(path==='/api/demo-sources')return send(200,demoSources);
-        const files:Record<string,string>={'/':'web/index.html','/app.js':'web/app.js','/style.css':'web/style.css','/rhwp.js':'vendor/rhwp/rhwp.js','/rhwp_bg.wasm':'vendor/rhwp/rhwp_bg.wasm'};
+        const files:Record<string,string>={'/':'web/quick.html','/template':'web/index.html','/quick.js':'web/quick.js','/quick.css':'web/quick.css','/app.js':'web/app.js','/style.css':'web/style.css','/rhwp.js':'vendor/rhwp/rhwp.js','/rhwp_bg.wasm':'vendor/rhwp/rhwp_bg.wasm'};
+        const shared=cleanPath(path);
+        const sharedFile=shared===undefined?undefined:resolveShared(shared);
+        if(sharedFile){
+          const bytes=readFileSync(sharedFile.file);
+          const body=sharedFile.strip?stripTypeScriptTypes(bytes.toString('utf8'),{mode:'strip'}).replace(/(from\s*)"@rhwp\/core"/g,'$1"/vendor/rhwp/rhwp.js"'):bytes;
+          return send(200,body,sharedFile.type);
+        }
         if(files[path]) {
           const types:Record<string,string>={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.wasm':'application/wasm'};
           return send(200,readFileSync(resolve(ROOT,files[path])),types[extname(files[path])]);
@@ -47,6 +62,7 @@ export function createApp(database=':memory:') {
       const chunks:Buffer[]=[];let size=0;
       for await(const chunk of req){size+=chunk.length;if(size>32*1024*1024)return send(413,{error:'요청은 32MB 이내여야 합니다.'});chunks.push(chunk);}
       const input=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      if(path.startsWith('/api/quick/'))return send(200,quick.post(path,input));
       if(path==='/api/g2b/profiles') {
         if(!req.headers.origin)return send(403,{error:'생성 프로필은 Studio의 Helper 연결 화면에서 설정하세요.'});
         return send(200,{profile:g2b.saveProfile(input)});
@@ -78,7 +94,7 @@ export function createApp(database=':memory:') {
         return send(200,{id:Number(result.lastInsertRowid),saved:true});
       }
       send(404,{error:'없는 API입니다.'});
-    } catch(e) {send(e instanceof G2BRequestError?e.status:400,{error:e instanceof Error?e.message:'요청 처리에 실패했습니다.',...(e instanceof G2BRequestError?{status:'error',code:e.code}:{})});}
+    } catch(e) {send(e instanceof G2BRequestError || e instanceof HostError?e.status:400,{error:e instanceof Error?e.message:'요청 처리에 실패했습니다.',...(e instanceof G2BRequestError?{status:'error',code:e.code}:pathCode(e))});}
   });
   server.on('close',()=>db.close());
   return server;

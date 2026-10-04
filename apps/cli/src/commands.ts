@@ -19,6 +19,7 @@ import {
   listFields,
   listTables,
   makeLineAnchor,
+  makeRangeAnchor,
   openPackage,
   parseDocument,
   parseText,
@@ -297,14 +298,22 @@ async function runGenerate(
   }
 }
 
+/** `--range 구역:시작-끝` → 구역 번호와 포함 범위 */
+function rangeArg(text: string): { sectionIndex: number; from: number; to: number } {
+  const m = /^(\d+):(\d+)-(\d+)$/.exec(text);
+  if (m === null || Number(m[2]) > Number(m[3])) throw new UsageError(`--range는 구역:시작-끝 꼴(시작 ≤ 끝, 0부터 세는 문단 번호)이어야 합니다(예: 0:3-7): ${text}`);
+  return { sectionIndex: Number(m[1]), from: Number(m[2]), to: Number(m[3]) };
+}
+
 async function fragmentImport(args: string[], out: Out): Promise<number> {
   const usage =
-    "hwpx fragment import <대상> <조각.json> --section N --index I [--parent 주소] [--before] -o 출력.hwpx [--mode baseline|strict|repair] [--reissue-internal] [--report r.json] [--overwrite]";
+    "hwpx fragment import <대상> <조각.json> (--section N --index I [--before] | --range 구역:시작-끝) [--parent 주소] -o 출력.hwpx [--mode baseline|strict|repair] [--reissue-internal] [--report r.json] [--overwrite]";
   const p = parse(
     args,
     {
       section: { type: "string" },
       index: { type: "string" },
+      range: { type: "string" },
       parent: { type: "string" },
       before: { type: "boolean" },
       output: { type: "string", short: "o" },
@@ -319,8 +328,13 @@ async function fragmentImport(args: string[], out: Out): Promise<number> {
   const [target = "", fragmentFile = ""] = p.positionals;
   rejectText(target, "fragment import");
   const output = need(p, "output", usage);
-  const sectionIndex = intValue(need(p, "section", usage), "section");
-  const index = intValue(need(p, "index", usage), "index");
+  const rangeText = str(p, "range");
+  if (rangeText !== undefined && (str(p, "section") !== undefined || str(p, "index") !== undefined || flag(p, "before"))) {
+    throw new UsageError(`--range는 --section·--index·--before와 함께 쓸 수 없습니다.\n사용법: ${usage}`);
+  }
+  const range = rangeText === undefined ? undefined : rangeArg(rangeText);
+  const sectionIndex = range === undefined ? intValue(need(p, "section", usage), "section") : range.sectionIndex;
+  const index = range === undefined ? intValue(need(p, "index", usage), "index") : 0;
   const parent = str(p, "parent") === undefined ? [] : parseAddress(str(p, "parent") ?? "");
   const mode = modeOf(p, usage);
   const overwrite = flag(p, "overwrite");
@@ -336,13 +350,21 @@ async function fragmentImport(args: string[], out: Out): Promise<number> {
     if (e instanceof InputError) throw e;
     throw new InputError(`조각 파일이 JSON이 아닙니다: ${fragmentFile}`);
   }
-  const anchor = makeLineAnchor(doc, "target", sectionIndex, [...parent, index]);
-  if (anchor === undefined) throw new UsageError(`구역 ${sectionIndex}에 삽입 지점 문단 [${[...parent, index].join(", ")}]이 없습니다.`);
+  let anchor;
+  if (range !== undefined) {
+    // 범위 교체: range 앵커(7.10)의 범위 문단들을 지우고 그 자리에 조각을 넣는다
+    const draft = makeRangeAnchor(doc, sectionIndex, parent, range.from, range.to);
+    if (draft === undefined) throw new UsageError(`구역 ${sectionIndex}의 [${parent.join(", ")}] 목록에 문단 ${range.from}~${range.to}이 없습니다.`);
+    anchor = { id: "target", ...draft };
+  } else {
+    anchor = makeLineAnchor(doc, "target", sectionIndex, [...parent, index]);
+    if (anchor === undefined) throw new UsageError(`구역 ${sectionIndex}에 삽입 지점 문단 [${[...parent, index].join(", ")}]이 없습니다.`);
+  }
   // 조각 안·문서 안의 `{{}}`는 건드리지 않는다(데이터가 없으므로 누락 정책은 keep)
   const template = readTemplate({
     schema: "hwpx-studio/template@1",
     anchors: [anchor],
-    rules: [{ id: "import", do: { type: "inject", anchor: "target", position: flag(p, "before") ? "before" : "after", fragment } }],
+    rules: [{ id: "import", do: { type: "inject", anchor: "target", position: range !== undefined ? "replace" : flag(p, "before") ? "before" : "after", fragment } }],
   });
   const result = await runGenerate(target, bytes, template, readDataset({}), { mode, missing: "keep", dryRun: false, fragments: {}, reissueInternal: flag(p, "reissue-internal") });
   return finishGenerate(out, result, output, [target, fragmentFile], overwrite, reportPath);

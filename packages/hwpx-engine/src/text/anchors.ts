@@ -167,6 +167,9 @@ export function resolveTextAnchors(doc: TextDoc, template: Template, only: Reado
       case "object":
         resolved = resolveObject(a);
         break;
+      case "range":
+        issues.push(makeIssue("error", "ANCHOR_NOT_FOUND", `앵커 ${a.id}: range 앵커는 HWPX 문서에만 있어 텍스트 문서에서는 찾지 못합니다.`, a.id));
+        break;
     }
     if (resolved !== undefined) anchors.set(a.id, resolved);
   }
