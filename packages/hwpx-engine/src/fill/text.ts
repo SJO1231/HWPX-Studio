@@ -161,13 +161,24 @@ function placeNewText(ctx: Ctx, par: ParagraphNode, value: string, reason: strin
   return { edit: span(ctx, el.closeStart, el.closeStart, `<${tag}>${body}</${tag}>`, reason), at: el.closeStart };
 }
 
+/** 문단(모든 run)의 줄바꿈·탭 요소를 지우는 편집을 `plan`에 더한다. 그 밖의 인라인(고정폭 공백·형광펜·변경 추적 표식 등)은 그대로 둔다. */
+function dropBreaks(ctx: Ctx, par: ParagraphNode, reason: string, plan: TextPlan): void {
+  for (const piece of par.pieces) {
+    if (piece.kind !== "inline" || !/^[\n\t]$/.test(par.logicalText.slice(piece.logicalStart, piece.logicalEnd))) continue;
+    plan.edits.push(span(ctx, piece.start, piece.end, "", reason));
+    plan.repls.push({ start: piece.logicalStart, end: piece.logicalEnd, text: "" });
+  }
+}
+
 /**
  * 문단의 글을 값으로 바꾼다(`line` 앵커). 첫 글 조각에 값을 넣고 나머지 글 조각을 비운다.
  * 글 조각이 없으면 첫 run 안에 `hp:t`를 넣는다(자기닫힘 run은 펼친다).
+ * 문단에 원래 있던 줄바꿈·탭 요소는 모든 run에서 지운다(값만 남긴다. 값의 줄바꿈·탭은 `valueXml`이 새로 넣는다).
  */
 export function planLineFill(ctx: Ctx, par: ParagraphNode, value: string, reason: string): TextPlan | Fail {
   const texts = par.pieces.filter(isTextPiece);
   const plan: TextPlan = { edits: [], repls: [] };
+  dropBreaks(ctx, par, reason, plan);
   if (texts.length > 0) {
     texts.forEach((piece, i) => {
       const r = replacePiece(ctx, par, piece, i === 0 ? value : "", reason);
@@ -185,9 +196,10 @@ export function planLineFill(ctx: Ctx, par: ParagraphNode, value: string, reason
   return plan;
 }
 
-/** 문단의 글 조각을 모두 비운다(셀의 나머지 문단). */
+/** 문단의 글 조각과 줄바꿈·탭 요소를 모두 비운다(셀의 나머지 문단). */
 export function planClear(ctx: Ctx, par: ParagraphNode, reason: string): TextPlan {
   const plan: TextPlan = { edits: [], repls: [] };
+  dropBreaks(ctx, par, reason, plan);
   for (const piece of par.pieces.filter(isTextPiece)) {
     const r = replacePiece(ctx, par, piece, "", reason);
     plan.edits.push(r.edit);

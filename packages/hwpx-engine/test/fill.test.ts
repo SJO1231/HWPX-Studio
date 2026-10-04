@@ -373,11 +373,12 @@ test("셀·줄 채움: 객체가 든 문단·셀은 FILL_HAS_OBJECT, 구역 설�
   assert.equal(paragraphTexts(reparse(done(generate(blocks, first, ds({}))).output))[0], "￼￼새 제목");
 });
 
-test("줄 채움: 첫 글 조각에 값을 넣고 나머지 글 조각을 비운다(탭 같은 인라인은 남는다). 빈 문단은 hp:t를 만들어 넣는다", () => {
+test("줄 채움: 첫 글 조각에 값을 넣고 나머지 글 조각을 비운다(문단의 탭·줄바꿈 요소는 지운다). 빈 문단은 hp:t를 만들어 넣는다", () => {
   const mixed = readFixture("hancom/ph-mixed");
   const t = tpl({ anchors: [lineAnchor("l", [2], "담당: {{manager.name}}\t{{manager.phone}}")], rules: [fillRule("r", "l", { text: "새 글" })] });
   const r = done(generate(mixed, t, ds({}), { missing: "keep" }));
-  assert.equal(paragraphTexts(reparse(r.output))[2], "새 글\t");
+  // 문단의 탭 요소는 지운다(이슈 #14 결정 2026-10-04. 이전에는 "새 글\t"로 탭이 남았다)
+  assert.equal(paragraphTexts(reparse(r.output))[2], "새 글");
 
   // 빈 문단: run 안에 hp:t가 없다
   const empty = buildHwpx(['<hp:p id="0" paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="1"/></hp:p>']);
