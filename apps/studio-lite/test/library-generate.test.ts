@@ -163,4 +163,3 @@ test('보관함 생성: 데이터 판·행·해시가 맞지 않는 이번 건 �
   assert.deepEqual(snapshot(state.db()),before);assert.equal(library.cases().length,casesBefore);
   assert.equal(library.dataset(data.id,data.version).document,document);
 }));
-
