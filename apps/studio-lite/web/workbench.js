@@ -7,7 +7,8 @@ const state = {
   session: undefined, kind: 'hwpx', sourceText: '', name: '', paragraphs: [], edits: new Map(), headings: new Map(), blocks: [],
   keys: [], records: 0, index: 0, chosen: undefined, selection: undefined,
   sourceDoc: undefined, resultDoc: undefined, view: undefined, viewMode: 'source', output: undefined,
-  busy: false, dirty: false, caret: undefined,
+  busy: false, dirty: false, caret: undefined, recent: [],
+  presentation: 'document', sourceVisible: true, navigatorVisible: true, focusReturn: undefined,
   comparison: undefined, comparisonText: '', layout: {text: '', units: []}, history: [], future: [],
   marks: new Map(), invalidations: Promise.resolve(), revision: 0, openTicket: 0,
 };
@@ -46,6 +47,9 @@ function controls() {
     button.disabled=name==='copyKey'?!available||!$('#key-select').value.trim():name==='importSelection'?!canEdit||!state.comparisonText:name==='copySelection'?!available:!canEdit;
   }
   $('#dirty-state').hidden=!state.dirty;
+  document.body.dataset.loaded=String(Boolean(state.session));
+  $('#reference-open').disabled=!available;
+  $('#focus-edit').disabled=!available;
   const download=$('#download'),ready=Boolean(state.output)&&!state.busy;
   download.classList.toggle('disabled',!ready);download.setAttribute('aria-disabled',String(!ready));download.tabIndex=ready?0:-1;
   if(ready)download.href=state.output.outputUrl;else download.removeAttribute('href');
@@ -101,12 +105,12 @@ function renderEditor() {
     const number=document.createElement('button');number.type='button';number.className='line-number';number.textContent=unit.from===unit.to?String(unit.from+1):(unit.from+1)+'–'+(unit.to+1);number.title=(unit.block?'블록 · ':'')+(!row.editable?reasonOf(row.reason):'원본 위치');number.setAttribute('aria-label','원본 '+number.textContent);number.tabIndex=-1;
     number.addEventListener('click',()=>selectRow(unit.id,{focus:true}));line.append(number,document.createTextNode(unit.text+'​'));mirror.append(line);
   }
-  markEditorSelection();controls();
+  markEditorSelection();controls();renderNavigation();
 }
 function markEditorSelection() {
   const caret=state.caret??{start:0,end:0},chosen=editorSelection(state.layout,caret.start,caret.end);
   for(const line of $('#editor-mirror').children)line.classList.toggle('selected-unit',chosen.some(u=>u.id===line.dataset.id));
-  const a=chosen[0],z=chosen.at(-1);$('#selection-info').textContent=a?(a.from+1)+(a.from!==z.to?'–'+(z.to+1):''):'';
+  const a=chosen[0],z=chosen.at(-1);$('#selection-info').textContent=a?(state.kind==='text'?'줄 ':'문단 ')+(a.from+1)+(a.from!==z.to?'–'+(z.to+1):''):'';
 }
 function captureCaret(sync=true) {
   const input=$('#document-editor');state.caret={start:input.selectionStart,end:input.selectionEnd};
@@ -249,6 +253,7 @@ async function openViewer(url, mode, openTicket) {
 }
 async function showResult() {
   if (!state.output || state.busy) return;
+  revealSource();
   setBusy(true, '생성 결과를 표시하는 중입니다.');
   try {
     if (state.kind === 'text') renderTextDocument('result');
@@ -285,7 +290,7 @@ function updateData(info) {
     }
     preview.hidden = false;
   } else preview.hidden = true;
-  controls();
+  controls(); renderNavigation();
 }
 async function installWorkspace(result, ticket) {
   if (!opens.current(ticket)) return;
@@ -302,6 +307,7 @@ async function installWorkspace(result, ticket) {
   state.output = undefined; state.viewMode = 'source'; state.dirty = false; state.revision++;
   state.history=[];state.future=[];state.comparison=undefined; $('#output-info').textContent = ''; $('#data-text').value = '';
   $('#document-name').textContent = state.name; $('#document-name').title = state.name;
+  state.focusReturn=undefined;state.sourceVisible=state.kind!=='text';applyPresentation();
   renderParagraphs(); updateData(result.dataInfo);
   if (result.index !== undefined) { state.index = result.index; $('#record-select').value = String(result.index); }
   $('#pages').replaceChildren();
@@ -327,12 +333,17 @@ function base64(bytes) {
 }
 async function openFile(file, restore = false) {
   if (!file || state.busy) return;
+  if (state.dirty && !window.confirm('저장하지 않은 변경이 있습니다. 저장하려면 취소하세요. 다른 작업을 열까요?')) return;
   hideMenu(); closeMenus(); const ticket = opens.begin(); picks.cancel(); dataLoads.cancel(); invalidateOutput();
   setBusy(true, restore ? '저장한 작업을 불러오는 중입니다.' : '문서를 여는 중입니다.');
   try {
     const result = restore ? await api('restore', {workspace: await file.text()})
       : await api('open', {name: file.name, content: base64(new Uint8Array(await file.arrayBuffer()))});
-    if (opens.current(ticket)) await installWorkspace(result, ticket);
+    if (opens.current(ticket)) {
+      await installWorkspace(result, ticket);
+      $('#flow-label').textContent=restore?'작업 이어서':'문서 제작';
+      state.recent=[{file,restore},...state.recent.filter(item=>item.file!==file)].slice(0,5);renderRecent();
+    }
   } catch (error) { if (opens.current(ticket)) status(errorMessage(error), 'error'); }
   finally { if (opens.current(ticket)) setBusy(false); }
 }
@@ -395,6 +406,7 @@ async function generate(asTemplate = false) {
       if (state.sourceDoc) mountDocument(state.sourceDoc, 'source');
       status('생성은 완료됐지만 화면 표시가 어렵습니다. 내려받기로 확인해주세요. ' + errorMessage(error), 'error'); return;
     }
+    revealSource();
     const notes = Array.isArray(result.notes) && result.notes.length ? ' · ' + result.notes.join(' · ') : '';
     status(asTemplate ? '누름틀 ' + result.promoted + '개를 만들었습니다. 서식 HWPX 저장을 누르세요.' : textTemplate ? '글을 반영했습니다. 미연결 ' + result.unresolved + '곳은 {{키}}로 남겼습니다. 데이터를 연결하면 값을 채울 수 있습니다.' : '생성 완료 · ' + result.changed + '개 편집, ' + result.filled + '곳 채움' + notes, 'success');
   } catch (error) {
@@ -423,7 +435,7 @@ function undo(redo=false) {
 }
 function useHeading(id,level){remember();state.headings.set(id,level);changed();renderEditor();renderOutline();}
 function replaceSelected(value){const c=state.caret??{start:0,end:0};applyEditorChange(c.start,c.end,value);}
-function insertKey(){const key=$('#key-select').value.trim();if(!key||!/^[\p{L}\p{N}_-]+(?:\.[\p{L}\p{N}_-]+)*$/u.test(key)){ $('#key-select').focus();status('공백 없는 필드 이름을 입력하세요.','error');return;} replaceSelected('{{'+key+'}}');}
+function insertKey(){const key=$('#key-select').value.trim();if(!key||!/^[\p{L}\p{N}_-]+(?:\.[\p{L}\p{N}_-]+)*$/u.test(key)){ $('#key-select').focus();status('공백 없는 입력 항목 이름을 입력하세요.','error');return;} replaceSelected('{{'+key+'}}');}
 function makeBold(){const c=state.caret;if(!c||c.start===c.end)return;const text=state.layout.text.slice(c.start,c.end);replaceSelected(text.startsWith('**')&&text.endsWith('**')?text.slice(2,-2):'**'+text+'**');}
 
 async function copyKey() {
@@ -538,7 +550,8 @@ document.addEventListener('pointerdown', (event) => {
   if (!(event.target instanceof Element) || !event.target.closest('details.menu')) closeMenus();
 });
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape') { hideMenu(); closeMenus(); clearSelection(); }
+  if (event.key === 'F8') { event.preventDefault(); toggleFocus(); return; }
+  if (event.key === 'Escape') { if(state.focusReturn){toggleFocus();return;} hideMenu(); closeMenus(); clearSelection(); }
   if (event.ctrlKey || event.metaKey) {
     if (event.key.toLowerCase() === 's') { event.preventDefault(); void saveWork(); }
     else if (event.key === 'Enter') { event.preventDefault(); void generate(); }
@@ -564,6 +577,7 @@ window.addEventListener('resize', () => {
   cancelAnimationFrame(resizeFrame);
   resizeFrame = requestAnimationFrame(() => { renderEditor();renderViewerNumbers(); }); hideMenu();
 });
+window.addEventListener('beforeunload',event=>{if(state.dirty){event.preventDefault();event.returnValue='';}});
 window.addEventListener('pagehide', () => {
   opens.cancel(); picks.cancel(); views.cancel(); dataLoads.cancel(); keyCopies.cancel(); bodyCopies.cancel();
   state.view?.destroy(); state.sourceDoc?.free(); state.resultDoc?.free();
@@ -671,6 +685,78 @@ $('#open-comparison').addEventListener('click',()=>$('#compare-file').click());
 $('#comparison-view').addEventListener('click',()=>{if(state.comparison)renderTextDocument('comparison');else $('#compare-file').click();});
 $('#compare-file').addEventListener('change',async event=>{
   const file=event.target.files[0];event.target.value='';if(!file||state.busy)return;const session=state.session;setBusy(true,'비교 문서 여는 중');
-  try{const result=await api('open',{name:file.name,content:base64(new Uint8Array(await file.arrayBuffer()))});if(session!==state.session)return;state.comparison={name:result.name,paragraphs:result.paragraphs};renderTextDocument('comparison');status('');}
+  try{const result=await api('open',{name:file.name,content:base64(new Uint8Array(await file.arrayBuffer()))});if(session!==state.session)return;state.comparison={name:result.name,paragraphs:result.paragraphs};renderTextDocument('comparison');revealSource();renderNavigation();status('');}
   catch(error){status(errorMessage(error),'error');}finally{setBusy(false);}
 });
+
+
+// 배치 전환은 문서/선택을 다시 만들지 않고 현재 창과 스크롤을 보존한다.
+function presentationPosition() {
+  return {source: $('#page-scroll').scrollTop, editor: $('#editor-scroll').scrollTop,
+    sourceLeft: $('#page-scroll').scrollLeft, editorLeft: $('#editor-scroll').scrollLeft,
+    start: $('#document-editor').selectionStart, end: $('#document-editor').selectionEnd,
+    active: document.activeElement};
+}
+function restorePosition(at) {
+  if (at.active instanceof HTMLElement && at.active.isConnected && at.active.getClientRects().length) at.active.focus({preventScroll:true});
+  $('#document-editor').setSelectionRange(at.start,at.end);
+  $('#page-scroll').scrollTo(at.sourceLeft,at.source); $('#editor-scroll').scrollTo(at.editorLeft,at.editor);
+}
+function applyPresentation(position=presentationPosition()) {
+  const focused=Boolean(state.focusReturn),workspace=$('.workspace'),original=$('.original-pane'),editorPane=$('.editor-pane');
+  document.body.dataset.layout=state.presentation;
+  document.body.dataset.sourceVisible=String(state.sourceVisible&&!focused);
+  document.body.dataset.navigatorVisible=String(state.navigatorVisible&&!focused);
+  document.body.dataset.focused=String(focused);
+  if(state.presentation==='edit'&&editorPane.nextElementSibling!==original)workspace.insertBefore(editorPane,original);
+  if(state.presentation==='document'&&original.nextElementSibling!==editorPane)workspace.insertBefore(original,editorPane);
+  $('#show-source').checked=state.sourceVisible;$('#show-navigator').checked=state.navigatorVisible;
+  $('#reveal-source').hidden=state.sourceVisible||focused;$('#reveal-navigator').hidden=state.navigatorVisible||focused;
+  $('#editor-return').hidden=!focused;
+  requestAnimationFrame(()=>{renderEditor();restorePosition(position);});
+}
+function revealSource() {
+  if(state.focusReturn){const at=state.focusReturn;state.focusReturn=undefined;state.sourceVisible=true;applyPresentation(at);}
+  else if(!state.sourceVisible){state.sourceVisible=true;applyPresentation();}
+}
+function toggleFocus() {
+  if(!state.session||state.busy)return;
+  if(state.focusReturn){const at=state.focusReturn;state.focusReturn=undefined;applyPresentation(at);}
+  else {state.focusReturn=presentationPosition();applyPresentation();$('#document-editor').focus({preventScroll:true});}
+  closeMenus();
+}
+function renderNavigation() {
+  $('#source-count').textContent=state.session?(state.kind==='text'?'TXT':'HWPX'):'미선택';
+  $('#source-info').textContent=state.name||'문서를 열어 시작하세요.';
+  $('#source-data-info').textContent=state.records?state.records+'건 · 현재 '+(state.index+1)+'번째 업무 건':'데이터 미연결';
+  $('#heading-count').textContent=String(state.headings.size);$('#block-count').textContent=String(state.blocks.length);
+  const fill=(id,items,empty)=>{
+    const list=$(id);list.replaceChildren();
+    if(!items.length){const note=document.createElement('p');note.className='muted';note.textContent=empty;list.append(note);return;}
+    for(const item of items){const button=document.createElement('button');button.type='button';button.textContent=item.label;button.title=item.label;button.addEventListener('click',()=>selectRow(item.id,{focus:true}));list.append(button);}
+  };
+  fill('#heading-list',[...state.headings].map(([id])=>({id,label:textOf(paragraph(id)).trim()||'(빈 제목)'})),'지정한 제목 없음');
+  fill('#block-list',state.blocks.map((b,index)=>({id:b.from,label:b.alias||'블록 '+(index+1)})),'묶은 내용 없음');
+  $('#reference-count').textContent=state.comparison?'1':'0';
+  if(state.comparison){const list=$('#reference-list');list.replaceChildren();const button=document.createElement('button');button.type='button';button.textContent=state.comparison.name;button.title=state.comparison.name;button.addEventListener('click',()=>{renderTextDocument('comparison');revealSource();});list.append(button);}
+  else $('#reference-list').replaceChildren();
+}
+function renderRecent(){
+  const list=$('#recent-list');list.replaceChildren();$('#recent-count').textContent=String(state.recent.length);
+  for(const item of state.recent){const button=document.createElement('button');button.type='button';button.textContent=item.file.name;button.addEventListener('click',()=>openFile(item.file,item.restore));list.append(button);}
+}
+for(const input of document.querySelectorAll('input[name="layout"]'))input.addEventListener('change',()=>{state.presentation=input.value;applyPresentation();});
+$('#show-source').addEventListener('change',event=>{state.sourceVisible=event.target.checked;applyPresentation();});
+$('#show-navigator').addEventListener('change',event=>{state.navigatorVisible=event.target.checked;applyPresentation();});
+$('#fold-navigator').addEventListener('click',()=>{state.navigatorVisible=false;applyPresentation();$('#reveal-navigator').focus();});
+$('#reveal-navigator').addEventListener('click',()=>{state.navigatorVisible=true;applyPresentation();$('#fold-navigator').focus();});
+$('#reveal-source').addEventListener('click',revealSource);
+$('#focus-edit').addEventListener('click',toggleFocus);$('#leave-focus').addEventListener('click',toggleFocus);
+$('#summary-data').addEventListener('click',()=>{$('#data-menu').open=true;$('#record-select').focus();});
+$('#reference-open').addEventListener('click',()=>$('#compare-file').click());
+$('#record-select').addEventListener('change',renderNavigation);
+fetch('/api/health').then(response=>response.json()).then(info=>{
+  const current=info.surface==='workbench';$('#runtime-info').textContent=current?'기본 작업창':'서버 전환 필요';
+  $('#runtime-info').title=current?'실행 버전 '+info.build+' · '+info.startedAt:'서버가 이전 화면을 제공하고 있습니다. 작업을 저장한 뒤 서버를 다시 시작하세요.';
+}).catch(()=>{$('#runtime-info').textContent='서버 연결 확인';});
+renderNavigation();
