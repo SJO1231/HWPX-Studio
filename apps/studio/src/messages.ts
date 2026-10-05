@@ -54,6 +54,7 @@ const TABLE: Readonly<Record<string, string>> = {
   RES_ITEMCNT: "서식 목록에 적힌 개수와 실제 개수가 다릅니다.",
   RES_NO_ID: "번호가 없는 서식 항목이 있습니다.",
   RES_NO_REFLIST: "문서에 서식 목록이 없습니다.",
+  RES_UNIT_SWITCH_LEGACY: "예전 형식 문서에 새 형식의 여백 표기가 있어 한글에서 들여쓰기·문단 간격이 절반으로 보일 수 있습니다.",
   TBL_ATTR_MISSING: "표에 행 수 또는 열 수 정보가 없습니다.",
   TBL_CELL: "표 칸에 칸 주소 정보가 없습니다.",
   TBL_CELL_RANGE: "표 칸이 표의 행·열 범위를 벗어납니다.",
@@ -146,6 +147,8 @@ const TABLE: Readonly<Record<string, string>> = {
   FRAG_SPLITS_FIELD: "선택한 범위가 누름틀의 시작과 끝 사이를 잘라서 조각으로 뽑을 수 없습니다.",
   FRAG_TABLE_PARAGRAPH_TEXT: "표를 담은 문단에 표 말고 글도 있습니다.",
   FRAG_UNKNOWN_REF: "무엇을 가리키는지 알 수 없는 참조가 있어 원래 값 그대로 두었습니다.",
+  FRAG_UNIT_CONVERTED: "가져온 조각의 여백·간격 값을 이 문서의 형식에 맞는 단위로 바꿨습니다.",
+  FRAG_FORMAT_UNKNOWN: "조각이나 이 문서의 형식 버전을 알 수 없어 여백·간격 단위를 바꾸지 않았으니 한글에서 들여쓰기를 확인하세요.",
 
   // ── 표 조정 ──────────────────────────────────────────────────────
   TABLE_ADDR: "표 칸의 주소 정보가 서로 맞지 않습니다.",
