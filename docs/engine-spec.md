@@ -339,7 +339,7 @@ type FragmentSelection = { sectionIndex: number; parentPath: number[]; from: num
 ```ts
 type Fragment = {
   schema: "hwpx-studio/fragment@1"
-  source: { sha256: string; selection: FragmentSelection }
+  source: { sha256: string; selection: FragmentSelection; xmlVersion?: string }  // xmlVersion: 원본 version.xml의 형식 버전(7.66)
   xml: string                       // 선택한 문단들의 원문(첫 문단 시작 ~ 마지막 문단 끝)
   prefixes: Record<string, string>  // 원문에 쓰인 접두사 → 네임스페이스 역할
   refs: { kind: string; lang?: string; id: string; start: number; end: number }[]      // xml 안 참조 속성값 구간
@@ -356,12 +356,14 @@ type FragmentResource = {
   idSpan: { start: number; end: number }
   refs: { kind: string; lang?: string; id: string; start: number; end: number }[]
   fingerprint: string
+  valueNamespaces?: Record<string, string>  // hp:required-namespace 값 URI의 원본 접두사 → URI(7.66)
 }
 ```
 
 - 의존 닫힘: 조각이 가리키는 자원에서 출발해 자원이 가리키는 자원을 끝까지 모은다. 없는 대상을 가리키는 참조는 `FRAG_DANGLING_SOURCE` 경고로 남기고 그 참조는 그대로 둔다.
 - 그림의 이진 자료는 `content.hpf`의 manifest에서 찾아 내용과 함께 담는다.
 - `Fragment`는 `JSON.stringify`로 저장할 수 있다.
+- `source.xmlVersion`은 원본 `version.xml` 루트의 `xmlVersion` 문자열이다. 원본에 없거나 이전 형식 조각이면 키가 없다(형식 버전을 알 수 없음, 7.66).
 
 ### 7.4 자원 지문 `fingerprintResource(item, lookup): string`
 
@@ -378,7 +380,7 @@ type InsertPoint = { sectionIndex: number; parentPath: number[]; index: number; 
 ```
 
 1. **접두사 확인**: 조각의 접두사가 대상 구역에서 같은 역할로 선언돼 있어야 한다. 아니면 `FRAG_NS_MISMATCH`.
-2. **자원 대응**: 조각 자원을 의존 순서로 본다. 대상에 같은 지문의 자원이 있으면 그 id를 재사용한다. 없으면 새 id(그 종류에서 가장 큰 숫자 id + 1부터)를 주고, 자원 원문의 `id`와 안쪽 참조를 대응표대로 바꿔 대상 header의 해당 목록 끝에 넣는다. 목록의 개수 속성(`itemCnt`, 글꼴은 `fontCnt`)을 갱신한다.
+2. **단위 변환과 자원 대응**: 먼저 원본과 대상의 형식 버전이 1.5 이상·미만으로 갈리면 조각 자원의 원문을 대상 단위로 바꾸고 지문을 다시 계산한다(7.66). 그다음 조각 자원을 의존 순서로 본다. 대상에 같은 지문의 자원이 있으면 그 id를 재사용한다. 없으면 새 id(그 종류에서 가장 큰 숫자 id + 1부터)를 주고, 자원 원문의 `id`와 안쪽 참조를 대응표대로 바꿔 대상 header의 해당 목록 끝에 넣는다. 목록의 개수 속성(`itemCnt`, 글꼴은 `fontCnt`)을 갱신한다.
    - 스타일은 이름이 같고 지문이 다르면 새 스타일의 이름에 ` (2)`, ` (3)` …을 붙인다.
    - 대상 header에 해당 목록 요소가 없으면 목록을 만든다(7.8의 수정 1). `refList`나 글꼴 목록 전체가 없을 때만 `FRAG_NO_LIST`로 거절한다.
 3. **본문 재작성**: 조각 원문의 참조 속성값을 대응표대로 바꾼다. 줄 배치 캐시 구간을 지운다.
@@ -419,7 +421,7 @@ type InsertPoint = { sectionIndex: number; parentPath: number[]; index: number; 
 - **개수 속성**: 추가가 있는 목록은 실제 자식 수 + 추가 수로 쓴다.
 - **이진 자료**: manifest에 `<opf:item id href media-type isEmbeded="1"/>`로 등록한다. 압축은 더 작아질 때만 한다.
 - `Fragment`에 `namespaces`, `census`, `issues`가 있다. `selectTable`은 `{ selection, issues }`를 돌려준다.
-- 계획의 `summary` 키: `reusedResources`, `addedResources`, `reusedBinaries`, `addedBinaries`, `reissuedIds`, `renamedStyles`, `renamedBookmarks`, `insertedParagraphs`, `insertedTables`, `insertedPictures`, `insertedFields`, `insertedBookmarks`.
+- 계획의 `summary` 키: `reusedResources`, `addedResources`, `reusedBinaries`, `addedBinaries`, `reissuedIds`, `renamedStyles`, `renamedBookmarks`, `insertedParagraphs`, `insertedTables`, `insertedPictures`, `insertedFields`, `insertedBookmarks`, `convertedResources`(7.66).
 - 추가한 코드: `EDIT_RANGE`, `FRAG_SELECTION`, `FRAG_INSERT_POINT`, `FRAG_SCHEMA`(오류), `FRAG_UNKNOWN_REF`, `FRAG_TABLE_PARAGRAPH_TEXT`, `FRAG_BEFORE_SECPR`(경고).
 - 독립으로 만든 두 가져오기 계획은 합치지 않는다(새 id가 겹친다). 가져오기 → 다시 파싱 → 다음 가져오기 순서로 적용한다.
 
@@ -432,6 +434,31 @@ type InsertPoint = { sectionIndex: number; parentPath: number[]; index: number; 
 - 문단 해석에서 객체와 하위 목록의 대응을 한 번의 순회로 만든다(하위 목록 2만 개 문단이 0.1초 안팎).
 - 알려진 한계: 이전 형식으로 저장한 조각 JSON에는 문단 id 항목이 없어 재발급이 일어나지 않는다. 조각 안에서만 겹치는 문단 id는 그대로 들어간다. `FRAG_FILLS_DANGLING`은 header 자원만 본다(이진 자료 id는 보지 않는다).
 - header에 이진 목록(`binDataList`)이 있는 문서는 그 목록을 갱신하지 않는다(한컴 저장본에는 이 목록이 없다. 알려진 한계).
+
+### 7.66 형식 버전 단위 변환 (이슈 #69 ②, 2026-10-06)
+
+근거: [검증 기준](validation.md) 26절(한컴 13.0.0.711 COM 실측)과 27절(이 변환의 COM 대조). 한컴은 여백·간격 값을 `version.xml`의 `xmlVersion`이 1.5 이상이면 HWPUNIT으로, 미만이면 그 2배 단위(옛 단위)로 받고, HwpUnitChar 스위치는 형식과 관계없이 `hp:case`를 읽는다. 그래서 형식이 다른 문서 사이에서 자원을 그대로 옮기면 들여쓰기·문단 간격이 2배나 절반으로 보인다.
+
+- **형식 버전**: `version.xml` 루트의 `xmlVersion`을 "주.부"로 읽어 1.5 이상이면 새 형식, 미만이면 옛 형식이다. 항목·속성이 없거나 읽을 수 없으면 알 수 없음이다. 헤더 `version`·appVersion은 보지 않는다(한컴 값에 영향이 없었다).
+- **단위 값**: 문단모양 `hh:margin`의 자식(intent·left·right·prev·next)의 `value`, `hh:lineSpacing`의 `value`(type이 PERCENT가 아닐 때), 탭 `hh:tabItem`의 `pos`. `unit`이 없거나 HWPUNIT일 때만이다(글자 단위 CHAR는 그대로 둔다).
+- **HwpUnitChar 스위치**: `hp:case` 가운데 하나의 `hp:required-namespace`가 `http://www.hancom.co.kr/hwpml/2016/HwpUnitChar`인 `hp:switch`. 다른 네임스페이스의 스위치(예: 2016 paragraph)는 건드리지 않는다.
+- **`planImport`의 처리**(자원 대응 전. 조각 자원 전부에 적용한다):
+
+| 원본 형식 | 대상 형식 | 자원 원문 | 경고 |
+| --- | --- | --- | --- |
+| 1.5 이상 | 1.5 미만 | HwpUnitChar 스위치를 `hp:default` 내용으로 바꾸고, 스위치 밖 단위 값을 2배로 | `FRAG_UNIT_CONVERTED` |
+| 1.5 미만 | 1.5 이상 | HwpUnitChar 스위치의 `hp:default` 밖 단위 값(스위치 밖 값과 case 안 값)을 절반으로(0 쪽으로 버림). HwpUnitChar case의 HWPUNIT 값과 짝인 default 값은 그 case의 원래 값(절반으로 만들기 전)으로 바꾼다. case가 글자 단위(CHAR)인 자리의 default는 그대로 | `FRAG_UNIT_CONVERTED` |
+| 같은 쪽 | 같은 쪽 | 그대로 | 없음 |
+| 한쪽만 알 수 없음 | | 그대로 | `FRAG_FORMAT_UNKNOWN` |
+| 둘 다 알 수 없음 | | 그대로(같은 형식으로 본다) | 없음 |
+
+- **default는 옛 단위(1.2 기준 HWPUNIT) 값이다**: 한컴 1.5 저장본의 HWPUNIT case 짝은 default가 정확히 case의 2배다(실제 공고서 16건 16,452짝, 어긋남 0). 올림 변환에서 default를 원래 case 값(= 2×새 case, 홀수면 원래 값)으로 두므로, 그 결과를 다시 1.5 미만으로 내리면 스위치 안 값은 한컴에서 원래대로 읽힌다(검증 기준 27절 G). 짝은 case와 default에서 같은 요소 이름·순번(예: 두 번째 `tabItem`)이다.
+- 바꾼 자원은 참조 구간·접두사를 다시 읽고, 지문은 조각 자원 전부를 다시 계산한다(스타일 → 문단모양 → 탭으로 지문이 기대므로). 계산 방법은 추출 때와 같다. 그래서 바꾼 모양이 대상에 있으면 재사용하고, 같은 조각을 두 번 가져오면 둘째는 전부 재사용된다.
+- 대상의 `version.xml`·헤더 `version`·appVersion은 바꾸지 않는다. 대상 버전을 올리면 대상 고유 여백까지 2배가 된다(26절).
+- 경고는 계획당 하나다. `FRAG_UNIT_CONVERTED`의 메시지에 원본·대상 버전과 바꾼 자원 수가, `FRAG_FORMAT_UNKNOWN`에 두 버전(알 수 없음 포함)이 있다. `summary.convertedResources`는 원문이 바뀐 조각 자원 수다(재사용된 것 포함, 바꿀 것이 없으면 0).
+- **네임스페이스 선언(정리 차원)**: `extractFragment`는 자원 안 `required-namespace` 값 URI의 원본 접두사를 `valueNamespaces`에 적는다(조각 밖에서 선언된 것만). `planImport`는 두 형식 버전을 모두 알 때, 추가하는 자원의 그 접두사도 그 URI도 대상 header 루트(와 목록 조상)에 선언돼 있지 않으면 원본 접두사로 선언을 더한다. 올림 변환한 자원은 스위치가 남으므로 이 선언 정보를 그대로 지닌다. 내림 변환에서는 스위치가 사라져 더할 것이 없고, 한쪽이라도 모르면 더하지 않는다. 한컴은 이 선언이 없어도 스위치를 같게 읽는다(26절).
+- 코드: `FRAG_UNIT_CONVERTED`, `FRAG_FORMAT_UNKNOWN`(경고). 검사기 `RES_UNIT_SWITCH_LEGACY`(경고, 8.1).
+- 한계: (1) HWPUNIT case 짝에서 default가 case의 2배가 아닌 곳은 관측하지 못했다(실제 공고서 16건 16,452짝. 처음에 "반올림 차"로 적은 곳은 case가 글자 단위인 자리였다, (3)). 그런 곳이 있으면 내림 변환은 default를 따른다. (2) 올림 변환에서 홀수 값은 새 형식으로 정확히 나타낼 수 없어 1 다르다. 스위치 안 값은 default에 원래 값이 남아 다시 내리면 원래대로 돌아오고, 스위치 밖 홀수 값은 다시 내려도 0 쪽 짝수로 남는다. (3) case의 글자 단위(CHAR) 값은 내림 변환에서 default의 HWPUNIT 값이 되고, 올림 변환에서는 case·default 모두 그대로 둔다(실제 공고서 16건에 32곳, 문서마다 2곳. 한컴 근거 없음). (4) 탭 위치는 COM 문단모양으로 읽히지 않아 한컴 값 대조가 없다(스위치 짝의 2배 관계와 같은 규칙으로 다룬다). (5) 1.3·1.4 형식은 관측하지 못했고 1.5 미만으로 다룬다. (6) 문단모양·탭 밖의 자원과 본문(구역)은 바꾸지 않는다(실제 공고서 16건에서 HwpUnitChar 스위치는 문단모양·탭에만 있었다). (7) `hp:default`가 없는 HwpUnitChar 스위치(관측 없음)는 내림 변환에서 내용을 잃지 않도록 그대로 둔다(검사기가 `RES_UNIT_SWITCH_LEGACY`로 알린다).
 
 ### 7.7 서식 변경 (`src/format/`) — S2b (사용자 지시, 2026-10-01)
 
@@ -758,6 +785,7 @@ type InsertPoint = { sectionIndex: number; parentPath: number[]; index: number; 
   - `XML_ILLEGAL_CHAR`: XML 1.0 금지 제어문자가 있다(오류).
   - `PKG_NO_PREVIEW_TEXT`: 미리보기 텍스트 항목이 없다(경고).
   - `TBL_ATTR_MISSING`: 표의 `rowCnt`·`colCnt` 속성이 없다(오류).
+  - `RES_UNIT_SWITCH_LEGACY`: `version.xml`의 `xmlVersion`이 1.5 미만인데 header에 HwpUnitChar 스위치가 있다(경고, 개수를 메시지에 적는다. 한컴은 case 값을 옛 단위로 읽어 여백·간격이 절반으로 보인다. 7.66, 2026-10-06 추가).
 - `census`: 문단·표·그림·필드 짝·책갈피·이진 항목·모르는 컨트롤(종류별)의 수.
 - `compareToBaseline(before, after): { newErrors, preexisting, resolved }` — 오류를 (코드, 메시지, 위치)로 묶어 개수 차이를 낸다.
 - 수용 조건:

@@ -82,6 +82,35 @@ export function collectPrefixes(
 }
 
 /**
+ * `hp:required-namespace`처럼 속성값으로 가리키는 네임스페이스 URI 가운데 `outsideBefore`보다 앞에서 접두사가 선언된 것을
+ * 접두사 → URI로 모은다(URI를 선언한 가장 가까운 조상의 접두사). 한컴은 이 선언이 없어도 스위치를 같게 읽는다(검증 기준 26절).
+ * 가져온 자원의 표기를 원본과 맞추는 정리 차원에서 쓴다.
+ */
+export function collectValueNamespaces(elements: Iterable<XElement>, outsideBefore: number): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const el of elements) {
+    for (const a of el.attrs) {
+      if (a.qname.slice(a.qname.indexOf(":") + 1) !== "required-namespace") continue;
+      for (let at: XElement | null = el; at !== null; at = at.parent) {
+        const decl = at.attrs.find((d) => d.qname.startsWith("xmlns:") && d.value === a.value);
+        if (decl === undefined) continue;
+        if (at.start < outsideBefore) out[decl.qname.slice("xmlns:".length)] = a.value;
+        break;
+      }
+    }
+  }
+  return out;
+}
+
+/** `scope`나 그 조상에 그 접두사나 그 URI의 선언이 이미 있는가 */
+export function declaresPrefixOrUri(scope: XElement | null, prefix: string, uri: string): boolean {
+  for (let el = scope; el !== null; el = el.parent) {
+    if (el.attrs.some((a) => a.qname === `xmlns:${prefix}` || (a.qname.startsWith("xmlns:") && a.value === uri))) return true;
+  }
+  return false;
+}
+
+/**
  * `scope`(새 요소가 놓일 곳의 부모)에서 조각의 접두사를 확인한다.
  * 같은 역할로 선언돼 있으면 통과하고, 다른 역할로 선언돼 있으면 `FRAG_NS_MISMATCH`다.
  * 선언돼 있지 않은 접두사는 루트에 선언을 더해야 하므로 접두사 → URI로 돌려준다(기본 네임스페이스는 더할 수 없어 거절한다).
