@@ -1,5 +1,5 @@
-// Block extraction/storage only. Insertion, shared values and later revisions are separate work.
-export function installBlockLibrary({selection, session, api, status, beforeOpen}) {
+// Store engine fragments and confirm placement before changing the generated result.
+export function installBlockLibrary({selection, session, api, status, beforeOpen, previewPlacement}) {
   const $ = s => document.querySelector(s), dialog = $('#block-library-dialog');
   const body = $('#block-library-body'), title = $('#block-library-title');
   let busy = false, draft, savedFocus;
@@ -34,6 +34,21 @@ export function installBlockLibrary({selection, session, api, status, beforeOpen
       const item = await get('/api/block?id=' + encodeURIComponent(id));
       open(item.name); details(item);
       body.append(element('p', `${item.change} · ${new Date(item.createdAt).toLocaleString('ko-KR')}`), button('저장소 목록', showList));
+      if(previewPlacement){
+        const place=button('선택한 범위에 넣기',async()=>{
+          if(busy)return;busy=true;place.disabled=true;
+          try{const checked=await previewPlacement(item);open('블록 넣기 확인');
+            body.append(element('p',`${checked.name} · 판 ${checked.version} → 선택한 ${checked.paragraphs}개 문단 전체`),element('p','원문은 그대로 두고, 생성 결과에서 이 범위를 바꿉니다.'));
+            for(const warning of checked.warnings)body.append(element('p',warning,'placement-warning'));
+            for(const diff of checked.formatDiffs)body.append(element('p',`블록 ${diff.paragraph}번째 문단 · ${diff.property} 다름`));
+            body.append(button('배치 확정 · 생성 미리 보기',()=>{try{close();checked.commit();}catch(e){status(e.message,'error');}}),button('돌아가기',()=>showItem(item.id)));
+          }catch(e){status(e.message,'error');body.append(element('p',e.message,'block-warning'));}
+          finally{busy=false;place.disabled=false;}
+        });
+        try{selection();}catch(e){place.disabled=true;place.title=e.message;body.append(element('p',e.message,'muted'));}
+        body.append(place);
+      }
+
     } catch (e) { status(e.message, 'error'); }
     finally { busy = false; }
   }

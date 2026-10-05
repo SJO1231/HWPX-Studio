@@ -13,3 +13,5 @@
 @media(max-width:1100px){.original-pane>.pane-bar{padding:3px 7px;gap:5px}.block-tools button{font-size:10px;padding:3px 5px}.view-switch button{padding:2px 5px}}
 
 .viewer-number{pointer-events:none;user-select:none}.viewer-number[hidden]{display:none}
+
+#block-placements{padding:10px 14px;border-bottom:1px solid var(--line);max-height:180px;overflow:auto;font-size:12px}#block-placements>div{display:flex;align-items:center;gap:8px;justify-content:space-between;margin-top:6px}#block-placements button{font-size:11px}#block-library-body .placement-warning{border-left:3px solid #a86b12;padding:8px;background:#fff7e8}
