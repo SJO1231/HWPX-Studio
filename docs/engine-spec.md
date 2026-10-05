@@ -125,6 +125,7 @@ type Issue = { severity: "error" | "warning"; code: string; message: string; whe
 - CD 레코드는 원본 바이트를 복사하고 CRC32·크기·로컬 오프셋만 고친다. EOCD는 CD 위치·크기·항목 수만 고친다.
 - `mimetype`은 바꾸거나 추가할 수 없다(`PKG_MIMETYPE_LOCKED`).
 - **빈 변경(`replace`·`add` 모두 없음)의 결과는 입력과 바이트 동일해야 한다.**
+- 새 패키지 `createHwpxArchive(entries)`(엔진 안 함수, 공개 API 아님. #75): 무압축 `mimetype`(`application/hwp+zip`)을 첫 항목으로 쓰고, 나머지는 위 추가 항목과 같은 꼴(UTF-8 이름, 고정 시각)로 `entries` 순서대로 쓴다. 같은 입력은 같은 바이트다. 8.8.18의 빈 바탕 문서가 쓴다.
 
 ### 3.3 패키지 열기 `openPackage(bytes): HwpxPackage`
 
@@ -1575,8 +1576,9 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | `planBlockUpdate(t, proto, blob, doc, previous?)` | `src/fill/block-store.ts` | 8.8.17. `planProtoUpdate` + 자리 못 찾음·이름 충돌·서식 차이·입력 항목 사라짐 목록 |
 | `checkTemplateUpdates(t, latestOf, currentSource?)` | `src/template/` | 8.8.17. 최신 판·바탕 문서 알림. 형식과 무관한 순수 함수 |
 | CLI `block extract\|insert\|list` | `apps/cli` | 8.4. 파일 저장소(8.8.17) |
+| `buildBlockPreviewDocument(proto, blob, options?)` | `src/fill/block-preview.ts` | 8.8.18. 블록만으로 빈 바탕 문서에 넣은 미리보기 HWPX(저장 게이트 통과분)와 입력 항목 자리·같은 이름 항목 수 |
 
-구현 상태(2026-10-04): `read*`·`write*`·해시 도우미(`templateSha256`·`caseSha256`·`contentSha256`)·`bindValues`·`selectSlots`·`listProtoUsage`·`planProtoUpdate`는 #29, `range`·`moves`·`makeRangeAnchor`는 #30(7.10). `generateFromTemplate`·CLI `--case --blobs`는 #31(`src/fill/generate-studio.ts`. 결과 형 `StudioGenerateResult`·`StudioGenerateReport`·`StudioLedger`는 `src/fill/studio-common.ts`가 정본). `checkAnchors`·`planRelocation`·`redraftAnchor`는 #32(`src/fill/check-anchors.ts`). 블록 저장소 API(`extractBlock`·`reextractBlock`·`planBlockInsert`·`blockFormatDiffs`·`blockFragment`·`planBlockUpdate`·`checkTemplateUpdates`, 원형의 `source`·`history`)와 CLI `block`은 #73(2026-10-06, `src/fill/block-store.ts`. 검증은 [검증 기준](validation.md) 28절). 패턴(#20)은 미구현. 정확한 형은 `src/template/studio-types.ts`(와 `src/fill/studio-common.ts`·`src/fill/check-anchors.ts`)가 정본이고 아래는 요지다.
+구현 상태(2026-10-04): `read*`·`write*`·해시 도우미(`templateSha256`·`caseSha256`·`contentSha256`)·`bindValues`·`selectSlots`·`listProtoUsage`·`planProtoUpdate`는 #29, `range`·`moves`·`makeRangeAnchor`는 #30(7.10). `generateFromTemplate`·CLI `--case --blobs`는 #31(`src/fill/generate-studio.ts`. 결과 형 `StudioGenerateResult`·`StudioGenerateReport`·`StudioLedger`는 `src/fill/studio-common.ts`가 정본). `checkAnchors`·`planRelocation`·`redraftAnchor`는 #32(`src/fill/check-anchors.ts`). 블록 저장소 API(`extractBlock`·`reextractBlock`·`planBlockInsert`·`blockFormatDiffs`·`blockFragment`·`planBlockUpdate`·`checkTemplateUpdates`, 원형의 `source`·`history`)와 CLI `block`은 #73(2026-10-06, `src/fill/block-store.ts`. 검증은 [검증 기준](validation.md) 28절). 블록 단독 미리보기(`buildBlockPreviewDocument`)는 #75(2026-10-06, `src/fill/block-preview.ts`. 결과 형은 `src/fill/block-preview-types.ts`. 검증은 30절). 패턴(#20)은 미구현. 정확한 형은 `src/template/studio-types.ts`(와 `src/fill/studio-common.ts`·`src/fill/check-anchors.ts`)가 정본이고 아래는 요지다.
 
 ```ts
 type ValueState = "bound" | "edited" | "missing" | "empty" | "rejected"
@@ -1595,7 +1597,7 @@ type AnchorAddress = Pick<WordAnchor, "kind" | "at" | "start" | "end"> | Pick<Li
 
 #### 8.8.16 수용 조건
 
-소유: 검사 = 엔진 쪽 독립 검증(Claude 지휘). 앱 쪽 항목 = Codex 시험. 통과 전에는 [미구현]이다. 상태(2026-10-04): W1~W3의 읽기·쓰기·값 연결·선택 평가 부분은 #29에서 통과([검증 기준](validation.md) 20절). W1의 생성 바이트 동일(1판 경로=승계 경로, CLI=API. 앱=CLI는 #25 뒤)·W2의 `TPL_NESTED`·W3의 출력 항목·W8은 #31에서 통과(22절), W4의 전파 함수는 #29(저장·화면은 Codex), W7의 `range` 지문은 #30(19절), W7의 상태 판정·일괄 갱신·재지정은 #32(21절. "생성이 막힌다"는 `resolveAnchors`의 기존 동작으로 확인). W9는 #73에서 구현자 시험 통과(28절, 독립 검증 전). 남은 것: W5(#20), W6(#25, Codex), W1 앱 바이트.
+소유: 검사 = 엔진 쪽 독립 검증(Claude 지휘). 앱 쪽 항목 = Codex 시험. 통과 전에는 [미구현]이다. 상태(2026-10-04): W1~W3의 읽기·쓰기·값 연결·선택 평가 부분은 #29에서 통과([검증 기준](validation.md) 20절). W1의 생성 바이트 동일(1판 경로=승계 경로, CLI=API. 앱=CLI는 #25 뒤)·W2의 `TPL_NESTED`·W3의 출력 항목·W8은 #31에서 통과(22절), W4의 전파 함수는 #29(저장·화면은 Codex), W7의 `range` 지문은 #30(19절), W7의 상태 판정·일괄 갱신·재지정은 #32(21절. "생성이 막힌다"는 `resolveAnchors`의 기존 동작으로 확인). W9는 #73에서 구현자 시험 통과(28절, 독립 검증 전). W10은 #75에서 구현자 시험 통과(30절, 독립 검증 전). 남은 것: W5(#20), W6(#25, Codex), W1 앱 바이트.
 
 | ID | 조건 |
 | --- | --- |
@@ -1608,6 +1610,7 @@ type AnchorAddress = Pick<WordAnchor, "kind" | "at" | "start" | "end"> | Pick<Li
 | W7 | 원본 변경: 같은 원본이면 exact, 앞에 문단을 삽입하면 relocated, 대상 글을 복제하면 ambiguous이고 생성이 막힌다, 범위 끝 문단을 삭제하면 notFound, 앞에 표를 삽입하면 지문 있는 셀은 다시 찾고 지문 없는 셀은 unverified다 |
 | W8 | 생성 규칙(8.8.12): 이동표 변환 뒤 word·line·cell 자리가 맞는 곳에 채워진다, 교체 범위 안의 자리는 `PLACE_COVERED`, 등록되지 않은 `{{ }}`는 `unregistered` 정책대로, 건너뜀 1건이면 `FILL_SKIPPED`이고 출력이 없다, 원본 해시가 다르면 `TPL_SOURCE_MISMATCH`, 후처리 2종은 기본 끔 |
 | W9 | 블록 저장소(8.8.17, #73): 떼기 → 저장 → 다른 문서에 넣기 → 다시 떼어 새 판의 왕복, 같은 서식 자리 경고 0건·다른 서식 자리는 다른 속성 전부 경고, 블록 안 같은 이름 항목이 문서와 같은 값, 최신 판·바탕 문서 알림, 업데이트 검사 목록(자리 못 찾음·이름 충돌·서식 차이), 옛 원형 읽기 호환, 무작위 50회 결정성·게이트·검사기 새 오류 0, 실제 공고서 16건 |
+| W10 | 블록 단독 미리보기(8.8.18, #75): 원형 + 덩어리만으로 미리보기 HWPX(검사 오류 0, 블록 글 그대로, rhwp로 열려 모든 쪽이 그려짐), 같은 입력 같은 바이트, 같은 이름 항목 수 = 원본에서 따로 센 수, 자리 주소가 그 글을 가리킴, 거절(`TPL_FRAGMENT_MISSING`·`FRAG_SCHEMA`·`GATE_NEW_ERRORS`), 1.2·버전 모르는 원본의 7.66 경고, 실제 공고서 16건 |
 
 #### 8.8.17 블록 저장소 API (이슈 #73, 2026-10-06)
 
@@ -1671,6 +1674,61 @@ type AnchorAddress = Pick<WordAnchor, "kind" | "at" | "start" | "end"> | Pick<Li
 - 서식 비교는 자리 문단 하나와 블록 최상위 문단만 본다(표 칸 안 문단과 글자 모양은 보지 않는다). 제목과 본문으로 된 블록을 제목 자리에 넣으면 본문 문단은 늘 다르다고 나온다(사용자 결정대로 표시만 한다).
 - 블록 안 누름틀·메일머지 이름에 템플릿 자리가 없는 것은 업데이트 검사가 알리지 않는다(생성은 등록되지 않은 필드를 손대지 않는다, 8.8.12).
 - `keys`와 바뀐 점 요약은 엔진이 계산하지만 `readBlockProto`는 형식만 본다(8.8.7과 같다).
+
+#### 8.8.18 블록 단독 미리보기 (이슈 #75, 2026-10-06)
+
+- 근거: 이슈 #75(사용자 결정 2026-10-05, 엔진 순서 ④), #60 댓글 K절(저장소 탭: 블록을 누르면 단독 미리보기, 입력 항목이 있으면 "입력 n"), [스튜디오 명세](studio-spec.md) 4c. 상태: **[계약]** **[구현 #75]**(`src/fill/block-preview.ts`, 결과 형 `src/fill/block-preview-types.ts`). 검증은 [검증 기준](validation.md) 30절.
+- 소유: 엔진 함수·뷰어 호스트 요청(`previewBlock`, [뷰어 명세](viewer-spec.md) 4절) = Claude. 화면(목록에서 눌러 그리기, 강조 표시, "입력 n") = Codex(#60·#71).
+- 쓰임: 블록을 문서 없이 그 자체로 보여 저장소에서 고르게 한다. 표시용이다. 넣기·생성은 8.8.17·8.8.12가 한다.
+
+```ts
+type PreviewFieldKind = "placeholder" | "clickHere" | "mailMerge"            // 8.8.5의 자리 종류 이름
+type BlockPreviewField = { name: string; kind: PreviewFieldKind; count: number }
+type BlockPreviewPlace = { kind: PreviewFieldKind; name: string; sectionIndex: number; path: number[]; start: number; end: number; endPath?: number[] }
+type BlockPreview = { bytes: Uint8Array; fields: BlockPreviewField[]; places: BlockPreviewPlace[]; issues: Issue[] }
+buildBlockPreviewDocument(proto: BlockProto, blob: Uint8Array, options?: ImportOptions): BlockPreview
+```
+
+| 단계 | 규칙 |
+| --- | --- |
+| 1. 덩어리 확인 | `blockFragment(proto, blob)`(8.8.17): 글 블록이거나 해시가 `content.fragment`와 다르면 `TPL_FRAGMENT_MISSING`, 조각 JSON이 아니면 `FRAG_SCHEMA` |
+| 2. 바탕 | 엔진 코드가 메모리에서 만드는 빈 바탕 문서(아래). 파일·시계를 쓰지 않는다 |
+| 3. 넣기 | `planImport`(7.5)로 바탕 구역 0의 최상위 문단 0(구역 설정 문단) 뒤(`after`)에 넣고 `applyPlan`한다. 블록 서식은 그대로다(자원은 조각의 의존 닫힘). 형식 버전 단위 변환은 7.66 그대로다: 1.5 이상 원본은 그대로, 1.5 미만 원본은 올림 변환과 `FRAG_UNIT_CONVERTED`, 버전을 모르는 원본은 `FRAG_FORMAT_UNKNOWN`. `options`는 `planImport`의 옵션 그대로다. 넣는 자리 서식 비교(`BLOCK_FORMAT_DIFFERS`)는 하지 않는다(바탕 문단은 넣을 자리가 아니다) |
+| 4. 저장 게이트 | 8.3·7.8의 기준선 방식: 바탕 문서의 검사 결과 대비 새 오류(`compareToBaseline`) 가운데 조각이 소스에서 갖고 있던 문제(`plan.inherited`)로 설명되지 않는 것이 하나라도 있으면 `GATE_NEW_ERRORS`(`HwpxError`. 메시지에 검사 코드, `where`는 `block:<id>`)로 던지고 바이트를 내지 않는다. 설명되는 것은 경고 `GATE_INHERITED`로 `issues`에 담는다 |
+| 5. 자리 | 결과 바이트를 다시 읽어 입력 항목 자리를 모은다(아래) |
+| 6. 결과 | `bytes`(완전한 HWPX), `fields`, `places`(문서 순서: 구역·경로·시작 오프셋), `issues`(`planImport`의 경고 + `GATE_INHERITED`). 같은 입력은 같은 바이트다 |
+
+**빈 바탕 문서**
+
+| 항목 | 내용 |
+| --- | --- |
+| `version.xml` | `xmlVersion="1.5"`(`PREVIEW_XML_VERSION`), application `HWPX Studio` |
+| `Contents/header.xml` | 루트에 한글 저장본과 같은 접두사 선언(`hwpunitchar` 포함), `version="1.5"`, `secCnt="1"`. 자원: 글꼴(7개 언어마다 하나, 함초롬바탕), 테두리 1, 글자 모양 0(10pt), 탭 0, 문단 모양 0(여백 0, 줄 간격 160%), 스타일 0(바탕글) |
+| `Contents/section0.xml` | 문단 하나(글 없음): 구역 설정(A4 세로 59528×84186, 여백 왼쪽·오른쪽 8504·위 5668·아래 4252·머리말·꼬리말 4252, 한글 새 문서의 기본값)과 단 설정(1단) |
+| `Contents/content.hpf`, `META-INF/container.xml`, `META-INF/manifest.xml` | header·section0 등록. 미리보기 글(`Preview/`)·settings는 없다 |
+
+- ZIP은 `createHwpxArchive`(3.2). 검사기 결과는 오류 0, 경고 `PKG_NO_PREVIEW_TEXT` 1이다.
+- **형식 버전 1.5를 고른 이유**: 실제 공고서 16건이 모두 1.5이고(검증 기준 27절) 블록은 대개 그런 문서에서 뗀다. 같은 형식이면 7.66 변환이 없어 블록 자원 원문이 그대로 들어가므로, 미리보기의 서식이 그 블록을 다른 1.5 문서에 넣은 결과와 같다. 1.5 미만 원본의 블록은 1.5 문서에 넣을 때와 같은 올림 변환을 거친다. 원본 형식에 따라 바탕 버전을 바꾸지 않는다(같은 블록이라도 원본마다 바탕이 달라지고, 넣을 곳이 1.5인 실제 쓰임과 어긋난다).
+
+**입력 항목 자리** (8.8.17 "블록 안 입력 항목 이름"과 같은 범위)
+
+| 종류 | 찾는 법 | 구간(`start`~`end`) |
+| --- | --- | --- |
+| `clickHere` | type `CLICK_HERE`이고 이름이 비어 있지 않은 필드 | 시작·끝 표식 사이(값 글. 안내문 상태이면 안내문 글) |
+| `mailMerge` | type `MAILMERGE`이고 키가 있는 필드 | 시작·끝 표식 사이(표시 글) |
+| `placeholder` | 느슨한 `{{ 키 }}`(8.8.5) 가운데 누름틀·메일머지 표시 구간 밖의 것 | 여는 `{{`부터 닫는 `}}` 끝까지 |
+
+- `name`은 NFC다. `fields`는 (종류, 이름)마다 하나씩 그 수를 처음 나온 순서로 담는다. 이름이 같아도 종류가 다르면 따로 센다(`{{사업명}}`과 메일머지 `사업명`은 두 줄. 같은 값을 받는지는 템플릿 연결이 정한다, 8.8.17). 화면은 이것으로 "입력 n"과 이름별 수를 보인다.
+- 주소: `path`는 엔진 주소(구역 안 문단 경로: 최상위 문단 번호, 하위 목록 번호, 그 안 문단 번호 …), `start`·`end`는 그 문단 논리 텍스트(5.2)의 UTF-16 오프셋이다. 누름틀 시작·끝 표식은 논리 텍스트에서 개체 자리 한 칸이다. 끝 표식이 다른 문단(같은 목록)에 있으면 `endPath`가 그 문단이고 `end`는 그 문단의 오프셋이다. 끝 표식이 없거나 다른 칸에 있는 필드는 `end` = `start`다.
+- 블록 최상위 문단은 미리보기 문서 구역 0의 최상위 1번부터다(0번은 바탕 문단).
+
+**알려진 한계**
+
+- 쪽 설정은 바탕의 A4 세로다(원본 쪽 설정 이식은 #70). 원본보다 넓은 표·가로 방향 문서의 블록은 원본과 다르게 줄이 나뉘거나 쪽 밖으로 나갈 수 있다.
+- 첫 줄에 바탕 문단(글 없는 줄)이 하나 보인다.
+- 바탕 스타일 "바탕글"과 모양이 다른 블록 스타일 "바탕글"은 미리보기 문서 안에서 "바탕글 (2)"가 된다(7.5. 블록 원형·덩어리는 바뀌지 않는다).
+- 머리말·꼬리말·바탕쪽은 없다(블록은 본문 문단이다).
+- 한글에서 미리보기 문서를 여는 것은 확인하지 않았다(미리보기는 rhwp로 그린다).
 
 ## 9. S4 — md·txt 어댑터 (`src/text/`)
 

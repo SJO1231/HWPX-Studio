@@ -44,3 +44,4 @@ export {
   type BlockInsertPlan,
   type BlockUpdatePlan,
 } from "./block-store.ts";
+export { buildBlockPreviewDocument, PREVIEW_XML_VERSION, type BlockPreview, type BlockPreviewField, type BlockPreviewPlace, type PreviewFieldKind } from "./block-preview.ts";

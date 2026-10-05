@@ -1,5 +1,7 @@
 // 호스트(Node 서버)와 웹 화면이 주고받는 JSON 가운데 위치 변환·앵커 초안·강조에 관한 공용 형. 형만 있는 파일이라 브라우저 코드가 `import type`으로 가져온다(엔진을 값으로 가져오지 않는다).
 import type { HeadingRangeAnchor, RangeAnchor } from "../../../hwpx-engine/src/fill/anchor-types.ts";
+import type { BlockPreviewField, BlockPreviewPlace } from "../../../hwpx-engine/src/fill/block-preview-types.ts";
+import type { BlockProto } from "../../../hwpx-engine/src/template/studio-types.ts";
 import type { CellAnchor, FieldAnchor, LineAnchor, WordAnchor } from "../../../hwpx-engine/src/template/types.ts";
 import type { CellRef, EngineAddress, LocateEdge, RhwpPosition, Shown } from "../map/types.ts";
 
@@ -58,4 +60,24 @@ export type LocateResponse = {
   span?: { sectionIndex: number; parentPath: number[]; from: number; to: number };
   edge: LocateEdge;
   drafts: DraftView[];
+};
+
+/**
+ * 블록 단독 미리보기 요청(#75). 저장한 블록의 id(앱의 저장소가 찾는다) 하나, 또는 원형(`block-proto@1` JSON 객체)과 그 판의 조각 덩어리(base64)를 보낸다.
+ * 둘을 함께 보내지 않는다. 덩어리 상한은 `PREVIEW_MAX_BLOB`(32 MiB)이다.
+ */
+export type BlockPreviewRequest = { block: string } | { proto: BlockProto; blob: string };
+
+/**
+ * 블록 단독 미리보기 응답. `hwpx`는 엔진이 빈 바탕 문서(형식 1.5, A4)에 블록을 넣어 만든 HWPX 바이트(base64)이고 저장 게이트를 통과한 것이다(블록 최상위 문단은 구역 0의 최상위 1번부터).
+ * `fields`는 같은 종류·이름 입력 항목 수(처음 나온 순서), `places`는 미리보기 문서 안 자리(엔진 주소·논리 오프셋)와 쪽 위 강조 구간(`marks`. 옮길 수 없는 자리는 빈 목록),
+ * `warnings`는 조각 가져오기 경고(`FRAG_UNIT_CONVERTED`·`FRAG_FORMAT_UNKNOWN`·`FRAG_DANGLING_SOURCE` 등)와 상속 오류 `GATE_INHERITED`다.
+ */
+export type BlockPreviewResponse = {
+  hwpx: string;
+  /** `hwpx` 바이트의 sha256(16진) */
+  sha256: string;
+  fields: BlockPreviewField[];
+  places: (BlockPreviewPlace & { marks: MarkRange[] })[];
+  warnings: { code: string; message: string }[];
 };
