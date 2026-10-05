@@ -22,4 +22,4 @@ export { writeStudioTemplate, writeCase, writeBlockProto, templateSha256, caseSh
 export { canonicalStudioJson } from "./studio-write.ts";
 export { bindValues, type BindOptions } from "./studio-bind.ts";
 export { selectSlots } from "./studio-select.ts";
-export { listProtoUsage, planProtoUpdate } from "./studio-proto.ts";
+export { listProtoUsage, planProtoUpdate, checkTemplateUpdates } from "./studio-proto.ts";

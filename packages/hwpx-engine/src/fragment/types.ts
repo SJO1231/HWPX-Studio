@@ -20,6 +20,8 @@ export type FragmentResource = {
   prefixes: Record<string, string>;
   /** 같은 접두사 → 선언된 URI(대상에 선언이 없을 때 더하는 데 쓴다) */
   namespaces: Record<string, string>;
+  /** `hp:required-namespace` 값으로 가리키는 URI의 원본 접두사 → URI(조각 밖에서 선언된 것). 없으면 키가 없다(이전 형식 조각도). 명세 7.66 */
+  valueNamespaces?: Record<string, string>;
   /** 스타일의 `name` 속성값 구간(스타일 이름 충돌 시 이름을 바꾸는 데 쓴다) */
   nameSpan?: { start: number; end: number };
 };
@@ -34,7 +36,8 @@ export type FragmentDangling = { kind: string; id: string; count: number };
 
 export type Fragment = {
   schema: "hwpx-studio/fragment@1";
-  source: { sha256: string; selection: FragmentSelection };
+  /** `xmlVersion`은 원본 `version.xml`의 형식 버전(예: "1.5"). 없는 원본·이전 형식 조각에는 없다(알 수 없음). */
+  source: { sha256: string; selection: FragmentSelection; xmlVersion?: string };
   /** 선택한 문단들의 원문(첫 문단 시작 ~ 마지막 문단 끝) */
   xml: string;
   /** 원문에 쓰인(조각 밖에서 선언된) 접두사 → 네임스페이스 역할 */
