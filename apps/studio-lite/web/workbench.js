@@ -1,3 +1,4 @@
+import { installBlockLibrary } from '/block-library.js';
 import {editorLayout, editorSelection, unitAt, replaceEditorText, groupEditorSelection, editorChange} from '/editor-model.js';
 import { createPageView, createLatest, toPagePoint } from '/packages/viewer/src/dom/index.ts';
 import { loadRhwp, openDocument, runPosition, sameParagraph } from '/packages/viewer/src/rhwp/index.ts';
@@ -14,6 +15,7 @@ const state = {
 const opens = createLatest(), picks = createLatest(), views = createLatest(), dataLoads = createLatest();
 const keyCopies = createLatest(), bodyCopies = createLatest();
 let resizeFrame, contextRequest = 0;
+const blockLibraryUI = installBlockLibrary({selection: blockSelection, session: () => state.session, api, status, beforeOpen: hideMenu});
 
 function status(text, kind = '') {
   $('#status').textContent = text; $('#status').className = kind; $('#status').title = text;
@@ -45,6 +47,7 @@ function controls() {
     const name=button.dataset.action;
     button.disabled=name==='copyKey'?!available||!$('#key-select').value.trim():name==='importSelection'?!canEdit||!state.comparisonText:name==='copySelection'?!available:!canEdit;
   }
+  blockLibraryUI.refresh();
   $('#dirty-state').hidden=!state.dirty;
   const download=$('#download'),ready=Boolean(state.output)&&!state.busy;
   download.classList.toggle('disabled',!ready);download.setAttribute('aria-disabled',String(!ready));download.tabIndex=ready?0:-1;
@@ -188,7 +191,8 @@ async function selectPicked(event, options = {}) {
     if(first&&last){
       const word=paragraph(result.id)?.editable?result.location.drafts.find(d=>d.anchor?.kind==='word'&&!d.blocked)?.anchor:undefined;
       const start=first.start+(!span&&!state.edits.has(result.id)&&!first.block&&word?word.start:0),end=span?last.end:first.start+(!state.edits.has(result.id)&&!first.block&&word?word.end:first.text.length);
-      state.caret={start,end};const input=$('#document-editor');input.focus({preventScroll:true});input.setSelectionRange(start,end);markEditorSelection();
+      state.blockPick={start,end,from:a?.id,to:z?.id,blocked:Boolean(event.to&&!span)};
+      state.caret={start,end};const input=$('#document-editor');input.focus({preventScroll:true});input.setSelectionRange(start,end);markEditorSelection();controls();
     }
     return true;
   } catch (error) {
@@ -297,6 +301,7 @@ async function installWorkspace(result, ticket) {
   state.name = result.name; state.openTicket = ticket; state.paragraphs = result.paragraphs ?? [];
   state.edits = new Map((result.edits ?? []).map((item) => [item.id, item.text]));
   state.headings = new Map((result.headings ?? []).map((item) => [item.id, item.level]));
+  state.blockPick = undefined;
   state.blocks = (result.blocks ?? []).map((item) => ({...item}));
   state.marks.clear();
   state.output = undefined; state.viewMode = 'source'; state.dirty = false; state.revision++;
@@ -406,6 +411,24 @@ function applyEditorChange(start,end,value) {
   remember();setWork(next);state.caret={start:start+value.length,end:start+value.length};changed();renderEditor();
   const input=$('#document-editor');input.focus();input.setSelectionRange(state.caret.start,state.caret.end);captureCaret(false);
 }
+function blockSelection() {
+  if(state.busy)throw Error('문서 처리가 끝난 뒤 선택하세요.');
+  if(!state.session||state.kind!=='hwpx')throw Error('HWPX 원문을 열고 범위를 선택하세요.');
+  if(state.viewMode!=='source')throw Error('원본 보기에서 범위를 선택하세요.');
+  const caret=state.caret;if(!caret)throw Error('원문이나 문단 목록에서 저장할 범위를 선택하세요.');
+  const picked=state.blockPick;
+  let from,to;
+  if(picked&&picked.start===caret.start&&picked.end===caret.end){
+    if(picked.blocked)throw Error('선택한 범위의 경계를 확인할 수 없습니다. 같은 본문이나 표 칸 안에서 다시 선택하세요.');
+    from=picked.from;to=picked.to;
+  }else{const selected=editorSelection(state.layout,caret.start,caret.end);from=state.paragraphs[selected[0]?.from]?.id;to=state.paragraphs[selected.at(-1)?.to]?.id;}
+  if(!from||!to)throw Error('저장할 문단을 선택하세요.');
+  const a=state.paragraphs.findIndex(p=>p.id===from),z=state.paragraphs.findIndex(p=>p.id===to);
+  const ids=new Set(state.paragraphs.slice(Math.min(a,z),Math.max(a,z)+1).map(p=>p.id));
+  if([...state.edits.keys()].some(id=>ids.has(id))||state.blocks.some(b=>ids.has(b.from)||ids.has(b.to)))
+    throw Error('이 범위에는 편집한 내용이 있습니다. 이번 저장은 원본 범위만 지원합니다.');
+  return {from,to};
+}
 function groupSelection() {
   const caret=state.caret;if(!caret)return;
   const next=groupEditorSelection(state.paragraphs,editorWork(),caret.start,caret.end,'b-'+crypto.randomUUID());
@@ -445,6 +468,7 @@ async function copyKey() {
 function action(name) {
   hideMenu();if(state.busy)return;
   try {
+    if(name==='saveBlock'){void blockLibraryUI.begin();return;}
     if(name==='copyKey'){void copyKey();return;}
     if(name==='copySelection'){const c=state.caret;void navigator.clipboard.writeText(state.comparisonText||(c?state.layout.text.slice(c.start,c.end):'')).then(()=>status('복사했습니다.')).catch(()=>status('브라우저가 복사를 허용하지 않았습니다. Ctrl+C를 사용하세요.','error'));return;}
     if(name==='importSelection'){replaceSelected(state.comparisonText);return;}
@@ -538,6 +562,7 @@ document.addEventListener('pointerdown', (event) => {
   if (!(event.target instanceof Element) || !event.target.closest('details.menu')) closeMenus();
 });
 document.addEventListener('keydown', (event) => {
+  if ($('#block-library-dialog').open) return;
   if (event.key === 'Escape') { hideMenu(); closeMenus(); clearSelection(); }
   if (event.ctrlKey || event.metaKey) {
     if (event.key.toLowerCase() === 's') { event.preventDefault(); void saveWork(); }

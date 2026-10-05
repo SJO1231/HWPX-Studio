@@ -3,6 +3,7 @@ import { stripTypeScriptTypes } from 'node:module';
 import { cleanPath, resolveShared, HostError } from '../../../packages/viewer/src/host/index.ts';
 import { createQuick } from './quick-api.ts';
 import { createWorkbench } from './workbench.ts';
+import { createBlockLibrary } from './block-library.ts';
 import { plainOf } from './quick-messages.ts';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, mkdirSync } from 'node:fs';
@@ -21,7 +22,8 @@ export function createApp(database=':memory:') {
   db.exec('CREATE TABLE IF NOT EXISTS project_revision (id INTEGER PRIMARY KEY, name TEXT NOT NULL, document TEXT NOT NULL, saved_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)');
   const g2b=createG2B(db);
   const quick=createQuick();
-  const workbench=createWorkbench();
+  const blockLibrary=createBlockLibrary(db);
+  const workbench=createWorkbench(blockLibrary);
   const server=createServer(async(req,res)=>{
     const send=(status:number,body:unknown,type='application/json; charset=utf-8',headers:Record<string,string>={})=>{
       const data=body instanceof Uint8Array ? body : type.startsWith('application/json') ? JSON.stringify(body) : String(body);
@@ -36,6 +38,8 @@ export function createApp(database=':memory:') {
       if(req.method==='GET') {
         const result=workbench.get(path,url.searchParams)??quick.get(path,url.searchParams);
         if(result)return send(200,result.body,'type' in result && typeof result.type==='string'?result.type:'application/vnd.hancom.hwpx',result.name?{'Content-Disposition':`attachment; filename="document.hwpx"; filename*=UTF-8''${encodeURIComponent(result.name)}`}:{});
+        if(path==='/api/blocks')return send(200,{blocks:blockLibrary.list()});
+        if(path==='/api/block')return send(200,blockLibrary.get(url.searchParams.get('id')));
         if(path==='/api/health')return send(200,{ok:true});
         if(path==='/api/g2b/profiles')return send(200,{profiles:g2b.profiles()});
         if(path==='/api/projects')return send(200,db.prepare('SELECT name, MAX(id) AS id, MAX(saved_at) AS saved_at FROM project_revision GROUP BY name ORDER BY id DESC').all());
@@ -45,7 +49,7 @@ export function createApp(database=':memory:') {
         }
         if(path==='/api/demo')return send(200,demo());
         if(path==='/api/demo-sources')return send(200,demoSources);
-        const files:Record<string,string>={'/':'web/workbench.html','/workbench':'web/workbench.html','/workbench.js':'web/workbench.js','/workbench.css':'web/workbench.css','/editor-model.js':'src/editor-model.ts','/quick':'web/quick.html','/template':'web/index.html','/quick.js':'web/quick.js','/quick.css':'web/quick.css','/app.js':'web/app.js','/style.css':'web/style.css','/rhwp.js':'vendor/rhwp/rhwp.js','/rhwp_bg.wasm':'vendor/rhwp/rhwp_bg.wasm'};
+        const files:Record<string,string>={'/':'web/workbench.html','/workbench':'web/workbench.html','/block-library.js':'web/block-library.js','/workbench.js':'web/workbench.js','/workbench.css':'web/workbench.css','/editor-model.js':'src/editor-model.ts','/quick':'web/quick.html','/template':'web/index.html','/quick.js':'web/quick.js','/quick.css':'web/quick.css','/app.js':'web/app.js','/style.css':'web/style.css','/rhwp.js':'vendor/rhwp/rhwp.js','/rhwp_bg.wasm':'vendor/rhwp/rhwp_bg.wasm'};
         const shared=cleanPath(path);
         const sharedFile=shared===undefined?undefined:resolveShared(shared);
         if(sharedFile){

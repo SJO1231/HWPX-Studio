@@ -7,6 +7,7 @@ import {
 } from '@hwpx-studio/engine';
 import { HostError, isObj, locate, markOf, resolveDrafts } from '../../../packages/viewer/src/host/index.ts';
 import { toRhwpPosition, type RhwpPosition } from '../../../packages/viewer/src/map/index.ts';
+import { extractBlockDraft, type BlockDraft, type BlockLibrary } from './block-library.ts';
 import { parseCsv } from './core.ts';
 import { analyzePlaces, listKeys, parseQuickData, type QuickData } from './quick.ts';
 
@@ -21,7 +22,7 @@ type Edit = { id: string; text: string };
 type Heading = { id: string; level: 1 | 2 };
 type Block = { id: string; from: string; to: string; text: string; alias: string };
 type Work = { edits: Edit[]; headings: Heading[]; blocks: Block[]; index: number };
-type Session = { kind: 'hwpx' | 'text'; name: string; source: Uint8Array; doc?: HwpxDocument; sourceText?: string; rows: Row[]; data?: QuickData; dataContent?: string; output?: Uint8Array };
+type Session = { kind: 'hwpx' | 'text'; name: string; source: Uint8Array; doc?: HwpxDocument; sourceText?: string; rows: Row[]; data?: QuickData; dataContent?: string; output?: Uint8Array; blockPreviews?: Map<string, BlockDraft> };
 const rowId = (section: number, path: number[]) => `p:${section}:${path.join('.')}`;
 const sameParent = (a: Row, b: Row) => a.sectionIndex === b.sectionIndex && a.path.length === b.path.length && a.path.slice(0, -1).every((n, i) => n === b.path[i]);
 const contains = (a: Row, b: Row, row: Row) => sameParent(a, row) && row.path.at(-1)! >= a.path.at(-1)! && row.path.at(-1)! <= b.path.at(-1)!;
@@ -250,7 +251,7 @@ function buildText(s: Session, work: Work) {
     notes: ['TXT 결과는 서식 없는 본문입니다.', ...(work.headings.length ? ['제목 단계는 작업 화면의 표시 정보입니다.'] : [])] };
 }
 
-export function createWorkbench() {
+export function createWorkbench(library?: BlockLibrary) {
   const sessions = new Map<string, Session>();
   const sessionOf = (id: unknown) => { const s = typeof id === 'string' ? sessions.get(id) : undefined; if (!s) throw new HostError(404, 'WORKBENCH_SESSION', '문서를 다시 올려 주세요.'); return s; };
   const registered = (s: Session) => { const fields = s.kind === 'hwpx' ? analyzePlaces(s.source).fields : []; if (sessions.size >= 8) sessions.delete(sessions.keys().next().value!); const session = randomUUID(); sessions.set(session, s); return { session, kind: s.kind, name: s.name, sourceUrl: `/api/workbench/source?session=${session}`, ...(s.sourceText === undefined ? {} : { sourceText: s.sourceText }), paragraphs: s.rows, fields }; };
@@ -276,6 +277,27 @@ export function createWorkbench() {
           return { ...registered(s), ...work, dataInfo: dataInfo(s) };
         }
         const s = sessionOf(input.session);
+        if (path === '/api/workbench/block-preview') {
+          if (!library) return fail('BLOCK_STORE', '블록 저장소를 사용할 수 없습니다.');
+          if (!s.doc || s.kind !== 'hwpx') return fail('BLOCK_HWPX', '이번 블록 저장은 HWPX 원문에서만 지원합니다.');
+          const from = s.rows.find(r => r.id === input.from), to = s.rows.find(r => r.id === input.to);
+          need(from && to, 'WORKBENCH_POSITION');
+          if (!sameParent(from, to)) return fail('BLOCK_BOUNDARY', '표 칸이나 본문 경계를 넘는 범위는 저장할 수 없습니다. 같은 칸 안이나 같은 본문에서 선택하세요.');
+          const selection = { sectionIndex: from.sectionIndex, parentPath: from.path.slice(0, -1),
+            from: Math.min(from.path.at(-1)!, to.path.at(-1)!), to: Math.max(from.path.at(-1)!, to.path.at(-1)!) };
+          const draft = extractBlockDraft(s.doc, s.name, selection);
+          s.blockPreviews ??= new Map();
+          // One pending extraction per document bounds memory; an older dialog cannot save a newer selection.
+          s.blockPreviews.clear(); s.blockPreviews.set(draft.id, draft);
+          const { fragment: _fragment, ...preview } = draft;
+          return { ...preview, version: 1 };
+        }
+        if (path === '/api/workbench/block-save') {
+          if (!library) return fail('BLOCK_STORE', '블록 저장소를 사용할 수 없습니다.');
+          const draft = typeof input.previewId === 'string' ? s.blockPreviews?.get(input.previewId) : undefined;
+          if (!draft) return fail('BLOCK_PREVIEW', '선택 범위를 다시 확인한 뒤 저장하세요.');
+          return library.save(draft, input.name);
+        }
         if (path === '/api/workbench/invalidate') { delete s.output; return { invalidated: true }; }
         if (path === '/api/workbench/select') {
           if (input.id !== undefined) {
