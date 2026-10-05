@@ -65,7 +65,8 @@ function styleRefs(item: XElement): ResourceRef[] {
   return refs;
 }
 
-function refsOf(kind: ResourceKind, item: XElement): ResourceRef[] {
+/** 자원 요소가 가리키는 다른 자원(글자모양·문단모양·스타일만 있다). 조각 가져오기의 단위 변환이 바꾼 자원을 다시 읽을 때도 쓴다. */
+export function refsOf(kind: ResourceKind, item: XElement): ResourceRef[] {
   switch (kind) {
     case "charPr":
       return charPrRefs(item);
