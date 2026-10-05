@@ -1,7 +1,7 @@
 import { crc32, deflateRawSync } from "node:zlib";
 import { HwpxError } from "../errors.ts";
 import { copyRange, put16, put32, u16 } from "./le.ts";
-import { LIMITS, type Archive, type ArchiveEntry } from "./zip-read.ts";
+import { LIMITS, readArchive, type Archive, type ArchiveEntry } from "./zip-read.ts";
 
 export type AddedEntry = { name: string; data: Uint8Array; method: 0 | 8 };
 
@@ -21,6 +21,67 @@ const encoder = new TextEncoder();
 
 function compress(data: Uint8Array, method: 0 | 8): Uint8Array {
   return method === 8 ? deflateRawSync(data) : data;
+}
+
+type AddedRecord = { name: Uint8Array; method: 0 | 8; crc: number; csize: number; size: number; offset: number };
+
+/** 추가 항목의 로컬 헤더(UTF-8 이름 플래그, 고정 날짜, 크기는 헤더에 쓴다) */
+function addedLocalHeader(rec: AddedRecord): Uint8Array {
+  const header = new Uint8Array(LOCAL_FIXED + rec.name.length);
+  put32(header, 0, 0x04034b50);
+  put16(header, 4, 20);
+  put16(header, 6, FLAG_UTF8);
+  put16(header, 8, rec.method);
+  put16(header, 10, 0);
+  put16(header, 12, FIXED_DOS_DATE);
+  put32(header, 14, rec.crc);
+  put32(header, 18, rec.csize);
+  put32(header, 22, rec.size);
+  put16(header, 26, rec.name.length);
+  put16(header, 28, 0);
+  header.set(rec.name, LOCAL_FIXED);
+  return header;
+}
+
+/** 추가 항목의 중앙 디렉터리 레코드(로컬 헤더와 같은 값) */
+function addedCentralRecord(a: AddedRecord): Uint8Array {
+  const rec = new Uint8Array(CD_FIXED + a.name.length);
+  put32(rec, 0, 0x02014b50);
+  put16(rec, 4, 20);
+  put16(rec, 6, 20);
+  put16(rec, 8, FLAG_UTF8);
+  put16(rec, 10, a.method);
+  put16(rec, 12, 0);
+  put16(rec, 14, FIXED_DOS_DATE);
+  put32(rec, 16, a.crc);
+  put32(rec, 20, a.csize);
+  put32(rec, 24, a.size);
+  put16(rec, 28, a.name.length);
+  put32(rec, 42, a.offset);
+  rec.set(a.name, CD_FIXED);
+  return rec;
+}
+
+/**
+ * 새 HWPX ZIP을 메모리에서 만든다: 첫 항목은 무압축 `mimetype`(`application/hwp+zip`)이고, 나머지는 `entries` 순서로 `rewriteArchive`의 추가 항목과 같은 꼴로 쓴다.
+ * 같은 입력은 같은 바이트다(날짜 고정). 이름 규칙·한도는 `rewriteArchive`와 같다(`mimetype`을 다시 넣으면 `PKG_MIMETYPE_LOCKED`).
+ */
+export function createHwpxArchive(entries: AddedEntry[]): Uint8Array {
+  const data = encoder.encode("application/hwp+zip");
+  const rec: AddedRecord = { name: encoder.encode("mimetype"), method: 0, crc: crc32(data), csize: data.length, size: data.length, offset: 0 };
+  const local = addedLocalHeader(rec);
+  const central = addedCentralRecord(rec);
+  const seed = new Uint8Array(local.length + data.length + central.length + EOCD_SIZE);
+  seed.set(local, 0);
+  seed.set(data, local.length);
+  seed.set(central, local.length + data.length);
+  const eocd = local.length + data.length + central.length;
+  put32(seed, eocd, 0x06054b50);
+  put16(seed, eocd + 8, 1);
+  put16(seed, eocd + 10, 1);
+  put32(seed, eocd + 12, central.length);
+  put32(seed, eocd + 16, local.length + data.length);
+  return rewriteArchive(seed, readArchive(seed), { add: entries });
 }
 
 export function rewriteArchive(bytes: Uint8Array, archive: Archive, changes: ArchiveChanges): Uint8Array {
@@ -81,26 +142,12 @@ export function rewriteArchive(bytes: Uint8Array, archive: Archive, changes: Arc
     push(data);
   }
 
-  type AddedRecord = { name: Uint8Array; method: 0 | 8; crc: number; csize: number; size: number; offset: number };
   const added: AddedRecord[] = [];
   for (const a of add) {
     const name = encoder.encode(a.name);
     const data = compress(a.data, a.method);
     const rec: AddedRecord = { name, method: a.method, crc: crc32(a.data), csize: data.length, size: a.data.length, offset: pos };
-    const header = new Uint8Array(LOCAL_FIXED + name.length);
-    put32(header, 0, 0x04034b50);
-    put16(header, 4, 20);
-    put16(header, 6, FLAG_UTF8);
-    put16(header, 8, a.method);
-    put16(header, 10, 0);
-    put16(header, 12, FIXED_DOS_DATE);
-    put32(header, 14, rec.crc);
-    put32(header, 18, rec.csize);
-    put32(header, 22, rec.size);
-    put16(header, 26, name.length);
-    put16(header, 28, 0);
-    header.set(name, LOCAL_FIXED);
-    push(header);
+    push(addedLocalHeader(rec));
     push(data);
     added.push(rec);
   }
@@ -118,23 +165,7 @@ export function rewriteArchive(bytes: Uint8Array, archive: Archive, changes: Arc
     }
     push(rec);
   }
-  for (const a of added) {
-    const rec = new Uint8Array(CD_FIXED + a.name.length);
-    put32(rec, 0, 0x02014b50);
-    put16(rec, 4, 20);
-    put16(rec, 6, 20);
-    put16(rec, 8, FLAG_UTF8);
-    put16(rec, 10, a.method);
-    put16(rec, 12, 0);
-    put16(rec, 14, FIXED_DOS_DATE);
-    put32(rec, 16, a.crc);
-    put32(rec, 20, a.csize);
-    put32(rec, 24, a.size);
-    put16(rec, 28, a.name.length);
-    put32(rec, 42, a.offset);
-    rec.set(a.name, CD_FIXED);
-    push(rec);
-  }
+  for (const a of added) push(addedCentralRecord(a));
   const cdSize = pos - cdStart;
 
   const eocd = copyRange(bytes, archive.eocdStart, archive.eocdStart + EOCD_SIZE);
