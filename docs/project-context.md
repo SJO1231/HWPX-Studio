@@ -106,3 +106,12 @@
 | `.claude/agents/` | 위임 역할 3종 |
 
 Skill을 고칠 때는 `skills/`를 고치고 `.claude/skills/`로 다시 복사한다.
+
+## 브라우저 자동 시험에서 파일 선택 창 없이 문서 열기 (2026-10-06)
+
+브라우저 자동화 도구(내장 브라우저, Chrome 확장)는 파일 선택 창과 `file://` 주소를 쓰지 못한다. 실행 중인 lite 앱에 문서를 올려 화면 흐름(열기 → 드래그 → 저장)을 시험할 때는 다음 순서를 쓴다. 제품 코드를 바꾸지 않는다.
+
+1. 시험 스크립트(Python 등)에서 `POST /api/workbench/open` `{ name: "<SHA-256 앞 10자>.hwpx", content: base64 }`로 문서를 올리고 응답의 `sourceUrl`(`/api/workbench/source?session=…`)을 받는다. 세션은 서버에 8개까지만 남으므로 주입 직전에 연다. 이름은 실제 파일 이름 대신 식별자를 쓴다.
+2. 페이지 안에서 `fetch(sourceUrl)` → `File` → `DataTransfer`로 `#document-file.files`에 넣고 `change` 이벤트를 보낸다. 앱은 보통의 열기 흐름을 탄다.
+3. 열린 문서에 저장 안 한 변경이 있으면 `window.confirm`이 떠서 주입이 취소되므로 먼저 새로 고친다.
+4. 실제 문서가 보이는 화면 그림은 이슈·PR에 올리지 않는다.
