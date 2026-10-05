@@ -421,7 +421,7 @@ type InsertPoint = { sectionIndex: number; parentPath: number[]; index: number; 
 - **개수 속성**: 추가가 있는 목록은 실제 자식 수 + 추가 수로 쓴다.
 - **이진 자료**: manifest에 `<opf:item id href media-type isEmbeded="1"/>`로 등록한다. 압축은 더 작아질 때만 한다.
 - `Fragment`에 `namespaces`, `census`, `issues`가 있다. `selectTable`은 `{ selection, issues }`를 돌려준다.
-- 계획의 `summary` 키: `reusedResources`, `addedResources`, `reusedBinaries`, `addedBinaries`, `reissuedIds`, `renamedStyles`, `renamedBookmarks`, `insertedParagraphs`, `insertedTables`, `insertedPictures`, `insertedFields`, `insertedBookmarks`.
+- 계획의 `summary` 키: `reusedResources`, `addedResources`, `reusedBinaries`, `addedBinaries`, `reissuedIds`, `renamedStyles`, `renamedBookmarks`, `insertedParagraphs`, `insertedTables`, `insertedPictures`, `insertedFields`, `insertedBookmarks`, `convertedResources`(7.66).
 - 추가한 코드: `EDIT_RANGE`, `FRAG_SELECTION`, `FRAG_INSERT_POINT`, `FRAG_SCHEMA`(오류), `FRAG_UNKNOWN_REF`, `FRAG_TABLE_PARAGRAPH_TEXT`, `FRAG_BEFORE_SECPR`(경고).
 - 독립으로 만든 두 가져오기 계획은 합치지 않는다(새 id가 겹친다). 가져오기 → 다시 파싱 → 다음 가져오기 순서로 적용한다.
 
@@ -447,17 +447,18 @@ type InsertPoint = { sectionIndex: number; parentPath: number[]; index: number; 
 | 원본 형식 | 대상 형식 | 자원 원문 | 경고 |
 | --- | --- | --- | --- |
 | 1.5 이상 | 1.5 미만 | HwpUnitChar 스위치를 `hp:default` 내용으로 바꾸고, 스위치 밖 단위 값을 2배로 | `FRAG_UNIT_CONVERTED` |
-| 1.5 미만 | 1.5 이상 | HwpUnitChar 스위치의 `hp:default` 밖 단위 값(스위치 밖 값과 case 안 값)을 절반으로(0 쪽으로 버림). default는 그대로 | `FRAG_UNIT_CONVERTED` |
+| 1.5 미만 | 1.5 이상 | HwpUnitChar 스위치의 `hp:default` 밖 단위 값(스위치 밖 값과 case 안 값)을 절반으로(0 쪽으로 버림). HwpUnitChar case의 HWPUNIT 값과 짝인 default 값은 그 case의 원래 값(절반으로 만들기 전)으로 바꾼다. case가 글자 단위(CHAR)인 자리의 default는 그대로 | `FRAG_UNIT_CONVERTED` |
 | 같은 쪽 | 같은 쪽 | 그대로 | 없음 |
 | 한쪽만 알 수 없음 | | 그대로 | `FRAG_FORMAT_UNKNOWN` |
 | 둘 다 알 수 없음 | | 그대로(같은 형식으로 본다) | 없음 |
 
+- **default는 옛 단위(1.2 기준 HWPUNIT) 값이다**: 한컴 1.5 저장본의 HWPUNIT case 짝은 default가 정확히 case의 2배다(실제 공고서 16건 16,452짝, 어긋남 0). 올림 변환에서 default를 원래 case 값(= 2×새 case, 홀수면 원래 값)으로 두므로, 그 결과를 다시 1.5 미만으로 내리면 스위치 안 값은 한컴에서 원래대로 읽힌다(검증 기준 27절 G). 짝은 case와 default에서 같은 요소 이름·순번(예: 두 번째 `tabItem`)이다.
 - 바꾼 자원은 참조 구간·접두사를 다시 읽고, 지문은 조각 자원 전부를 다시 계산한다(스타일 → 문단모양 → 탭으로 지문이 기대므로). 계산 방법은 추출 때와 같다. 그래서 바꾼 모양이 대상에 있으면 재사용하고, 같은 조각을 두 번 가져오면 둘째는 전부 재사용된다.
 - 대상의 `version.xml`·헤더 `version`·appVersion은 바꾸지 않는다. 대상 버전을 올리면 대상 고유 여백까지 2배가 된다(26절).
 - 경고는 계획당 하나다. `FRAG_UNIT_CONVERTED`의 메시지에 원본·대상 버전과 바꾼 자원 수가, `FRAG_FORMAT_UNKNOWN`에 두 버전(알 수 없음 포함)이 있다. `summary.convertedResources`는 원문이 바뀐 조각 자원 수다(재사용된 것 포함, 바꿀 것이 없으면 0).
-- **네임스페이스 선언(정리 차원)**: `extractFragment`는 자원 안 `required-namespace` 값 URI의 원본 접두사를 `valueNamespaces`에 적는다(조각 밖에서 선언된 것만). `planImport`는 두 형식 버전을 모두 알 때, 추가하는 자원의 그 접두사도 그 URI도 대상 header 루트(와 목록 조상)에 선언돼 있지 않으면 원본 접두사로 선언을 더한다. 내림 변환에서는 스위치가 사라져 더할 것이 없고, 한쪽이라도 모르면 더하지 않는다. 한컴은 이 선언이 없어도 스위치를 같게 읽는다(26절).
+- **네임스페이스 선언(정리 차원)**: `extractFragment`는 자원 안 `required-namespace` 값 URI의 원본 접두사를 `valueNamespaces`에 적는다(조각 밖에서 선언된 것만). `planImport`는 두 형식 버전을 모두 알 때, 추가하는 자원의 그 접두사도 그 URI도 대상 header 루트(와 목록 조상)에 선언돼 있지 않으면 원본 접두사로 선언을 더한다. 올림 변환한 자원은 스위치가 남으므로 이 선언 정보를 그대로 지닌다. 내림 변환에서는 스위치가 사라져 더할 것이 없고, 한쪽이라도 모르면 더하지 않는다. 한컴은 이 선언이 없어도 스위치를 같게 읽는다(26절).
 - 코드: `FRAG_UNIT_CONVERTED`, `FRAG_FORMAT_UNKNOWN`(경고). 검사기 `RES_UNIT_SWITCH_LEGACY`(경고, 8.1).
-- 한계: (1) 한컴 저장본의 default가 case의 2배에서 1 어긋난 곳(반올림. 실제 공고서 1건에서 1,359값 중 2곳)은 내림 변환 뒤 한컴 값이 원본과 옛 단위로 1 다르다. (2) 올림 변환에서 홀수 값은 새 형식으로 정확히 나타낼 수 없어 1 다르다. (3) case의 글자 단위 값은 내림 변환에서 default의 HWPUNIT 값이 된다. (4) 탭 위치는 COM 문단모양으로 읽히지 않아 한컴 값 대조가 없다(스위치 짝의 2배 관계와 같은 규칙으로 다룬다). (5) 1.3·1.4 형식은 관측하지 못했고 1.5 미만으로 다룬다. (6) 문단모양·탭 밖의 자원과 본문(구역)은 바꾸지 않는다(실제 공고서 16건에서 HwpUnitChar 스위치는 문단모양·탭에만 있었다). (7) `hp:default`가 없는 HwpUnitChar 스위치(관측 없음)는 내림 변환에서 내용을 잃지 않도록 그대로 둔다(검사기가 `RES_UNIT_SWITCH_LEGACY`로 알린다).
+- 한계: (1) HWPUNIT case 짝에서 default가 case의 2배가 아닌 곳은 관측하지 못했다(실제 공고서 16건 16,452짝. 처음에 "반올림 차"로 적은 곳은 case가 글자 단위인 자리였다, (3)). 그런 곳이 있으면 내림 변환은 default를 따른다. (2) 올림 변환에서 홀수 값은 새 형식으로 정확히 나타낼 수 없어 1 다르다. 스위치 안 값은 default에 원래 값이 남아 다시 내리면 원래대로 돌아오고, 스위치 밖 홀수 값은 다시 내려도 0 쪽 짝수로 남는다. (3) case의 글자 단위(CHAR) 값은 내림 변환에서 default의 HWPUNIT 값이 되고, 올림 변환에서는 case·default 모두 그대로 둔다(실제 공고서 16건에 32곳, 문서마다 2곳. 한컴 근거 없음). (4) 탭 위치는 COM 문단모양으로 읽히지 않아 한컴 값 대조가 없다(스위치 짝의 2배 관계와 같은 규칙으로 다룬다). (5) 1.3·1.4 형식은 관측하지 못했고 1.5 미만으로 다룬다. (6) 문단모양·탭 밖의 자원과 본문(구역)은 바꾸지 않는다(실제 공고서 16건에서 HwpUnitChar 스위치는 문단모양·탭에만 있었다). (7) `hp:default`가 없는 HwpUnitChar 스위치(관측 없음)는 내림 변환에서 내용을 잃지 않도록 그대로 둔다(검사기가 `RES_UNIT_SWITCH_LEGACY`로 알린다).
 
 ### 7.7 서식 변경 (`src/format/`) — S2b (사용자 지시, 2026-10-01)
 

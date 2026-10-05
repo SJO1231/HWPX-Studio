@@ -18,9 +18,11 @@ import {
   type Fragment,
   type HwpxDocument,
   type ImportPlan,
+  type ParagraphNode,
+  type XElement,
 } from "../src/index.ts";
 import { NS_HC, NS_HH, NS_HP, buildZip, bytesEqual, hpfXml, loadDoc, mutateEntryText, readFixture, sectionXml, utf8 } from "./helpers.ts";
-import { UNITCHAR, assertShownSame, isUnitSwitch, readSlots, readSlotsOutside, top } from "./units-helpers.ts";
+import { UNITCHAR, assertShownSame, isUnitSwitch, readSlots, readSlotsOutside, shownOf, slotOf, top } from "./units-helpers.ts";
 
 const HEADER = "Contents/header.xml";
 const SECTION = "Contents/section0.xml";
@@ -197,20 +199,107 @@ test("7.66 1.2 조각 → 1.2 대상, 1.5 → 1.5: 변환 없음(경고·요약 
   }
 });
 
-test("7.66 1.2 조각 → 1.5 대상: default 밖 단위 값을 절반(0 쪽으로 버림), default는 그대로", () => {
+test("7.66 1.2 조각 → 1.5 대상: default 밖 단위 값을 절반(0 쪽으로 버림), HWPUNIT case와 짝인 default는 case의 원래 값", () => {
   const src = open(hand("1.2", false));
   const fragment = extractFragment(src, sel(1, 6));
   const target = blank("1.5");
   const r = importInto(target, fragment, 1);
   const added = addedXml(target, r.bytes, "paraPr");
-  assert.ok(added[0]?.includes(`<hp:case hp:required-namespace="${UNITCHAR}"><hh:margin><hc:intent value="-1002" unit="HWPUNIT"/><hc:left value="0" unit="HWPUNIT"/><hc:right value="0" unit="HWPUNIT"/><hc:prev value="150" unit="HWPUNIT"/>`), added[0]);
-  assert.ok(added[0]?.includes(`<hp:default><hh:margin><hc:intent value="-4010" unit="HWPUNIT"/>`), "default는 그대로");
+  const m = (o: Record<string, number>): string =>
+    `<hh:margin>${["intent", "left", "right", "prev", "next"].map((k) => `<hc:${k} value="${o[k] ?? 0}" unit="HWPUNIT"/>`).join("")}</hh:margin>`;
+  const ls = (type: string, v: number): string => `<hh:lineSpacing type="${type}" value="${v}" unit="HWPUNIT"/>`;
+  const sw = (c: string, d: string): string => `<hp:switch><hp:case hp:required-namespace="${UNITCHAR}">${c}</hp:case><hp:default>${d}</hp:default></hp:switch>`;
+  // 원본 짝 case -2005·300 / default -4010·600 → case -1002·150 / default -2005·300(원래 case 값. 홀수도 그대로)
+  assert.ok(added[0]?.includes(sw(m({ intent: -1002, prev: 150 }) + ls("PERCENT", 160), m({ intent: -2005, prev: 300 }) + ls("PERCENT", 160))), added[0]);
   assert.ok(added[1]?.includes(`<hc:intent value="-3" unit="HWPUNIT"/><hc:left value="750" unit="HWPUNIT"/>`) && added[1].includes(`type="FIXED" value="600"`), added[1]);
-  assert.ok(added[3]?.includes(`<hc:left value="2" unit="CHAR"/>`), "글자 단위는 그대로");
+  // 고정 줄 간격도 짝: case 150·1300 / default 300·2600 → case 75·650 / default 150·1300
+  assert.ok(added[2]?.includes(sw(m({ next: 75 }) + ls("FIXED", 650), m({ next: 150 }) + ls("FIXED", 1300))), added[2]);
+  // 글자 단위 case는 한컴 근거가 없어 case도 default도 그대로
+  assert.ok(added[3]?.includes(`<hp:case hp:required-namespace="${UNITCHAR}"><hh:margin><hc:intent value="0" unit="HWPUNIT"/><hc:left value="2" unit="CHAR"/>`), added[3]);
+  assert.ok(added[3]?.includes(`<hp:default><hh:margin><hc:intent value="0" unit="HWPUNIT"/><hc:left value="2000" unit="HWPUNIT"/>`), added[3]);
+  // 탭 짝(default에 unit 없음): case 4000·4033 / default 8000·8066 → case 2000·2016 / default 4000·4033, 스위치 밖 3001 → 1500
+  const tab = (pos: number, unit: boolean): string => `<hh:tabItem pos="${pos}" type="LEFT" leader="NONE"${unit ? ` unit="HWPUNIT"` : ""}/>`;
+  assert.deepEqual(addedXml(target, r.bytes, "tabPr"), [
+    `<hh:tabPr id="1" autoTabLeft="0" autoTabRight="0">${sw(tab(2000, true), tab(4000, false))}${sw(tab(2016, true), tab(4033, false))}</hh:tabPr>`,
+    `<hh:tabPr id="2" autoTabLeft="0" autoTabRight="0">${tab(1500, false)}</hh:tabPr>`,
+  ]);
   assert.equal(r.plan.summary["convertedResources"], 5, "바뀐 자원: 문단모양 3·탭 2(글자 단위만 있는 문단모양 4는 그대로)");
   assert.deepEqual(newErrors(target, r.bytes), []);
   const { compared } = assertShownSame(src, top(src, 1, 6), false, r.doc, top(r.doc, 2, 6), true, "1.2 → 1.5");
   assert.ok(compared > 30);
+});
+
+/** `shownOf`와 같은 순서로, 문단모양(과 그 탭)의 각 단위 자리가 HwpUnitChar 스위치 안인가 */
+function inSwitchFlags(doc: HwpxDocument, p: ParagraphNode): boolean[] {
+  const find = (kind: string, id: string | null | undefined) => (doc.header.resources[kind] ?? []).find((r) => r.id === id);
+  const pp = find("paraPr", p.attrs.paraPrIDRef);
+  assert.ok(pp !== undefined);
+  const tab = find("tabPr", pp.element.attrs.find((a) => a.qname === "tabPrIDRef")?.value);
+  const flags = (el: XElement): boolean[] => {
+    const out: boolean[] = [];
+    const inside = new Set<XElement>();
+    const skip = new Set<XElement>();
+    for (const x of walkElements(el)) {
+      if (x.parent !== null && skip.has(x.parent)) {
+        skip.add(x);
+        continue;
+      }
+      if (x.parent !== null && inside.has(x.parent)) inside.add(x);
+      if (isUnitSwitch(x)) {
+        inside.add(x);
+        for (const c of x.children) if ("local" in c && c.local === "default") skip.add(c);
+      }
+      if (slotOf(x) !== undefined) out.push(inside.has(x));
+    }
+    return out;
+  };
+  return [...flags(pp.element), ...(tab === undefined ? [] : flags(tab.element))];
+}
+
+/**
+ * 1.2 원본과 1.2 왕복(1.2 → 1.5 → 1.2) 결과에서 한컴이 보여 줄 값을 대조한다. HwpUnitChar 스위치 안 값은 홀수도 정확히 같아야 한다
+ * (default에 원래 값이 남는다). 스위치 밖 HWPUNIT 값은 1.5에서 홀수를 나타낼 수 없어 0 쪽 짝수가 된다(한계 2). case가 글자 단위인 자리는
+ * 내림 변환에서 default의 HWPUNIT 값이 되므로(한계 3) 값을 보지 않고 센다.
+ */
+function assertRoundTrip(src: HwpxDocument, srcParas: ParagraphNode[], out: HwpxDocument, outParas: ParagraphNode[], label: string): { exact: number; evened: number; charSlots: number } {
+  assert.equal(outParas.length, srcParas.length, `${label}: 문단 수`);
+  let exact = 0;
+  let evened = 0;
+  let charSlots = 0;
+  srcParas.forEach((sp, i) => {
+    const a = shownOf(src, sp, false).slots;
+    const flags = inSwitchFlags(src, sp);
+    const b = shownOf(out, outParas[i] as ParagraphNode, false).slots;
+    assert.equal(flags.length, a.length);
+    assert.deepEqual(b.map(([name]) => name), a.map(([name]) => name), `${label}: 문단 ${i} 자리 이름`);
+    a.forEach(([name, kind, value], j) => {
+      if (kind === "CHAR" && b[j]?.[1] === "HWP") {
+        charSlots++;
+        return;
+      }
+      const outside = !flags[j] && kind === "HWP";
+      const expected = outside ? 2 * Math.trunc(value / 2) : value;
+      assert.deepEqual(b[j], [name, kind, expected], `${label}: 문단 ${i} ${name}${outside ? "(스위치 밖)" : ""}`);
+      if (expected === value) exact++;
+      else evened++;
+    });
+  });
+  return { exact, evened, charSlots };
+}
+
+test("7.66 1.2(스위치) → 1.5 → 1.2 왕복: 스위치 안 값은 원래대로 돌아온다(홀수 포함)", () => {
+  const src = open(hand("1.2", true));
+  const mid = importInto(blank("1.5"), extractFragment(src, sel(1, 6)), 1);
+  const back = importInto(blank("1.2"), extractFragment(mid.doc, sel(2, 7)), 1);
+  assert.ok(codes(back.plan).includes("FRAG_UNIT_CONVERTED"));
+  const { exact, evened, charSlots } = assertRoundTrip(src, top(src, 1, 6), back.doc, top(back.doc, 2, 6), "왕복");
+  assert.ok(exact > 30, `같은 값 ${exact}`);
+  assert.equal(evened, 5, "스위치 밖 홀수: 문단모양 2의 들여쓰기 -7·고정 줄 간격 1201(그 모양의 문단 2개), 문단모양 3이 쓰는 탭 3001");
+  assert.equal(charSlots, 1, "글자 단위 case 자리(문단모양 4의 left)");
+  // 스위치 안 들여쓰기 -2005(홀수)·탭 4033(홀수)도 정확히 돌아온다
+  assert.ok(addedXml(blank("1.2"), back.bytes, "paraPr").some((x) => x.includes(`<hc:intent value="-2005" unit="HWPUNIT"/>`)));
+  assert.ok(addedXml(blank("1.2"), back.bytes, "tabPr").some((x) => x.includes(`pos="4033"`)));
+  assert.deepEqual(newErrors(blank("1.2"), back.bytes), []);
 });
 
 test("7.66 형식 버전을 알 수 없음: 한쪽만 모르면 FRAG_FORMAT_UNKNOWN(변환 없음), 둘 다 모르면 경고 없음", () => {
@@ -289,6 +378,12 @@ test("7.66 스위치가 요구하는 네임스페이스 선언: 두 버전을 �
   // 같은 URI를 다른 접두사로 선언한 대상에는 더하지 않는다
   const other = mutateEntryText(blank("1.5"), HEADER, (t) => t.replace(`xmlns:hp="${NS_HP}"`, `xmlns:hp="${NS_HP}" xmlns:huc="${UNITCHAR}"`));
   assert.ok(!rootOf(importInto(other, fragment, 1).bytes).includes("xmlns:hwpunitchar"));
+  // 1.2(선언·스위치 있음) → 1.5: 올림 변환 뒤에도 스위치가 남으므로 선언 정보를 지니고 더한다. 원본에 선언이 없으면 더하지 않는다
+  const up = importInto(t15, extractFragment(open(hand("1.2", true)), sel(1, 6)), 1);
+  assert.ok((up.plan.summary["convertedResources"] ?? 0) > 0);
+  assert.ok(rootOf(up.bytes).includes(decl), rootOf(up.bytes));
+  assert.equal(rootOf(up.bytes).replace(` ${decl}`, ""), rootOf(t15));
+  assert.ok(!rootOf(importInto(t15, extractFragment(open(hand("1.2", false)), sel(1, 6)), 1).bytes).includes("hwpunitchar"));
 });
 
 test("7.66 default가 없는 HwpUnitChar 스위치는 내림 변환에서 그대로 둔다(내용을 잃지 않는다)", () => {
@@ -413,6 +508,59 @@ test("7.66 무작위 60회: 원본·대상 형식(1.5·1.2·모름) 조합에서
   t.diagnostic(`조합 ${JSON.stringify(tally)}, 대조한 값 ${shown}, 변환한 자원 ${converted}`);
   assert.equal(Object.keys(tally).length, 9, `조합 ${JSON.stringify(tally)}`);
   assert.ok(shown > 1000 && converted > 100, `대조한 값 ${shown}, 변환한 자원 ${converted}`);
+});
+
+/** HwpUnitChar 스위치마다 [case 자리, default 자리] */
+const switchPairs = (el: Parameters<typeof readSlots>[0]) =>
+  [...walkElements(el)].filter(isUnitSwitch).map((sw) => {
+    const branch = (local: string) => sw.children.find((c) => "local" in c && c.local === local) as Parameters<typeof readSlots>[0];
+    return [readSlots(branch("case")), readSlots(branch("default"))] as const;
+  });
+
+test("7.66 무작위 50회 왕복 1.2(스위치) → 1.5 → 1.2: 가운데 결과의 default는 case의 원래 값, 돌아온 값은 원본과 같다(홀수 포함)", (t) => {
+  let exact = 0;
+  let evened = 0;
+  let charSlots = 0;
+  let defaults = 0;
+  for (let seed = 7001; seed <= 7050; seed++) {
+    const r = rng(seed);
+    const src = open(buildDoc(randomSpec(r, "1.2", 40, 80)));
+    const midTarget = buildDoc(randomSpec(r, "1.5", 12, 20));
+    const backTarget = buildDoc(randomSpec(r, "1.2", 12, 20));
+    const from = Math.floor(r() * 60);
+    const n = 5 + Math.floor(r() * 15);
+    const i1 = Math.floor(r() * 20);
+    const i2 = Math.floor(r() * 20);
+    const label = `시드 ${seed}(${from}~${from + n - 1} → ${i1} → ${i2})`;
+    const mid = importInto(midTarget, extractFragment(src, sel(from, from + n - 1)), i1);
+    // 가운데 결과(1.5): HWPUNIT case와 짝인 default = 원본 case 값, 글자 단위 case 자리의 default = 원본 default 값
+    const srcParas = top(src, from, n);
+    const midParas = top(mid.doc, i1 + 1, n);
+    srcParas.forEach((sp, i) => {
+      const resOf = (doc: HwpxDocument, id: string | null | undefined, kind: string) => (doc.header.resources[kind] ?? []).find((x) => x.id === id);
+      const pp = (doc: HwpxDocument, p: (typeof srcParas)[number]) => resOf(doc, p.attrs.paraPrIDRef, "paraPr");
+      const a = pp(src, sp);
+      const b = pp(mid.doc, midParas[i] as (typeof srcParas)[number]);
+      assert.ok(a !== undefined && b !== undefined, label);
+      const tabOf = (doc: HwpxDocument, x: typeof a) => resOf(doc, x.element.attrs.find((at) => at.qname === "tabPrIDRef")?.value, "tabPr");
+      const sa = [...switchPairs(a.element), ...(tabOf(src, a) === undefined ? [] : switchPairs((tabOf(src, a) as typeof a).element))];
+      const sb = [...switchPairs(b.element), ...(tabOf(mid.doc, b) === undefined ? [] : switchPairs((tabOf(mid.doc, b) as typeof b).element))];
+      assert.equal(sb.length, sa.length, `${label}: 문단 ${i} 스위치 수`);
+      sa.forEach(([c, d], k) => {
+        const got = sb[k]?.[1] ?? [];
+        assert.deepEqual(got, d.map((slot, j) => (c[j]?.[1] === "HWP" && slot[1] !== "PCT" ? [slot[0], slot[1], c[j]?.[2]] : slot)), `${label}: 문단 ${i} 스위치 ${k} default`);
+        defaults += d.length;
+      });
+    });
+    const back = importInto(backTarget, extractFragment(mid.doc, sel(i1 + 1, i1 + n)), i2);
+    const res = assertRoundTrip(src, srcParas, back.doc, top(back.doc, i2 + 1, n), label);
+    exact += res.exact;
+    evened += res.evened;
+    charSlots += res.charSlots;
+    assert.deepEqual(newErrors(backTarget, back.bytes), [], label);
+  }
+  t.diagnostic(`돌아온 값: 같음 ${exact}, 스위치 밖 홀수 → 짝수 ${evened}, 글자 단위 case 자리 ${charSlots}. 가운데 default 자리 ${defaults}`);
+  assert.ok(exact > 1000 && defaults > 500 && charSlots > 0 && evened > 0, `같음 ${exact}, default ${defaults}, 글자 단위 ${charSlots}, 짝수 ${evened}`);
 });
 
 // ── 검사기 ──────────────────────────────────────────────────────────────

@@ -11,7 +11,7 @@ export const isUnitSwitch = (el: XElement): boolean =>
 
 type Slot = [name: string, kind: string, value: number];
 
-function slotOf(x: XElement): Slot | undefined {
+export function slotOf(x: XElement): Slot | undefined {
   const attr = (name: string): string | undefined => x.attrs.find((a) => a.qname === name)?.value;
   const kind = attr("unit") === "CHAR" ? "CHAR" : "HWP";
   if (x.parent?.local === "margin") return [x.local, kind, Number(attr("value"))];

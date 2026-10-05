@@ -29,12 +29,15 @@ export function isUnitCharFormat(version: string | undefined): boolean | undefin
   return major > 1 || (major === 1 && Number(m[2]) >= 5);
 }
 
+/** `hp:switch`의 `hp:case` 가운데 HwpUnitChar 네임스페이스를 요구하는 것 */
+export function unitCharCase(el: XElement): XElement | undefined {
+  if (!elIs(el, "paragraph", "switch")) return undefined;
+  return subElements(el).find(
+    (c) => elIs(c, "paragraph", "case") && c.attrs.some((a) => a.qname.slice(a.qname.indexOf(":") + 1) === "required-namespace" && a.value === HWPUNITCHAR_NS),
+  );
+}
+
 /** `hp:case` 가운데 하나가 HwpUnitChar 네임스페이스를 요구하는 `hp:switch` */
 export function isUnitSwitch(el: XElement): boolean {
-  return (
-    elIs(el, "paragraph", "switch") &&
-    subElements(el).some(
-      (c) => elIs(c, "paragraph", "case") && c.attrs.some((a) => a.qname.slice(a.qname.indexOf(":") + 1) === "required-namespace" && a.value === HWPUNITCHAR_NS),
-    )
-  );
+  return unitCharCase(el) !== undefined;
 }
