@@ -1,5 +1,5 @@
 // Block extraction/storage only. Insertion, shared values and later revisions are separate work.
-export function installBlockLibrary({selection, session, api, status, beforeOpen}) {
+export function installBlockLibrary({selection, session, api, status, beforeOpen, onSaved}) {
   const $ = s => document.querySelector(s), dialog = $('#block-library-dialog');
   const body = $('#block-library-body'), title = $('#block-library-title');
   let busy = false, draft, savedFocus;
@@ -76,7 +76,7 @@ export function installBlockLibrary({selection, session, api, status, beforeOpen
         try {
           if (draft.session !== session()) throw Error('문서가 바뀌었습니다. 범위를 다시 선택하세요.');
           await api('block-save', {session: draft.session, previewId: draft.id, name: input.value});
-          draft = undefined; await showList(); status('블록을 저장했습니다. 저장소 목록에서 확인하세요.', 'success');
+          draft = undefined; onSaved?.(); await showList(); status('블록을 저장했습니다. 저장소 목록에서 확인하세요.', 'success');
         } catch (e) { error.textContent = e.message; }
         finally { busy = false; save.disabled = false; $('#block-library-close').disabled = false; }
       });
