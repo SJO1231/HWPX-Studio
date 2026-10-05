@@ -141,7 +141,7 @@ type Unlocated = { precision: "none"; reason: string; trail: string[] }
 
 **시작·끝 깃발 (#74, 2026-10-06)**
 
-범위 선택의 두 방식(끌기·깃발, [스튜디오 명세](studio-spec.md) 4c.2) 가운데 깃발의 호스트 계약이다. 결과는 같은 두 문단을 끈 것(#53, 3절)과 같다. 검증은 [검증 기준](validation.md) 26절.
+범위 선택의 두 방식(끌기·깃발, [스튜디오 명세](studio-spec.md) 4c.2) 가운데 깃발의 호스트 계약이다. 결과는 같은 두 문단을 끈 것(#53, 3절)과 같다. 검증은 [검증 기준](validation.md) 29절.
 
 - 요청(`FlagRequest`, `src/host/types.ts`): 위치 요청과 같은 `locate`에 `{ flags: { start, end } }`를 보낸다. `start`·`end`는 각각 눌린 점 하나(`LocatePoint`: 위치와 런의 글·한계·사유, 또는 표 칸의 빈 곳 `cell`)이고 `from`·`to`와 함께 보내지 않는다. 깃발은 그 점의 **문단**까지만 쓴다(글자 순번·`trailing`·안내문은 문단을 찾는 데만 쓰인다).
 - 풀기: 깃발마다 `cell`이면 `locateInCell`, 아니면 `locatePicked`(`start`)로 문단을 찾고, 끌기와 같은 함수로 범위를 낸다.
