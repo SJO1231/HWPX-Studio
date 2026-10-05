@@ -1,7 +1,7 @@
 import { HwpxError } from "../errors.ts";
-import type { BlockProto, ProtoUpdatePlan, ProtoUsage, ProtoUsageList, StudioTemplate, TemplateBlock, TemplateNotice } from "./studio-types.ts";
+import type { BlockProto, ProtoUpdatePlan, ProtoUsage, ProtoUsageList, StudioTemplate, TemplateNotice } from "./studio-types.ts";
 
-// 블록 원형의 영향 목록과 전파 계획(엔진 명세 8.8.7, #21의 순수 함수 부분). 저장·새 판 번호 부여는 저장소(Codex)가 한다.
+// 블록 원형의 영향 목록과 전파 계획(엔진 명세 8.8.7, #21의 순수 함수 부분). 새 판 만들기(`reextractBlock`)는 엔진, 저장소·화면은 Codex가 한다.
 
 /**
  * 원형 protoId를 쓰는 곳을 템플릿마다 모은다. templates는 읽은 템플릿(각 템플릿의 최신 판), latest는 저장소가 아는 원형의 최신 판 번호다.
@@ -29,15 +29,23 @@ export function listProtoUsage(templates: readonly StudioTemplate[], protoId: st
 
 const nfc = (s: string): string => s.normalize("NFC");
 
-/** 원형의 키마다 그 블록에 적용되는 placeholder 자리가 있고 그 자리의 값에 연결이 있는지 본다. 없으면 PROTO_UNBOUND_KEY */
-function checkKeys(t: StudioTemplate, proto: BlockProto, b: TemplateBlock): void {
+/**
+ * 원형의 키마다 대상 블록(그 원형을 더 낮은 판으로 고정한 블록)에 적용되는 placeholder 자리가 있고 그 자리의 값에 연결이 있는지 본다.
+ * 없는 것 전부를 PROTO_UNBOUND_KEY 오류로 돌려준다(대상 블록 순서, 한 블록 안에서는 원형 keys 순서). planProtoUpdate는 그 첫 오류를 던진다.
+ */
+export function unboundKeys(t: StudioTemplate, proto: BlockProto): HwpxError[] {
   const bound = new Set(t.bindings.map((x) => x.value));
-  for (const key of proto.keys) {
-    const ok = t.places.some((p) => p.kind === "placeholder" && nfc(p.key) === nfc(key) && (p.where === undefined || p.where === b.id) && bound.has(p.value));
-    if (!ok) {
-      throw new HwpxError("PROTO_UNBOUND_KEY", `원형 ${proto.id}의 ${proto.version}판이 쓰는 키 '${key}'에 템플릿 ${t.id}의 자리(placeholder)나 값 연결이 없어 블록 ${b.id}에 전파할 수 없습니다.`, `blocks.${b.id}`);
+  const out: HwpxError[] = [];
+  for (const b of t.blocks) {
+    if (b.proto?.id !== proto.id || b.proto.version >= proto.version) continue;
+    for (const key of proto.keys) {
+      const ok = t.places.some((p) => p.kind === "placeholder" && nfc(p.key) === nfc(key) && (p.where === undefined || p.where === b.id) && bound.has(p.value));
+      if (!ok) {
+        out.push(new HwpxError("PROTO_UNBOUND_KEY", `원형 ${proto.id}의 ${proto.version}판이 쓰는 키 '${key}'에 템플릿 ${t.id}의 자리(placeholder)나 값 연결이 없어 블록 ${b.id}에 전파할 수 없습니다.`, `blocks.${b.id}`));
+      }
     }
   }
+  return out;
 }
 
 /**
@@ -47,7 +55,8 @@ function checkKeys(t: StudioTemplate, proto: BlockProto, b: TemplateBlock): void
  */
 export function planProtoUpdate(t: StudioTemplate, proto: BlockProto): ProtoUpdatePlan {
   const targets = t.blocks.filter((b) => b.proto?.id === proto.id && b.proto.version < proto.version);
-  for (const b of targets) checkKeys(t, proto, b);
+  const unbound = unboundKeys(t, proto)[0];
+  if (unbound !== undefined) throw unbound;
   const next = structuredClone(t);
   if (targets.length === 0) return { template: next, updated: [] };
   const updated: ProtoUpdatePlan["updated"] = [];

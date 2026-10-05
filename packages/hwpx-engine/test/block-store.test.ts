@@ -37,6 +37,7 @@ import {
   bindValues,
   checkTemplateUpdates,
   contentSha256,
+  planProtoUpdate,
   readBlockProto,
   readDataset,
   readStudioTemplate,
@@ -416,17 +417,24 @@ test("8.8.17 reextractBlock: 결과 문서에서 다시 떼면 같은 id의 새 
   assert.deepEqual(v2.proto.previous, { version: 1, content: contentSha256(v1.proto.content) });
   assert.equal(v2.proto.source?.sha256, sha256Hex(result));
   assert.equal(v2.proto.source?.extractedAt, later);
-  assert.deepEqual(v2.proto.keys, [], "채운 뒤에는 {{ }}가 없다");
+  // 채운 결과에서 다시 떼면 {{ }} 입력 항목이 사라진다: 경고 BLOCK_KEYS_DROPPED(사라진 키 목록)와 바뀐 점의 입력 항목 수. 막지는 않는다
+  assert.deepEqual(v1.proto.keys, ["기관명", "사업명"]);
+  assert.deepEqual(v2.proto.keys, []);
+  const dropped = v2.issues.filter((i) => i.code === "BLOCK_KEYS_DROPPED");
+  assert.deepEqual(dropped.map((i) => [i.severity, i.where]), [["warning", `block:${v1.proto.id}`]]);
+  assert.ok(dropped[0]?.message.includes("입력 항목 2개('기관명'·'사업명')"), dropped[0]?.message);
+  assert.ok(!dropped[0]?.message.includes("값["), "경고에 값 원문이 없다");
   const changed = v1.fragment.texts.filter((x, i) => x !== v2.fragment.texts[i]).length;
   assert.equal(changed, 4);
   assert.deepEqual(v2.proto.history, [
     { version: 1, at: AT, change: "첫 저장" },
-    { version: 2, at: later, change: `글이 다른 문단 ${changed}개` },
+    { version: 2, at: later, change: `입력 항목 2→0개, 글이 다른 문단 ${changed}개` },
   ]);
   assert.ok(!v2.proto.history?.some((h) => h.change.includes("값[")), "바뀐 점에 값 원문이 없다");
-  // 직접 적은 바뀐 점, 기록 없는 옛 원형의 다음 판, 판 3
+  // 직접 적은 바뀐 점, 기록 없는 옛 원형의 다음 판, 판 3. 키가 줄지 않으면(0 → 0) 경고 없음
   const v3 = reextractBlock(resultDoc, makeRangeAnchor(resultDoc, 0, [], 18, 22)!, v2.proto, { at: later, change: "문구 다듬음", name: "새 이름" });
   assert.deepEqual([v3.proto.version, v3.proto.name, v3.proto.history?.at(-1)?.change, v3.proto.history?.length], [3, "새 이름", "문구 다듬음", 3]);
+  assert.ok(!v3.issues.some((i) => i.code === "BLOCK_KEYS_DROPPED"));
   const legacy = readBlockProto(readFixtureText("template-v2/proto-v3.json"));
   const v4 = reextractBlock(k.doc, makeRangeAnchor(k.doc, 0, [], 18, 21)!, legacy, { at: later });
   assert.deepEqual([v4.proto.version, v4.proto.history, v4.proto.previous?.version], [4, [{ version: 4, at: later, change: "다시 저장" }], 3]);
@@ -434,6 +442,7 @@ test("8.8.17 reextractBlock: 결과 문서에서 다시 떼면 같은 id의 새 
   // 고치지 않고 다시 떼면 "내용 변화 없음"
   const same = reextractBlock(k.doc, makeHeadingRangeAnchor(k.doc, 0, [], 22)!, v1.proto, { at: later, previous: v1.fragment });
   assert.equal(same.proto.history?.at(-1)?.change, "내용 변화 없음");
+  assert.deepEqual([same.proto.keys, same.issues.filter((i) => i.code === "BLOCK_KEYS_DROPPED")], [v1.proto.keys, []], "키가 그대로면 경고 없음");
   // 새 판을 다른 문서에 넣으면 고친 글 그대로 들어간다
   const target = reparse(readFixture("hancom/blocks"));
   const plan = planBlockInsert(target, v2.proto, v2.blob, { sectionIndex: 0, parentPath: [], index: 2, position: "after" });
@@ -469,7 +478,7 @@ test("8.8.17 checkTemplateUpdates: 새 판이 있으면 BLOCK_NEWER_VERSION, 바
 test("8.8.17 planBlockUpdate: 새 판 전파(planProtoUpdate) + 자리 못 찾음·이름 충돌·서식 차이를 한 목록으로", () => {
   const k = kit();
   const v1 = extractBlock(k.doc, makeHeadingRangeAnchor(k.doc, 0, [], 22)!, meta("k0000c0de"));
-  const { t } = templateWith(k, v1);
+  const { t, blobs } = templateWith(k, v1);
   const v2 = reextractBlock(k.doc, makeHeadingRangeAnchor(k.doc, 0, [], 27)!, v1.proto, { at: AT });
   // 정상: 새 템플릿 판, 오류 0, 같은 서식이라 경고 0
   const good = planBlockUpdate(t, v2.proto, v2.blob, k.doc);
@@ -482,6 +491,14 @@ test("8.8.17 planBlockUpdate: 새 판 전파(planProtoUpdate) + 자리 못 찾�
   const unbound = planBlockUpdate(t, { ...v2.proto, keys: [...v2.proto.keys, "없는 키"] }, v2.blob, k.doc);
   assert.equal(unbound.template, undefined);
   assert.deepEqual(unbound.issues.map((i) => [i.severity, i.code]), [["error", "PROTO_UNBOUND_KEY"]]);
+  // 없는 키 2개 → 이슈 2개(키마다 하나). planProtoUpdate는 그대로 첫 키에서 던진다
+  const twoMissing = { ...v2.proto, keys: [...v2.proto.keys, "없는 키", "없는 둘째 키"] };
+  const unbound2 = planBlockUpdate(t, twoMissing, v2.blob, k.doc);
+  assert.equal(unbound2.template, undefined);
+  assert.deepEqual(unbound2.issues.map((i) => [i.severity, i.code, i.where]), [["error", "PROTO_UNBOUND_KEY", "blocks.b1"], ["error", "PROTO_UNBOUND_KEY", "blocks.b1"]]);
+  assert.ok(unbound2.issues[0]?.message.includes("'없는 키'") && unbound2.issues[1]?.message.includes("'없는 둘째 키'"));
+  const thrown = failure(() => planProtoUpdate(t, twoMissing));
+  assert.deepEqual([thrown.code, thrown.message, thrown.where], ["PROTO_UNBOUND_KEY", unbound2.issues[0]?.message, "blocks.b1"]);
   // 자리 못 찾음(앵커): 슬롯 범위가 없는 바탕 문서
   const other = reparse(readFixture("hancom/blocks"));
   const lost = planBlockUpdate(t, v2.proto, v2.blob, other);
@@ -501,6 +518,17 @@ test("8.8.17 planBlockUpdate: 새 판 전파(planProtoUpdate) + 자리 못 찾�
   assert.deepEqual(styled.formatDiffs.map((f) => [f.block, f.anchor]), [["b1", "a1"]]);
   assert.deepEqual(styled.formatDiffs[0]?.diffs, blockFormatDiffs(k.doc, foreign.fragment, { sectionIndex: 0, parentPath: [], index: 18 }));
   assert.ok(styled.template !== undefined);
+  // 입력 항목 사라짐: 직전 판(previous)을 주면 reextractBlock과 같은 판정. 키가 그대로면 경고 없음
+  assert.deepEqual(planBlockUpdate(t, v2.proto, v2.blob, k.doc, v1.proto).issues, []);
+  const record = recordFor((name) => `값[${name}]`);
+  const c = caseOf(t, record, { selections: { s1: manual(t, "s1", "b1"), s2: manual(t, "s2", "b3") } });
+  const resultDoc = reparse(outBytes(ok(generateFromTemplate(k.bytes, t, record, c, loaderOf(blobs)))));
+  const filled = reextractBlock(resultDoc, makeRangeAnchor(resultDoc, 0, [], 18, 22)!, v1.proto, { at: AT });
+  const keysGone = planBlockUpdate(t, filled.proto, filled.blob, k.doc, v1.proto);
+  assert.deepEqual(keysGone.issues.map((i) => [i.severity, i.code, i.where]), [["warning", "BLOCK_KEYS_DROPPED", "blocks.b1"]]);
+  assert.ok(keysGone.issues[0]?.message.includes("'기관명'·'사업명'"), keysGone.issues[0]?.message);
+  assert.ok(keysGone.template !== undefined, "경고만 하고 막지 않는다");
+  assert.deepEqual(planBlockUpdate(t, filled.proto, filled.blob, k.doc).issues, [], "직전 판을 주지 않으면 보지 않는다");
 });
 
 // ── 무작위 50회: 떼기 → 저장 → 넣기(2판 생성), 결정성·게이트·검사기 새 오류 0 ─────────

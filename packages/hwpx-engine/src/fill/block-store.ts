@@ -8,7 +8,7 @@ import type { Fragment, FragmentSelection, ImportOptions, ImportPlan, InsertPoin
 import { fieldTypeOf, walkParagraphs } from "../model/paragraph.ts";
 import type { HwpxDocument, ParagraphNode } from "../model/types.ts";
 import { sha256Hex } from "../template/hash.ts";
-import { planProtoUpdate } from "../template/studio-proto.ts";
+import { planProtoUpdate, unboundKeys } from "../template/studio-proto.ts";
 import { readBlockProto } from "../template/studio-read.ts";
 import { BLOCK_PROTO_SCHEMA, type BlockProto, type StudioAnchor, type StudioTemplate } from "../template/studio-types.ts";
 import { contentSha256, writeBlockProto } from "../template/studio-write.ts";
@@ -45,7 +45,7 @@ export type BlockUpdatePlan = {
   /** 새 템플릿 판(`planProtoUpdate`). 원형의 키에 자리·연결이 없어(`PROTO_UNBOUND_KEY`) 전파할 수 없으면 없다 */
   template?: StudioTemplate;
   updated: { block: string; from: number; to: number }[];
-  /** 자리 못 찾음(`ANCHOR_*`·`PROTO_UNBOUND_KEY`)과 이름 충돌(`BLOCK_NAME_CONFLICT`)은 오류, 서식 차이(`BLOCK_FORMAT_DIFFERS`)는 경고 */
+  /** 자리 못 찾음(`ANCHOR_*`·`PROTO_UNBOUND_KEY`)과 이름 충돌(`BLOCK_NAME_CONFLICT`)은 오류, 입력 항목 사라짐(`BLOCK_KEYS_DROPPED`)·서식 차이(`BLOCK_FORMAT_DIFFERS`)는 경고 */
   issues: Issue[];
   formatDiffs: { block: string; anchor: string; diffs: BlockFormatDiff[] }[];
 };
@@ -115,8 +115,8 @@ const differing = (a: readonly string[], b: readonly string[]): number => {
   return n;
 };
 
-/** 두 조각의 바뀐 점(수량만. 문서 글은 넣지 않는다) */
-function describeChange(before: Fragment, after: Fragment): string {
+/** 두 조각의 바뀐 점(수량만. 문서 글은 넣지 않는다). `keys`는 두 판의 `{{ 키 }}` 입력 항목 수 */
+function describeChange(before: Fragment, after: Fragment, keys: [number, number]): string {
   const parts: string[] = [];
   const count = (label: string, x: number, y: number): void => {
     if (x !== y) parts.push(`${label} ${x}→${y}개`);
@@ -125,6 +125,7 @@ function describeChange(before: Fragment, after: Fragment): string {
   count("표", before.census.tables, after.census.tables);
   count("그림", before.census.pictures, after.census.pictures);
   count("누름틀", before.census.fields, after.census.fields);
+  count("입력 항목", keys[0], keys[1]);
   const texts = differing(before.texts, after.texts);
   if (texts > 0) parts.push(`글이 다른 문단 ${texts}개`);
   const prints = differing(before.prints, after.prints);
@@ -132,10 +133,27 @@ function describeChange(before: Fragment, after: Fragment): string {
   return parts.length === 0 ? "내용 변화 없음" : parts.join(", ");
 }
 
+/** 직전 판의 `{{ 키 }}` 가운데 새 판에 없는 것(NFC로 견준다. 직전 판 순서) */
+function droppedKeys(before: readonly string[], after: readonly string[]): string[] {
+  const kept = new Set(after.map(nfc));
+  return before.filter((k) => !kept.has(nfc(k)));
+}
+
+/** 입력 항목이 사라진 새 판의 경고(키 이름만. 값 원문 없음). 막지 않는다 */
+function keysDroppedIssue(proto: BlockProto, from: number, dropped: readonly string[], where: string): Issue {
+  return makeIssue(
+    "warning",
+    "BLOCK_KEYS_DROPPED",
+    `블록 ${proto.id}의 ${proto.version}판에서 ${from}판의 입력 항목 ${dropped.length}개(${dropped.map((k) => `'${k}'`).join("·")})가 사라졌습니다. 채운 결과 문서에서 다시 뗐다면 이번 건의 값이 공용 블록 글에 들어갔을 수 있으니 확인하세요. 자동으로 막지 않습니다.`,
+    where,
+  );
+}
+
 /**
  * 결과 문서(넣고 고친 문서)의 범위를 다시 떼어 같은 블록의 새 판을 만든다(8.8.17): id 그대로, `version` + 1, `previous`는 직전 판의 번호와 내용 해시,
  * `history`는 직전 판의 기록에 새 줄을 더한 것(직전 판에 기록이 없으면 새 줄만), `source`는 결과 문서의 해시·구간·지문·시각, `keys`는 다시 계산한다.
- * 바뀐 점은 `meta.change`, 없으면 `meta.previous`(직전 판의 조각)와 견준 수량 요약, 그것도 없으면 "다시 저장"이다. 이름은 `meta.name`이 없으면 그대로이고, 직전 판의 `note`는 넘기지 않는다(새 판의 메모는 `meta.note`).
+ * 바뀐 점은 `meta.change`, 없으면 `meta.previous`(직전 판의 조각)와 견준 수량 요약(입력 항목 수 포함), 그것도 없으면 "다시 저장"이다. 이름은 `meta.name`이 없으면 그대로이고, 직전 판의 `note`는 넘기지 않는다(새 판의 메모는 `meta.note`).
+ * 직전 판의 `keys` 가운데 새 판에 없는 것이 있으면(채운 결과에서 다시 뗀 경우 등) 경고 `BLOCK_KEYS_DROPPED`(사라진 키 목록)를 `issues`에 더한다. 막지는 않는다.
  */
 export function reextractBlock(
   resultDoc: HwpxDocument,
@@ -145,14 +163,16 @@ export function reextractBlock(
 ): ExtractedBlock {
   const next = extractBlock(resultDoc, range, { id: proto.id, name: meta.name ?? proto.name, at: meta.at, ...(meta.note === undefined ? {} : { note: meta.note }) });
   const version = proto.version + 1;
-  const change = meta.change ?? (meta.previous === undefined ? "다시 저장" : describeChange(meta.previous, next.fragment));
+  const change = meta.change ?? (meta.previous === undefined ? "다시 저장" : describeChange(meta.previous, next.fragment, [proto.keys.length, next.proto.keys.length]));
   const out: BlockProto = {
     ...next.proto,
     version,
     previous: { version: proto.version, content: contentSha256(proto.content) },
     history: [...(proto.history ?? []), { version, at: meta.at, change }],
   };
-  return { ...next, proto: checked(out) };
+  const dropped = droppedKeys(proto.keys, next.proto.keys);
+  const issues = dropped.length === 0 ? next.issues : [...next.issues, keysDroppedIssue(out, proto.version, dropped, `block:${proto.id}`)];
+  return { ...next, proto: checked(out), issues };
 }
 
 /** 원형의 조각 덩어리를 확인해 읽는다: 글 블록이거나 덩어리의 해시가 `content.fragment`와 다르면 `TPL_FRAGMENT_MISSING`, 조각 JSON이 아니면 `FRAG_SCHEMA` */
@@ -254,25 +274,22 @@ function spotOf(found: AnchorAddress): { sectionIndex: number; parentPath: numbe
  * - 자리 못 찾음: 원형의 키에 자리·연결이 없음(`PROTO_UNBOUND_KEY`, 이때 새 템플릿 판은 없다), 슬롯 앵커를 바탕 문서 `doc`에서 찾지 못함(`ANCHOR_CHANGED`·`ANCHOR_AMBIGUOUS`·`ANCHOR_NOT_FOUND`).
  * - 이름 충돌: 블록 안 입력 항목 이름(`{{ 키 }}`·누름틀 이름·메일머지 키)이 같은데 그 블록에 적용되는 `placeholder`·`clickHere`·`mailMerge` 자리들이 서로 다른 값에 연결됨(`BLOCK_NAME_CONFLICT`).
  * - 서식 차이: 슬롯 앵커의 첫 문단과 블록 문단의 서식이 다름(`BLOCK_FORMAT_DIFFERS` 경고, `formatDiffs`).
- * 입력 템플릿은 바꾸지 않는다. 결과를 저장할지 새로 만들지는 호출자(사용자) 몫이다.
+ * - 입력 항목 사라짐: 직전 판 원형 `previous`를 주었고 그 `keys` 가운데 새 판에 없는 것이 있음(`BLOCK_KEYS_DROPPED` 경고, `reextractBlock`과 같은 판정).
+ * 원형 키의 자리 못 찾음은 없는 키 전부를 담는다. 입력 템플릿은 바꾸지 않는다. 결과를 저장할지 새로 만들지는 호출자(사용자) 몫이다.
  */
-export function planBlockUpdate(t: StudioTemplate, proto: BlockProto, blob: Uint8Array, doc: HwpxDocument): BlockUpdatePlan {
+export function planBlockUpdate(t: StudioTemplate, proto: BlockProto, blob: Uint8Array, doc: HwpxDocument, previous?: BlockProto): BlockUpdatePlan {
   const fragment = blockFragment(proto, blob);
-  const issues: Issue[] = [];
-  let template: StudioTemplate | undefined;
-  let updated: BlockUpdatePlan["updated"] = [];
-  try {
-    ({ template, updated } = planProtoUpdate(t, proto));
-  } catch (e) {
-    if (!(e instanceof HwpxError) || e.code !== "PROTO_UNBOUND_KEY") throw e;
-    issues.push(makeIssue("error", e.code, e.message, e.where));
-  }
+  const unbound = unboundKeys(t, proto);
+  const issues: Issue[] = unbound.map((e) => makeIssue("error", e.code, e.message, e.where));
+  const { template, updated } = unbound.length === 0 ? planProtoUpdate(t, proto) : { template: undefined, updated: [] };
+  const dropped = previous === undefined ? [] : droppedKeys(previous.keys, proto.keys);
   const targets = t.blocks.filter((b) => b.proto?.id === proto.id && b.proto.version < proto.version);
   const anchors = new Map(t.anchors.map((a) => [a.id, a]));
   const names = blockNames(proto, fragment);
   const total = parseFragmentXml(fragment).paragraphs.length;
   const formatDiffs: BlockUpdatePlan["formatDiffs"] = [];
   for (const b of targets) {
+    if (previous !== undefined && dropped.length > 0) issues.push(keysDroppedIssue(proto, previous.version, dropped, `blocks.${b.id}`));
     for (const name of names) {
       const places = t.places.filter((p) => {
         const own = p.kind === "clickHere" ? p.name : p.kind === "placeholder" || p.kind === "mailMerge" ? p.key : undefined;
