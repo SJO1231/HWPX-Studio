@@ -5,4 +5,4 @@ export { draftsFor, locate } from "./locate.ts";
 export { markOf, markRanges, resolveDrafts } from "./marks.ts";
 export { createShell, errorReply, HOST, type HostRequest, type HostResponse, type ShellOptions } from "./shell.ts";
 export { cleanPath, inside, resolveShared, staticFileOf, type StaticFile } from "./static.ts";
-export type { AnchorDraftJson, ApiError, DraftView, LocatePoint, LocateRequest, LocateResponse, MarkRange } from "./types.ts";
+export type { AnchorDraftJson, ApiError, DraftView, FlagRequest, LocatePoint, LocateRequest, LocateResponse, MarkRange } from "./types.ts";

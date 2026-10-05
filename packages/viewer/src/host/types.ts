@@ -29,6 +29,14 @@ export type LocateRequest = {
   to?: LocatePoint;
 };
 
+/**
+ * 시작·끝 깃발로 고른 문단 범위(#74). 위치 요청과 같은 `locate`로 보내며 `from`·`to`와 함께 쓰지 않는다.
+ * 깃발은 각각 눌린 점 하나(`LocatePoint`. 표 칸의 빈 곳이면 `cell`)이고 그 점의 문단까지만 쓴다(글자 순번은 범위에 쓰지 않는다).
+ * 응답은 두 문단을 끈 것과 같은 `LocateResponse`다: 같은 구역·같은 부모이면 `span`과 `range` 초안(앞 문단이 제목이면 `headingRange` 초안 둘째),
+ * 끝이 시작보다 앞이면 바꿔 잡고, 두 깃발이 같은 문단이면 문단 하나짜리 범위다. 부모가 다르면 `none`(`RANGE_PARAGRAPHS_DIFFER`), 한 깃발을 풀지 못하면 그 깃발의 사유다.
+ */
+export type FlagRequest = { flags: { start: LocatePoint; end: LocatePoint } };
+
 /** 쪽 위에 강조할 자리: 같은 문단 안 rhwp 글자 순번 구간(`guide`가 있으면 안내문 상태 누름틀의 안내문 글) */
 export type MarkRange = { position: RhwpPosition; endOffset: number; guide?: string; /** 구간이 덮어야 할 글(낱말·누름틀 값). 화면이 쪽 글자 배치와 비교해 어긋나면 그리지 않는다 */ text?: string };
 
@@ -46,7 +54,7 @@ export type LocateResponse = {
   trail: string[];
   /** 범위 선택이면 엔진 논리 오프셋 구간 */
   range?: { start: number; end: number };
-  /** 여러 문단에 걸친 끌기이면 같은 부모(`parentPath`: 빈 배열이면 구역 최상위) 안 문단 범위 `from`~`to`(문서 순서, 포함) */
+  /** 문단 범위(여러 문단에 걸친 끌기, 시작·끝 깃발)이면 같은 부모(`parentPath`: 빈 배열이면 구역 최상위) 안 문단 범위 `from`~`to`(문서 순서, 포함) */
   span?: { sectionIndex: number; parentPath: number[]; from: number; to: number };
   edge: LocateEdge;
   drafts: DraftView[];
