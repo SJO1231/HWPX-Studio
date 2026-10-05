@@ -711,6 +711,7 @@ type InsertPoint = { sectionIndex: number; parentPath: number[]; index: number; 
 - 거절: 범위 안 문단에 구역 설정이 있으면 삭제·교체가 `FILL_SECTION_PROPS`, 부모의 문단을 전부 지우면 `FILL_LAST_PARAGRAPH`(8.3과 같다). 범위가 누름틀의 시작과 끝 사이를 자르면 `FRAG_SPLITS_FIELD`(7.2와 같다).
 - 해석은 `resolveAnchors`와 같은 방식이다(`locateRange(doc, a)`가 판정을 돌려준다). 주소의 범위가 `print`와 모두 맞으면 exact다. 안 맞으면 **같은 구역의 모든 문단 목록**(최상위와 표 칸 안 전부)에서 `first`·`last`·`count`·`sha256`이 모두 맞는 범위를 찾는다(같은 부모로 한정하지 않는 이유: 앞에 표가 끼면 칸 안 범위의 `parentPath`가 바뀐다). 한 곳이면 relocated(`ANCHOR_RELOCATED` 경고), 여럿이면 `ANCHOR_AMBIGUOUS`, 없으면 `ANCHOR_NOT_FOUND`다. 전체가 맞는 곳이 없고 첫 문단만 맞을 때, 첫 문단을 포함해 길이 `2×count` 안에서 끝 문단 해시가 찾아지면 changed(`ANCHOR_CHANGED`, 오류)다(count 4면 안쪽 4문단 추가는 changed, 5문단 추가는 notFound). 문단 하나짜리 범위는 changed가 될 수 없다. 한계: 양 끝이 빈 문단인 범위를 통째로 지우면 다른 곳의 빈 문단 두 개 때문에 notFound 대신 changed가 날 수 있다(둘 다 생성을 막는 오류라 결과는 같고 안내만 다르다). 상태 이름과 코드 대응은 8.8.13이 정한다.
 - 1판 `readTemplate`도 `range` 앵커를 받는다(더하기. 모양이 틀리면 `TPL_ANCHOR`). 텍스트 어댑터(md·txt, 8.5)에서 `range` 앵커는 `ANCHOR_NOT_FOUND`다.
+- 화면에서 범위 고르기: 두 방식(여러 문단 끌기 #53, 시작·끝 깃발 #74)은 뷰어 `locate`가 같은 `range` 초안(시작 문단이 제목이면 `headingRange` 초안도)으로 낸다. 계약은 [뷰어 명세](viewer-spec.md) 4절, 검증은 [검증 기준](validation.md) 25·29절.
 
 **range를 받는 액션** **[계약]** **[구현 #30]**
 

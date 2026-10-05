@@ -1,6 +1,6 @@
 // 위치 요청 하나를 엔진 주소와 앵커 초안, 강조 구간으로 바꾼다. 문서(`HwpxDocument`)는 부르는 쪽 호스트가 갖는다.
 import { draftAnchors, makeHeadingRangeAnchor, makeRangeAnchor, type AnchorDraft, type DraftedAnchor, type HwpxDocument } from "../../../hwpx-engine/src/index.ts";
-import { locateInCell, locatePicked, type LocateEdge, type Located, type PickedPoint, type Unlocated } from "../map/index.ts";
+import { locateInCell, locatePicked, type LocateEdge, type Located, type Unlocated } from "../map/index.ts";
 import { sameParagraph } from "../rhwp/layout.ts";
 import { HostError } from "./errors.ts";
 import { markOf, resolveDrafts } from "./marks.ts";
@@ -48,14 +48,12 @@ function respond(doc: HwpxDocument, result: Result, edge: LocateEdge, range?: { 
 }
 
 /**
- * 여러 문단에 걸친 끌기. 두 끝을 각각 문단으로 풀어, 같은 구역·같은 부모(둘 다 구역 최상위이거나 둘 다 같은 표 칸·글상자의 하위 목록)이면
- * 문서 순서로 앞 문단부터 뒤 문단까지의 `range` 초안과, 앞 문단이 제목이면 그 제목의 `headingRange` 초안(둘째)을 낸다(`paragraph`, `span`).
- * 어느 한 끝이라도 문단을 찾지 못하면 그 끝의 결과(`none`)이고, 부모가 다르면(다른 표 칸·목록에 걸친 끌기) `none`(`RANGE_PARAGRAPHS_DIFFER`)이다.
+ * 두 끝을 각각 문단으로 푼 결과로 문단 범위를 낸다(여러 문단에 걸친 끌기 #53, 시작·끝 깃발 #74). 같은 구역·같은 부모(둘 다 구역 최상위이거나 둘 다 같은 표 칸·글상자의 하위 목록)이면
+ * 문서 순서로 앞 문단부터 뒤 문단까지의 `range` 초안과, 앞 문단이 제목이면 그 제목의 `headingRange` 초안(둘째)을 낸다(`paragraph`, `span`). 두 끝이 같은 문단이면 문단 하나짜리 범위다.
+ * 어느 한 끝이라도 문단을 찾지 못하면 그 끝의 결과(`none`)이고, 부모가 다르면(다른 표 칸·목록에 걸친 범위) `none`(`RANGE_PARAGRAPHS_DIFFER`)이다.
  */
-function locateSpan(doc: HwpxDocument, from: PickedPoint, to: PickedPoint): LocateResponse {
-  const a = locatePicked(doc, from, "start");
+function spanOf(doc: HwpxDocument, a: Result, b: Result): LocateResponse {
   if (a.precision === "none") return respond(doc, a, "start");
-  const b = locatePicked(doc, to, "start");
   if (b.precision === "none") return respond(doc, b, "start");
   const { sectionIndex } = a.address;
   const parentPath = a.address.path.slice(0, -1);
@@ -80,11 +78,27 @@ function locateSpan(doc: HwpxDocument, from: PickedPoint, to: PickedPoint): Loca
   };
 }
 
+/** 깃발 하나를 문단으로 푼다: 표 칸의 빈 곳이면 칸의 문단(`locateInCell`), 아니면 눌린 점의 문단(`locatePicked`). 깃발은 문단까지만 쓴다. */
+function flagOf(doc: HwpxDocument, v: unknown): Result {
+  const parsed = parsePoint(v);
+  if (parsed.cell !== undefined) return locateInCell(doc, parsed.cell);
+  if (parsed.point === undefined) throw new HostError(400, "BAD_POSITION", "깃발에는 위치(position) 또는 칸(cell)이 있어야 합니다.");
+  return locatePicked(doc, parsed.point, "start");
+}
+
+/** 시작·끝 깃발(`FlagRequest`, #74): 두 깃발을 각각 문단으로 풀어 끌기와 같은 규칙으로 문단 범위를 낸다(`spanOf`). 끝이 시작보다 앞이면 바꿔 잡는다. */
+function locateFlags(doc: HwpxDocument, body: Record<string, unknown>): LocateResponse {
+  const flags = body["flags"];
+  if (!isObj(flags) || body["from"] !== undefined || body["to"] !== undefined) throw new HostError(400, "BAD_REQUEST", "깃발 본문은 { flags: { start, end } }이어야 하고 from·to를 함께 보내지 않습니다.");
+  return spanOf(doc, flagOf(doc, flags["start"]), flagOf(doc, flags["end"]));
+}
+
 /**
- * 위치 요청(`LocateRequest`)을 푼다. 본문이 틀리면 `HostError`(400)다.
- * 표 칸의 빈 곳이면 칸을 엔진 표·행·열로 찾고, 같은 문단 안 범위(`to`)이면 범위 `word` 초안을, 여러 문단에 걸친 범위이면 `range`(·`headingRange`) 초안을 낸다(`locateSpan`).
+ * 위치 요청(`LocateRequest`) 또는 시작·끝 깃발 요청(`FlagRequest`)을 푼다. 본문이 틀리면 `HostError`(400)다.
+ * 표 칸의 빈 곳이면 칸을 엔진 표·행·열로 찾고, 같은 문단 안 범위(`to`)이면 범위 `word` 초안을, 여러 문단에 걸친 범위이면 `range`(·`headingRange`) 초안을 낸다(`spanOf`).
  */
 export function locate(doc: HwpxDocument, body: unknown): LocateResponse {
+  if (isObj(body) && body["flags"] !== undefined) return locateFlags(doc, body);
   if (!isObj(body) || !isObj(body["from"])) throw new HostError(400, "BAD_REQUEST", "본문은 { from: { position? 또는 cell, shown?, guide?, limit?, reason? }, to? }이어야 합니다.");
   const parsedFrom = parsePoint(body["from"]);
   // 표 칸의 빈 곳: 칸은 엔진 표·행·열로 찾고, 위치가 있으면 그 런의 문단이 이 칸의 것인지 맞대어 본다
@@ -96,7 +110,7 @@ export function locate(doc: HwpxDocument, body: unknown): LocateResponse {
   if (body["to"] !== undefined && to === undefined) throw new HostError(400, "BAD_POSITION", "to에는 위치(position)가 있어야 합니다.");
 
   // 여러 문단에 걸친 범위는 문단 범위로 푼다
-  if (to !== undefined && !sameParagraph(from.position, to.position)) return locateSpan(doc, from, to);
+  if (to !== undefined && !sameParagraph(from.position, to.position)) return spanOf(doc, locatePicked(doc, from, "start"), locatePicked(doc, to, "start"));
   // 안내문을 눌렀거나 끝이 없으면 한 점이다
   if (to === undefined || from.guide !== undefined || to.guide !== undefined) {
     const edge: LocateEdge = from.guide !== undefined ? "guide" : from.trailing === true ? "trail" : "start";

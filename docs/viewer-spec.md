@@ -70,6 +70,7 @@ type Unlocated = { precision: "none"; reason: string; trail: string[] }
 // 문단 범위 끌기(#53): 두 끝이 같은 부모의 다른 문단이면 precision "paragraph", address는 시작 문단, span { sectionIndex, parentPath, from, to },
 // drafts는 range 초안(makeRangeAnchor와 같은 지문)과, 시작 문단이 제목이면 headingRange 초안(makeHeadingRangeAnchor). mark는 없다(한 문단 구간만 강조한다).
 // defaultDraftIndex는 막히지 않은 range 초안이 있으면 그것을 고른다. 한 끝을 풀지 못하면 그 끝의 사유(PARAGRAPH_NOT_FOUND 등)다.
+// 시작·끝 깃발(#74): { flags: { start, end } }. 두 깃발의 문단으로 위 문단 범위 끌기와 같은 응답을 낸다(4절 "시작·끝 깃발").
 ```
 
 **함수**
@@ -118,7 +119,7 @@ type Unlocated = { precision: "none"; reason: string; trail: string[] }
 | `paragraph` | `NEAREST_LINE` | 빈 곳을 눌러 가장 가까운 줄을 썼다 |
 | `none` | `PARAGRAPH_MISMATCH`, `PARAGRAPH_NOT_FOUND` | 런의 글이 엔진 문단에 없다, 문단을 찾지 못했다 |
 | `none` | `SECTION_NOT_FOUND`, `PARENT_PARAGRAPH_MISSING`, `CONTROL_NOT_FOUND`, `CONTROL_KIND_UNKNOWN`, `CONTROL_NOT_CONTAINER`, `CELL_NOT_FOUND`, `CELL_PARAGRAPH_NOT_FOUND`, `TEXTBOX_AMBIGUOUS`, `PATH_INCONSISTENT` | 경로를 풀 수 없다(묶음 개체, 표 셀 안 도형, 미주 등) |
-| `none` | `RANGE_PARAGRAPHS_DIFFER` | 끌기의 두 끝이 다른 부모(최상위 ↔ 표 칸, 다른 칸)에 있다. 같은 부모의 다른 문단이면 아래 문단 범위 끌기다(2026-10-04 #53) |
+| `none` | `RANGE_PARAGRAPHS_DIFFER` | 끌기의 두 끝(또는 시작·끝 깃발, #74)이 다른 부모(최상위 ↔ 표 칸, 다른 칸, 글상자 ↔ 본문)나 다른 구역에 있다. 같은 부모의 다른 문단이면 문단 범위 끌기다(2026-10-04 #53) |
 | `none` | `OVERLAPPING_RUNS`, `UNPOSITIONED_TEXT` | 겹친 글, 문서 좌표 없는 글 |
 | `none` | `NEAREST_UNCONFIRMED` | 빈 곳인데 가장 가까운 줄의 문단을 확인하지 못했다 |
 | `none` | `CELL_MISMATCH` | 셀 안 빈 곳인데 줄 후보의 글이 다른 셀의 것이다 |
@@ -137,6 +138,17 @@ type Unlocated = { precision: "none"; reason: string; trail: string[] }
 - 범위가 글자 묶음을 가르면 묶음 경계로 넓힌다. 경계 조각을 포함하는 `word`는 만들지 않는다.
 - 낱말·문단·셀 초안마다 기본 옵션으로 채우면 건너뛰거나 거절되는 경우 `blocked: 코드`를 붙인다(누름틀은 채울 수 없는 모양이면 초안 자체를 내지 않는다)(글자 모양이 섞인 범위 등. 채움의 판정과 같은 함수로 계산한다). 초안은 빼지 않는다. `blocked`는 템플릿의 키가 아니므로 템플릿에 넣을 때는 뗀다.
 - 잘못된 주소·범위는 `FILL_DRAFT_ADDRESS`, `FILL_DRAFT_RANGE`.
+
+**시작·끝 깃발 (#74, 2026-10-06)**
+
+범위 선택의 두 방식(끌기·깃발, [스튜디오 명세](studio-spec.md) 4c.2) 가운데 깃발의 호스트 계약이다. 결과는 같은 두 문단을 끈 것(#53, 3절)과 같다. 검증은 [검증 기준](validation.md) 29절.
+
+- 요청(`FlagRequest`, `src/host/types.ts`): 위치 요청과 같은 `locate`에 `{ flags: { start, end } }`를 보낸다. `start`·`end`는 각각 눌린 점 하나(`LocatePoint`: 위치와 런의 글·한계·사유, 또는 표 칸의 빈 곳 `cell`)이고 `from`·`to`와 함께 보내지 않는다. 깃발은 그 점의 **문단**까지만 쓴다(글자 순번·`trailing`·안내문은 문단을 찾는 데만 쓰인다).
+- 풀기: 깃발마다 `cell`이면 `locateInCell`, 아니면 `locatePicked`(`start`)로 문단을 찾고, 끌기와 같은 함수로 범위를 낸다.
+- 응답(`LocateResponse`): 같은 구역·같은 부모이면 `precision: "paragraph"`, `address`(앞 문단), `span { sectionIndex, parentPath, from, to }`(문서 순서. 끝 깃발이 시작 깃발보다 앞이면 바꿔 잡는다), `drafts`는 `range` 초안(`makeRangeAnchor`)과, 앞 문단이 제목이면 둘째로 `headingRange` 초안(`makeHeadingRangeAnchor`. 범위는 깃발과 무관하게 그 제목의 범위다). 기본 선택은 `range`(`defaultDraftIndex`). 두 깃발이 같은 문단이면 문단 하나짜리 `range`다(같은 문단 안 끌기는 글자 범위 `word`이므로 이 경우만 끌기와 다르다).
+- 거절: 부모가 다르면(최상위 ↔ 표 칸, 같은 표의 다른 칸, 다른 표, 표를 담은 문단 ↔ 그 칸, 글상자 ↔ 본문·표 칸, 다른 구역) `none`·`RANGE_PARAGRAPHS_DIFFER`이고 초안이 없다. 한 깃발을 풀지 못하면 그 깃발의 사유(3절 표: `PARAGRAPH_NOT_FOUND`·`PARAGRAPH_MISMATCH`·`CELL_NOT_FOUND` 등. 시작 깃발이 먼저)다. 본문이 틀리면 400: `flags`가 객체가 아니거나 깃발이 빠졌거나 `from`·`to`와 함께 오면 `BAD_REQUEST`, 깃발에 위치도 칸도 없으면 `BAD_POSITION`, 그 밖의 위치 항목 오류는 `from`과 같다.
+- 한계(3절 그대로): 머리말·꼬리말·각주·미주·바탕쪽의 글, 좌표 없는 글(쪽 번호·번호 글), 다른 문단의 런이 겹친 곳은 화면의 `pick`이 위치를 주지 않으므로(`limit: "none"`) 깃발이 될 수 없다. 묶음 개체 안 글상자·표 칸 안 도형 등 경로를 풀 수 없는 글을 깃발로 보내면 그 깃발의 사유(`none`)다.
+- 화면이 할 일(Codex 몫. 뷰어·호스트는 상태를 갖지 않는다): 첫 깃발을 누르면 그 점(`LocatePoint`)을 들고 "끝을 찍으세요"를 보이며 기다린다. Esc나 취소면 첫 깃발을 버린다. `pick`이 위치를 주지 않는 점은 깃발로 받지 않고 그 영역·사유를 보인다. 둘째 깃발을 누르면 두 점을 `flags`로 보내고 응답을 끌기와 같은 상세로 보인다(`RANGE_PARAGRAPHS_DIFFER`면 이유와 함께 거절). 두 깃발 사이에 화면의 문서가 바뀌면(다시 열기·결과로 다시 그림) 첫 깃발을 버린다(점이 옛 문서의 위치다).
 
 ## 5. 시험 구현의 화면
 
