@@ -279,6 +279,10 @@ export function createWorkbench(library?: BlockLibrary) {
     post(path: string, input: Record<string, unknown>): unknown {
       try {
         if (path === '/api/workbench/open') return registered(open(input.name, input.content));
+        if (path === '/api/workbench/compare') {
+          const s = open(input.name, input.content);
+          return { name: s.name, paragraphs: s.rows };
+        }
         if (path === '/api/workbench/restore') {
           need(typeof input.workspace !== 'string' || Buffer.byteLength(input.workspace) <= 20 * 1024 * 1024, 'WORKBENCH_WORKSPACE');
           const raw: unknown = typeof input.workspace === 'string' ? JSON.parse(input.workspace) : input.workspace;

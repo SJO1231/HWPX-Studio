@@ -574,6 +574,7 @@ document.addEventListener('pointerdown', (event) => {
 });
 document.addEventListener('keydown', (event) => {
   if ($('#block-library-dialog').open) return;
+  if ($('#block-library-dialog').open) return;
   if (event.key === 'Escape') { hideMenu(); closeMenus(); clearSelection(); }
   if (event.ctrlKey || event.metaKey) {
     if (event.key.toLowerCase() === 's') { event.preventDefault(); void saveWork(); }
@@ -709,7 +710,7 @@ $('#open-comparison').addEventListener('click',()=>$('#compare-file').click());
 $('#comparison-view').addEventListener('click',()=>{if(state.comparison)renderTextDocument('comparison');else $('#compare-file').click();});
 $('#compare-file').addEventListener('change',async event=>{
   const file=event.target.files[0];event.target.value='';if(!file||state.busy)return;const session=state.session;setBusy(true,'비교 문서 여는 중');
-  try{const result=await api('open',{name:file.name,content:base64(new Uint8Array(await file.arrayBuffer()))});if(session!==state.session)return;state.comparison={name:result.name,paragraphs:result.paragraphs};renderTextDocument('comparison');status('');}
+  try{const result=await api('compare',{name:file.name,content:base64(new Uint8Array(await file.arrayBuffer()))});if(session!==state.session)return;state.comparison={name:result.name,paragraphs:result.paragraphs};renderTextDocument('comparison');status('');}
   catch(error){status(errorMessage(error),'error');}finally{setBusy(false);}
 });
 
