@@ -9,6 +9,7 @@ import { buildHwpx, readFixture } from '../../../packages/hwpx-engine/test/helpe
 import { gridTable, tableParagraph, textPara } from '../../../packages/hwpx-engine/test/table-helpers.ts';
 import { createBlockLibrary, extractBlockDraft } from '../src/block-library.ts';
 import { createWorkbench } from '../src/workbench.ts';
+import { plainOf } from '../src/quick-messages.ts';
 import { createApp } from '../src/server.ts';
 
 const content = (source: Uint8Array) => Buffer.from(source).toString('base64');
@@ -48,7 +49,10 @@ test('block creation: table/cell source, invalid boundaries and stale/forged app
     const opened=open(app,source), rows=opened.paragraphs;
     const a=rows.find((r:any)=>r.text==='CELL_A'),b=rows.find((r:any)=>r.text==='CELL_B'),body=rows.find((r:any)=>r.text==='본문');
     const preview=(from:string,to=from)=>app.post('/api/workbench/block-preview',{session:opened.session,from,to}) as any;
-    wrong(()=>preview(a.id,b.id),'BLOCK_BOUNDARY');wrong(()=>preview(body.id,a.id),'BLOCK_BOUNDARY');
+    wrong(()=>preview(a.id,b.id),'BLOCK_BOUNDARY');
+    assert.match(plainOf('BLOCK_BOUNDARY'), /같은 칸 안이나 같은 본문/);
+    assert.doesNotMatch(plainOf('BLOCK_BOUNDARY'), /BLOCK_BOUNDARY/);
+    wrong(()=>preview(body.id,a.id),'BLOCK_BOUNDARY');
     wrong(()=>preview('fake'),'WORKBENCH_POSITION');
     const withSettings=open(app,readFixture('D1'));
     wrong(()=>app.post('/api/workbench/block-preview',{session:withSettings.session,from:withSettings.paragraphs[0].id,to:withSettings.paragraphs[0].id}),'FRAG_SECTION_PROPS');

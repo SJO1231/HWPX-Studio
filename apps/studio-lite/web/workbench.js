@@ -109,7 +109,7 @@ function renderEditor() {
 function markEditorSelection() {
   const caret=state.caret??{start:0,end:0},chosen=editorSelection(state.layout,caret.start,caret.end);
   for(const line of $('#editor-mirror').children)line.classList.toggle('selected-unit',chosen.some(u=>u.id===line.dataset.id));
-  const a=chosen[0],z=chosen.at(-1);$('#selection-info').textContent=a?(a.from+1)+(a.from!==z.to?'–'+(z.to+1):''):'';
+  const a=chosen[0],z=chosen.at(-1);$('#selection-info').textContent=a?(state.kind==='text'?'줄 ':'문단 ')+(a.from+1)+(a.from!==z.to?'–'+(z.to+1):''):'';
 }
 function captureCaret(sync=true) {
   const input=$('#document-editor');state.caret={start:input.selectionStart,end:input.selectionEnd};
@@ -183,6 +183,7 @@ async function selectPicked(event, options = {}) {
     }
     state.selection = result.location;
     state.marks.set(result.id, marksOf(result.location, result.id));
+    state.view?.setMarks(state.marks.get(result.id));
     selectRow(result.id, {...options, fromPick: true});
     const span=result.location.span;
     const a=span?state.paragraphs.find(r=>r.sectionIndex===span.sectionIndex&&r.path.length===span.parentPath.length+1&&r.path.at(-1)===span.from&&r.path.slice(0,-1).every((n,i)=>n===span.parentPath[i])):paragraph(result.id);
@@ -191,7 +192,7 @@ async function selectPicked(event, options = {}) {
     if(first&&last){
       const word=paragraph(result.id)?.editable?result.location.drafts.find(d=>d.anchor?.kind==='word'&&!d.blocked)?.anchor:undefined;
       const start=first.start+(!span&&!state.edits.has(result.id)&&!first.block&&word?word.start:0),end=span?last.end:first.start+(!state.edits.has(result.id)&&!first.block&&word?word.end:first.text.length);
-      state.blockPick={start,end,from:a?.id,to:z?.id,blocked:Boolean(event.to&&!span)};
+      state.blockPick={start,end,from:a?.id,to:z?.id,blocked:Boolean(event.to&&!span&&(!event.hit.position||!sameParagraph(event.hit.position,event.to.position)))};
       state.caret={start,end};const input=$('#document-editor');input.focus({preventScroll:true});input.setSelectionRange(start,end);markEditorSelection();controls();
     }
     return true;
@@ -231,7 +232,7 @@ function mountDocument(doc, mode) {
     onPick: (event) => { hideMenu(); void selectPicked(event); },
     onError: (error) => status('문서 표시: ' + errorMessage(error), 'error'),
   });
-  $('#original-title').textContent = mode === 'source' ? '원본' : '결과';
+  $('#original-title').textContent = mode === 'source' ? '원문' : '생성 미리 보기';
   $('#comparison-view').setAttribute('aria-pressed','false');
   $('#source-view').setAttribute('aria-pressed', String(mode === 'source'));
   $('#result-view').setAttribute('aria-pressed', String(mode === 'result'));
@@ -621,7 +622,7 @@ function renderTextDocument(mode) {
     const content=document.createElement('span');content.className='source-text';content.textContent=text||'\u200b';line.append(number,content);sheet.append(line);
   });
   container.append(sheet);applyScale();highlightTextRow(state.chosen);
-  $('#original-title').textContent=mode==='comparison'?'비교 · '+state.comparison.name:mode==='source'?'원본':'결과';
+  $('#original-title').textContent=mode==='comparison'?'비교 · '+state.comparison.name:mode==='source'?'원문':'생성 미리 보기';
   for(const [id,value] of [['source-view','source'],['result-view','result'],['comparison-view','comparison']])$('#'+id).setAttribute('aria-pressed',String(mode===value));controls();
 }
 function highlightTextRow(id,scroll=false) {
@@ -635,19 +636,21 @@ function highlightTextRow(id,scroll=false) {
 function renderViewerNumbers(){
   for(const old of $('#pages').querySelectorAll('.viewer-number'))old.remove();
   if(state.kind==='text'||state.viewMode!=='source'||!state.sourceDoc)return;
-  const scale=Number($('#scale').value);
-  if(!Number.isFinite(scale)||scale<=0)return;
+  const scale=Number($('#scale').value);if(!Number.isFinite(scale)||scale<=0)return;
   for(const page of $('#pages').querySelectorAll('.page')){
-    const index=Number(page.dataset.page),info=state.sourceDoc.pageInfo(index);
-    const runs=state.sourceDoc.pageLayout(index).runs.filter(run=>Number.isFinite(run.x)&&Number.isFinite(run.y)&&Number.isFinite(run.w)&&Number.isFinite(run.h)
-      &&run.x>=0&&run.y>=0&&run.x<info.width&&run.y<info.height&&run.w>0&&run.h>0&&run.text.replaceAll('\uFFFC','').trim());
-    state.paragraphs.forEach((row,i)=>{if(!row.position)return;const run=runs.find(r=>{const p=runPosition(r);return p&&sameParagraph(row.position,p);});if(!run)return;
-      const badge=document.createElement('button');badge.type='button';badge.className='viewer-number';badge.textContent=String(i+1);badge.title='원본 '+(i+1);badge.style.left=Math.max(1,run.x*scale-29)+'px';badge.style.top=Math.max(0,run.y*scale)+'px';
-      badge.addEventListener('mousedown',e=>e.stopPropagation());
-      badge.addEventListener('click',e=>{e.stopPropagation();selectRow(row.id,{focus:true});});page.append(badge);
-    });
+    const info=state.sourceDoc.pageInfo(Number(page.dataset.page));
+    const runs=state.sourceDoc.pageLayout(Number(page.dataset.page)).runs.filter(r=>
+      [r.x,r.y,r.w,r.h].every(Number.isFinite)&&r.x>=0&&r.y>=0&&r.x<info.width&&r.y<info.height&&r.w>0&&r.h>0&&r.text.replaceAll('\uFFFC','').trim())
+      .map(r=>({...r,row:state.paragraphs.findIndex(p=>{const pos=runPosition(r);return p.position&&pos&&sameParagraph(p.position,pos);})})).filter(r=>r.row>=0);
+    const badge=document.createElement('span');badge.className='viewer-number';badge.hidden=true;badge.setAttribute('aria-hidden','true');page.append(badge);
+    page.onpointermove=event=>{const rect=page.getBoundingClientRect(),x=(event.clientX-rect.left)/scale,y=(event.clientY-rect.top)/scale;
+      const run=runs.find(r=>x>=r.x&&x<=r.x+r.w&&y>=r.y&&y<=r.y+r.h);badge.hidden=!run;
+      if(run){badge.textContent=String(run.row+1);badge.style.left='2px';badge.style.top=(run.y*scale)+'px';}
+    };
+    page.onpointerleave=()=>{badge.hidden=true;};
   }
 }
+
 async function copyBody() {
   if (state.busy || typeof state.output?.text !== 'string') return;
   const output = state.output, text = output.text, session = state.session, revision = state.revision, ticket = bodyCopies.begin();
