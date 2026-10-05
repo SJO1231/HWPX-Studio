@@ -94,6 +94,16 @@ type Issue = { severity: "error" | "warning"; code: string; message: string; whe
 | `MIG` | `MIG_SELECTION` | 경고 | `selectedBlocks`가 가리키는 블록이 없다 | 8.8.14 |
 | `MIG` | `MIG_POLICY` | 경고 | lite가 동률·조건 값 누락을 묻지 않고 고른 건(새 경로는 `SEL_UNDECIDED`). 실패로 세지 않고 목록으로 남긴다 | 8.8.14 |
 
+**블록 저장소의 영역과 코드** (8.8.17, 이슈 #73, 2026-10-06. **[계약]** **[구현 #73]**). 영역 `BLOCK`(블록 저장소)을 더한다. lite 앱이 자체로 쓰는 `BLOCK_SIZE`·`BLOCK_NOT_FOUND` 같은 앱 코드는 이 표의 것이 아니다.
+
+| 영역 | 코드 | 종류 | 뜻 | 정본 |
+| --- | --- | --- | --- | --- |
+| `BLOCK` | `BLOCK_FORMAT_DIFFERS` | 경고 | 넣는 자리 문단과 블록 문단의 문단 모양·스타일 지문이 다르다("서식이 다릅니다, 확인하세요"). 자동으로 바꾸지 않는다 | 8.8.17 |
+| `BLOCK` | `BLOCK_KEYS_DROPPED` | 경고 | 새 판에서 직전 판의 `{{키}}` 입력 항목이 사라졌다(채운 결과 문서에서 다시 떼면 이번 건 값이 공용 블록 글이 된다). 사라진 키 목록을 알린다. 막지 않는다 | 8.8.17 |
+| `BLOCK` | `BLOCK_NAME_CONFLICT` | 오류 | 새 판 업데이트 검사: 블록 안 입력 항목과 이름이 같은 자리들이 서로 다른 값에 연결돼 있다(같은 이름 = 같은 값 위반) | 8.8.17 |
+| `BLOCK` | `BLOCK_NEWER_VERSION` | 보고 | 템플릿이 고정한 원형 판보다 새 판이 있다("최신 버전 있음"). 자동 교체 없음 | 8.8.17 |
+| `TPL` | `TPL_SOURCE_CHANGED` | 보고 | 지금 바탕 문서의 해시가 템플릿의 `source.sha256`과 다르다("최신 버전 있음"). 그대로 생성하면 `TPL_SOURCE_MISMATCH`로 막힌다 | 8.8.17 |
+
 ## 3. S1 — 패키지 (`src/package/`)
 
 ### 3.1 ZIP 읽기 `readArchive(bytes): Archive`
@@ -998,6 +1008,9 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | `hwpx headings <파일> [--json]` | 탐지한 제목 목록(7.10 `headingRange`. 2026-10-04 #19): 줄마다 `구역:상위주소:문단 번호  단계  꼴  글 앞 40자`(상위 주소는 `문단.하위목록`, 최상위는 `-`). 글은 U+FFFC를 빼고 줄바꿈·탭을 공백으로 바꿔 한 줄로 낸다. JSON은 `Heading[]` |
 | `hwpx fragment extract <파일> --section N --from A --to B [--parent 주소] -o 조각.json` | 조각 추출 |
 | `hwpx fragment import <대상> <조각.json> (--section N --index I [--before] \| --range 구역:시작-끝) [--parent 주소] -o 출력.hwpx` | 조각 가져오기(게이트 포함). `--range`는 그 범위의 문단을 지우고 그 자리에 넣는다(7.10의 `range` 교체. `--section`·`--index`·`--before`와 함께 쓸 수 없다. 2026-10-04 #30) |
+| `hwpx block extract <파일> (--range 구역:시작-끝 \| --heading 구역:문단) [--parent 주소] --name 이름 --store 폴더 [--id k+16진8자] [--note 메모]` | **[구현 #73]** 범위(`range`) 또는 제목 범위(`headingRange`, 제목 문단 번호)를 블록으로 떼어(`extractBlock`, 8.8.17) 저장소 `<폴더>/blocks/<id>/`에 원형 1판(`block.json`)과 조각 덩어리(`<sha256>.json`)를 쓴다. `--store`는 이미 있는 폴더, id는 주지 않으면 무작위로 만들고, 같은 id의 블록 폴더가 있으면 2. 시각은 실행 시각이다. 조각 계약 거절(`FRAG_SECTION_PROPS`·`FRAG_SPLITS_FIELD`)은 1, 이름·id 형식 오류는 2 |
+| `hwpx block insert <대상> --store 폴더 --block id (--section N --index I [--before] \| --range 구역:시작-끝) [--parent 주소] -o 출력.hwpx [--mode …] [--report r.json] [--overwrite]` | **[구현 #73]** 저장소의 블록(최신 판)을 넣는다. 덩어리 해시를 대조하고(`TPL_FRAGMENT_MISSING`이면 2) `planBlockInsert`로 서식을 비교해 다르면 `서식 차이:` 줄과 `BLOCK_FORMAT_DIFFERS` 경고만 낸다(종료 코드는 바뀌지 않는다). 출력은 `fragment import`와 같은 저장 게이트를 거친다(`--range`는 범위 교체, 서식 비교는 범위 첫 문단). `--report`에 `block: { id, version, formatDiffs }`를 더한다 |
+| `hwpx block list --store 폴더 [--json]` | **[구현 #73]** 저장소의 블록마다 `id  판  이름  출처(원본 해시 앞 10자 구역:상위:시작-끝)  마지막 기록(시각  바뀐 점)`. `--json`은 원형 배열. 읽을 수 없는 블록이 있으면 1 |
 | `hwpx fill <파일> --data d.json [--template t.json] -o 출력 [--mode baseline\|strict\|repair] [--missing error\|empty\|keep] [--dry-run] [--report r.json] [--overwrite]` | 생성. 템플릿 없이도 `{{}}`와 누름틀을 채운다 |
 | `hwpx fill <파일> --data 배열.json --batch -o <폴더> [--name "{{경로}}"] [--dry-run] [--report r.json] [--overwrite]` | 여러 건 생성(8.36). 한 건이 실패해도 나머지는 만들고 종료 코드 1. 폴더가 없거나 같은 이름 파일이 있으면 2 |
 | `hwpx fill <파일> --template t2.json --case c.json --data 한건.json --blobs <폴더> -o 출력 [--report r.json] [--overwrite]` | **[계약]** **[구현 #31]** 2판 템플릿(`template@2`, 8.8) 생성. 템플릿 파일의 `schema`를 먼저 읽어 `template@N`(N≠1)이면 2판 경로다(`@3`은 `TPL_VERSION`으로 2). `--data`는 한 건(객체. 배열이면 2), `--case`는 이번 건(`case@1`, 없으면 선택을 전부 계산), `--blobs`는 조각 덩어리를 `<sha256>.json`으로 담은 폴더(받은 바이트의 해시를 대조한다. 조각 블록이 있는데 없으면 `TPL_FRAGMENT_MISSING`으로 2). 둘 다 선택이다. 앱과 같은 바이트를 낸다(8.8.12). `--template`이 `@1`이면 위 `fill` 동작 그대로이고 `--case`·`--blobs`는 종료 코드 2. 2판에 `--batch`·`--name`·`--mode`·`--missing`·`--reissue-internal`·`--fill-in-code`는 2. 덩어리 파일은 입력이라 `-o`·`--report`로 덮어쓸 수 없다(2). `--dry-run`은 출력 없이 보고만. 실패해도 `--report`는 쓴다. 종료 코드는 아래와 같다 |
@@ -1277,7 +1290,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 
 #### 8.8.7 원형 `block-proto@1`
 
-소유: 엔진 = Claude(읽기·영향 목록·전파 계획). 원형 저장·새 판 만들기 = Codex(저장소·화면).
+소유: 엔진 = Claude(읽기·영향 목록·전파 계획). 새 판 만들기(`reextractBlock`, 8.8.17)는 엔진, 저장소·화면은 Codex.
 
 원형은 템플릿 밖의 별도 항목이다. 템플릿의 블록은 원형의 판 번호를 고정(핀)하고, 그 판의 내용을 `content`로 복사해 가진다(원형 없이도 생성할 수 있다).
 
@@ -1294,6 +1307,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 }
 ```
 
+- 블록 저장소 API(8.8.17, #73)가 선택 필드 `source`(출처)와 `history`(판 기록)를 더했다. 없는 옛 원형도 그대로 읽는다.
 - `content`는 블록과 같은 꼴이다. "내용 해시"는 `fragment`이면 그 해시, `text`이면 글의 UTF-8 sha256이다. `keys`는 내용에 쓰인 자리 키 목록이다(만드는 쪽이 계산해 넣는다. 엔진의 `readBlockProto`는 형식만 본다). `previous`는 직전 판의 번호와 내용 해시다.
 - 핀 검사: 블록에 `proto`가 있으면 그 판의 내용과 블록 `content`가 같아야 한다(`TPL_PROTO_MISMATCH`). 검사는 읽는 쪽이 준 `lookupProto`로 한다(8.8.10). `lookupProto`가 그 판을 찾지 못해도 `TPL_PROTO_MISMATCH`다.
 
@@ -1397,7 +1411,9 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | 1판 `rules[]`와 `slots`·`places`를 함께 씀 | `TPL_MIXED_RULES` |
 | 덩어리 해시에 해당하는 덩어리가 없다 | `TPL_FRAGMENT_MISSING` |
 | 원형 핀의 내용이 블록 내용과 다르다 | `TPL_PROTO_MISMATCH` |
+| 원형의 `source`·`history`(8.8.17) 형식: 시각이 ISO 8601 UTC가 아님, 지문의 문단 수가 구간과 다름, 판 기록이 비었거나 판 번호가 오름차순이 아니거나 마지막 줄이 원형의 판이 아님 | `TPL_FIELD` |
 
+- 블록 저장소의 코드(`BLOCK_FORMAT_DIFFERS`·`BLOCK_KEYS_DROPPED`·`BLOCK_NAME_CONFLICT`·`BLOCK_NEWER_VERSION`·`TPL_SOURCE_CHANGED`, 2절)는 읽기 검사가 내지 않는다. 8.8.17의 함수가 경고·보고·검사 목록으로 낸다.
 - 읽을 때 잡지 않고 생성 때 잡는 것: `slot.parent`가 null이 아닌 중첩 슬롯(`TPL_NESTED`, 8.8.6), 원본 해시 불일치(`TPL_SOURCE_MISMATCH`, 8.8.12), 별칭 충돌·형식 오류(`DATA_ALIAS_CONFLICT`·`DATA_FORMAT`, 값 확정 때, 8.8.4).
 - `block-proto@1`·`case@1`의 판 번호가 다르면 `TPL_VERSION`, 형식이 틀리면 `TPL_FIELD`다(`where`가 어느 파일 형식인지 알려 준다).
 - 해시(sha256)는 소문자 16진 64자로 저장한다. 입력의 대문자는 읽을 때 소문자로 바꾸고, `lookupProto`가 준 해시도 소문자로 비교한다. 정수 필드의 `-0`은 `0`으로 읽는다(쓰기와 왕복이 같도록).
@@ -1553,8 +1569,13 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | `patternOf(doc, at)`, `suggestSimilar(doc, pattern)` | `src/fill/` | 7.10(#20. #19의 탐지 규칙에 의존) |
 | `listProtoUsage(templates, protoId, latest)`, `planProtoUpdate(t, proto)` | `src/template/` | 8.8.7(#21). 형식과 무관한 순수 함수 |
 | CLI `fill --template(@2) --case --blobs <폴더>` | `apps/cli` | 8.4. 앱과 같은 바이트 |
+| `extractBlock(doc, range, meta)`, `reextractBlock(resultDoc, range, proto, meta)` | `src/fill/block-store.ts` | 8.8.17. 범위에서 블록(원형 판 + 조각 덩어리)을 떼고, 결과 문서에서 다시 떼어 새 판 |
+| `planBlockInsert(target, proto, blob, at, options?)`, `blockFormatDiffs(target, fragment, at)`, `blockFragment(proto, blob)` | `src/fill/block-store.ts` | 8.8.17. 넣기 계획(`planImport`) + 서식 차이, 덩어리 확인 |
+| `planBlockUpdate(t, proto, blob, doc, previous?)` | `src/fill/block-store.ts` | 8.8.17. `planProtoUpdate` + 자리 못 찾음·이름 충돌·서식 차이·입력 항목 사라짐 목록 |
+| `checkTemplateUpdates(t, latestOf, currentSource?)` | `src/template/` | 8.8.17. 최신 판·바탕 문서 알림. 형식과 무관한 순수 함수 |
+| CLI `block extract\|insert\|list` | `apps/cli` | 8.4. 파일 저장소(8.8.17) |
 
-구현 상태(2026-10-04): `read*`·`write*`·해시 도우미(`templateSha256`·`caseSha256`·`contentSha256`)·`bindValues`·`selectSlots`·`listProtoUsage`·`planProtoUpdate`는 #29, `range`·`moves`·`makeRangeAnchor`는 #30(7.10). `generateFromTemplate`·CLI `--case --blobs`는 #31(`src/fill/generate-studio.ts`. 결과 형 `StudioGenerateResult`·`StudioGenerateReport`·`StudioLedger`는 `src/fill/studio-common.ts`가 정본). `checkAnchors`·`planRelocation`·`redraftAnchor`는 #32(`src/fill/check-anchors.ts`). 패턴(#20)은 미구현. 정확한 형은 `src/template/studio-types.ts`(와 `src/fill/studio-common.ts`·`src/fill/check-anchors.ts`)가 정본이고 아래는 요지다.
+구현 상태(2026-10-04): `read*`·`write*`·해시 도우미(`templateSha256`·`caseSha256`·`contentSha256`)·`bindValues`·`selectSlots`·`listProtoUsage`·`planProtoUpdate`는 #29, `range`·`moves`·`makeRangeAnchor`는 #30(7.10). `generateFromTemplate`·CLI `--case --blobs`는 #31(`src/fill/generate-studio.ts`. 결과 형 `StudioGenerateResult`·`StudioGenerateReport`·`StudioLedger`는 `src/fill/studio-common.ts`가 정본). `checkAnchors`·`planRelocation`·`redraftAnchor`는 #32(`src/fill/check-anchors.ts`). 블록 저장소 API(`extractBlock`·`reextractBlock`·`planBlockInsert`·`blockFormatDiffs`·`blockFragment`·`planBlockUpdate`·`checkTemplateUpdates`, 원형의 `source`·`history`)와 CLI `block`은 #73(2026-10-06, `src/fill/block-store.ts`. 검증은 [검증 기준](validation.md) 28절). 패턴(#20)은 미구현. 정확한 형은 `src/template/studio-types.ts`(와 `src/fill/studio-common.ts`·`src/fill/check-anchors.ts`)가 정본이고 아래는 요지다.
 
 ```ts
 type ValueState = "bound" | "edited" | "missing" | "empty" | "rejected"
@@ -1573,7 +1594,7 @@ type AnchorAddress = Pick<WordAnchor, "kind" | "at" | "start" | "end"> | Pick<Li
 
 #### 8.8.16 수용 조건
 
-소유: 검사 = 엔진 쪽 독립 검증(Claude 지휘). 앱 쪽 항목 = Codex 시험. 통과 전에는 [미구현]이다. 상태(2026-10-04): W1~W3의 읽기·쓰기·값 연결·선택 평가 부분은 #29에서 통과([검증 기준](validation.md) 20절). W1의 생성 바이트 동일(1판 경로=승계 경로, CLI=API. 앱=CLI는 #25 뒤)·W2의 `TPL_NESTED`·W3의 출력 항목·W8은 #31에서 통과(22절), W4의 전파 함수는 #29(저장·화면은 Codex), W7의 `range` 지문은 #30(19절), W7의 상태 판정·일괄 갱신·재지정은 #32(21절. "생성이 막힌다"는 `resolveAnchors`의 기존 동작으로 확인). 남은 것: W5(#20), W6(#25, Codex), W1 앱 바이트.
+소유: 검사 = 엔진 쪽 독립 검증(Claude 지휘). 앱 쪽 항목 = Codex 시험. 통과 전에는 [미구현]이다. 상태(2026-10-04): W1~W3의 읽기·쓰기·값 연결·선택 평가 부분은 #29에서 통과([검증 기준](validation.md) 20절). W1의 생성 바이트 동일(1판 경로=승계 경로, CLI=API. 앱=CLI는 #25 뒤)·W2의 `TPL_NESTED`·W3의 출력 항목·W8은 #31에서 통과(22절), W4의 전파 함수는 #29(저장·화면은 Codex), W7의 `range` 지문은 #30(19절), W7의 상태 판정·일괄 갱신·재지정은 #32(21절. "생성이 막힌다"는 `resolveAnchors`의 기존 동작으로 확인). W9는 #73에서 구현자 시험 통과(28절, 독립 검증 전). 남은 것: W5(#20), W6(#25, Codex), W1 앱 바이트.
 
 | ID | 조건 |
 | --- | --- |
@@ -1585,6 +1606,70 @@ type AnchorAddress = Pick<WordAnchor, "kind" | "at" | "start" | "end"> | Pick<Li
 | W6 | 이관: lite 시험 프로젝트의 모든 레코드가 8.8.14의 판정을 통과한다, 두 번 이관하면 같다, 거부 코드마다 원본 행 해시가 그대로이고 새 행이 0이다, 쓰는 도중 실패를 주입해도 일부만 남지 않는다, 동률 자료는 `MIG_POLICY`로 나온다 |
 | W7 | 원본 변경: 같은 원본이면 exact, 앞에 문단을 삽입하면 relocated, 대상 글을 복제하면 ambiguous이고 생성이 막힌다, 범위 끝 문단을 삭제하면 notFound, 앞에 표를 삽입하면 지문 있는 셀은 다시 찾고 지문 없는 셀은 unverified다 |
 | W8 | 생성 규칙(8.8.12): 이동표 변환 뒤 word·line·cell 자리가 맞는 곳에 채워진다, 교체 범위 안의 자리는 `PLACE_COVERED`, 등록되지 않은 `{{ }}`는 `unregistered` 정책대로, 건너뜀 1건이면 `FILL_SKIPPED`이고 출력이 없다, 원본 해시가 다르면 `TPL_SOURCE_MISMATCH`, 후처리 2종은 기본 끔 |
+| W9 | 블록 저장소(8.8.17, #73): 떼기 → 저장 → 다른 문서에 넣기 → 다시 떼어 새 판의 왕복, 같은 서식 자리 경고 0건·다른 서식 자리는 다른 속성 전부 경고, 블록 안 같은 이름 항목이 문서와 같은 값, 최신 판·바탕 문서 알림, 업데이트 검사 목록(자리 못 찾음·이름 충돌·서식 차이), 옛 원형 읽기 호환, 무작위 50회 결정성·게이트·검사기 새 오류 0, 실제 공고서 16건 |
+
+#### 8.8.17 블록 저장소 API (이슈 #73, 2026-10-06)
+
+- 근거: 사용자 결정 2026-10-05(요구 문서 8.2·8.3, [스튜디오 명세](studio-spec.md) 4c.4)와 이슈 #73. 상태: **[계약]** **[구현 #73]**(`src/fill/block-store.ts`, `src/template/studio-proto.ts`의 `checkTemplateUpdates`, `readBlockProto`). 검증은 [검증 기준](validation.md) 28절.
+- 소유: 엔진(형식·함수·CLI 파일 저장소) = Claude. 저장소의 SQLite 저장·화면 = Codex(#25).
+- 용어: 블록은 템플릿이 아니다(템플릿 = 바탕 문서 + 입력 항목 연결 + 분기 구성, 요구 문서 8.1). 엔진에서 블록은 원형 `block-proto@1`(8.8.7)과 조각 덩어리(`fragment@1`, 7.3)다.
+- 범위 밖: 넣는 쪽의 형식 버전·네임스페이스 문맥 맞추기(#69), 원본 페이지 설정 이식(#70), 내용만 가져오기(#79), 글 블록(`content.text`) 넣기. 넣기는 조각 가져오기(7.5)의 규칙을 그대로 쓴다.
+
+**원형의 출처와 판 기록** (`block-proto@1`의 선택 필드. 없는 옛 원형도 그대로 읽는다)
+
+```json
+{ "schema": "hwpx-studio/block-proto@1", "id": "k7d20a4e1", "version": 2, "name": "참가자격(직접생산)",
+  "content": { "fragment": "<조각 덩어리 64>" }, "keys": ["사업명"],
+  "previous": { "version": 1, "content": "<1판 내용 64>" },
+  "source": { "sha256": "<떼어 낸 문서 64>", "selection": { "sectionIndex": 0, "parentPath": [], "from": 18, "to": 21 },
+              "print": { "first": { "text": "3. 참가자격", "sha256": "<64>" }, "last": { "text": "", "sha256": "<64>" }, "count": 4, "sha256": "<64>" },
+              "extractedAt": "2026-10-06T09:30:00Z" },
+  "history": [ { "version": 1, "at": "2026-10-05T10:00:00Z", "change": "첫 저장" },
+               { "version": 2, "at": "2026-10-06T09:30:00Z", "change": "글이 다른 문단 2개" } ] }
+```
+
+| 필드 | 뜻 | 규칙 |
+| --- | --- | --- |
+| `source.sha256` | 떼어 낸 문서 바이트의 sha256 | 조각의 `source.sha256`과 같다 |
+| `source.selection` | 떼어 낸 구간(7.2의 조각 선택 꼴) | 범위를 그 문서에서 찾은 자리(relocated면 새 자리) |
+| `source.print` | 그 구간의 범위 지문(7.10 `range`의 `print`) | `count`는 구간의 문단 수 |
+| `source.extractedAt` | 떼어 낸 시각 | ISO 8601 UTC(예: `2026-10-06T09:30:00Z`, 밀리초 선택). 엔진은 시계를 모르므로 호출자가 준다 |
+| `history[]` | 판마다 `{ version, at, change }` | 비어 있지 않고, 판 번호 오름차순이며, 마지막 줄이 원형의 판이다. `change`는 사람이 읽는 바뀐 점이고 문서 글·값 원문을 넣지 않는다 |
+
+- `content.fragment`는 조각 덩어리(`serializeFragment(extractFragment(…))`의 UTF-8 바이트)의 sha256이다. 조각은 `extractFragment` 결과 그대로라 블록 자신의 서식 자원(의존 닫힘)과 이진 자료를 담는다. 덩어리는 원형 밖에 둔다(2판 템플릿의 덩어리와 같은 꼴).
+- `keys`는 범위 안 문단(하위 목록 포함)의 느슨한 `{{ 키 }}`(8.8.5) 가운데 누름틀·메일머지 표시 구간 밖의 것을 처음 나온 순서로 담는다(NFC로 같은 키는 하나). 8.8.12의 등록 판정과 같은 범위다.
+- 형식 오류는 `TPL_FIELD`다(8.8.10).
+
+**함수**
+
+| 함수 | 규칙 |
+| --- | --- |
+| `extractBlock(doc, range, meta)` | `range`는 `range`·`headingRange` 앵커나 초안(`id`는 보지 않는다). `checkAnchors`(8.8.13)로 찾아 exact·relocated만 받고(relocated는 `ANCHOR_RELOCATED` 경고를 `issues`에 담고 찾은 자리에서 뗀다), changed·ambiguous·notFound는 그 코드로 던진다. 거절은 조각 계약과 같다(`FRAG_SECTION_PROPS`, `FRAG_SPLITS_FIELD`. 표 칸 경계는 범위 앵커가 같은 부모의 연속 문단이라 넘을 수 없다). `meta = { id, name, at, note?, change? }`. 결과 `{ proto(1판), fragment, blob, issues }`. 원형은 정규 JSON으로 쓰고 다시 읽어 검사한 것이다(id 형식 `TPL_ID`, 빈 이름·시각 꼴 `TPL_FIELD`). `history`는 `[{ version: 1, at, change: change ?? "첫 저장" }]`. 같은 입력은 같은 원형 JSON·덩어리 바이트다 |
+| `reextractBlock(resultDoc, range, proto, meta)` | 결과 문서(넣고 고친 문서)의 범위를 다시 떼어 같은 블록의 새 판을 만든다: id 그대로, `version` + 1, `previous`는 직전 판 번호와 내용 해시, `history`는 직전 기록에 새 줄을 더한 것(직전에 기록이 없으면 새 줄만), `source`는 결과 문서의 해시·구간·지문·`meta.at`, `keys`는 다시 계산한다. 바뀐 점은 `meta.change`, 없으면 `meta.previous`(직전 판의 조각)와 견준 수량 요약(문단·표·그림·누름틀·입력 항목(`keys`) 수의 변화 — 예: "입력 항목 2→0개", 글이 다른 문단 수, 서식 참조가 다른 곳 수. 모두 같으면 "내용 변화 없음"), 그것도 없으면 "다시 저장"이다. `meta = { at, change?, previous?, name?, note? }`. 이름은 `meta.name`이 없으면 그대로이고, 직전 판의 `note`는 넘기지 않는다(새 판의 메모는 `meta.note`). 직전 판 `keys` 가운데 새 판에 없는 것이 있으면(NFC로 견준다) 경고 `BLOCK_KEYS_DROPPED` 하나를 `issues`에 더한다(메시지에 사라진 키를 직전 판 순서로 적는다, `where`는 `block:<id>`). 채운 결과 문서에서 다시 떼면 `{{키}}`가 이번 건 값으로 바뀌어 있어 그 값이 공용 블록 글이 되기 때문이다. 막지 않는다 |
+| `planBlockInsert(target, proto, blob, at, options?)` | `blockFragment(proto, blob)`로 덩어리를 확인하고(글 블록이거나 해시가 `content.fragment`와 다르면 `TPL_FRAGMENT_MISSING`, 조각 JSON이 아니면 `FRAG_SCHEMA`) `planImport`(7.5)를 그대로 쓴다(블록 서식 유지, 자동 변경 없음. `options`는 `planImport`의 옵션 `{ reissueInternalDuplicates? }` 그대로). 넣는 자리 문단(`at`의 문단)과 블록 최상위 문단들의 서식이 다르면 경고 `BLOCK_FORMAT_DIFFERS` 하나와 `formatDiffs`를 더한다. `summary.formatDiffParagraphs`는 서식이 다른 블록 문단 수다 |
+| `blockFormatDiffs(target, fragment, at)` | 블록 최상위 문단마다 문단 모양(`paraPr`)·스타일(`style`)의 자원 지문(7.4)을 자리 문단의 것과 견줘, 다른 것만 `{ paragraph, property, block, target }`(블록 문단 순서, 한 문단 안에서 `paraPr` 다음 `style`)으로 돌려준다. 모양으로 견주므로 문서마다 id가 달라도 같은 모양이면 같다. 참조 없음은 `none`, 없는 자원은 `missing:<id>`로 본다. 글자 모양은 보지 않는다. 자리 문단이 없으면 `FRAG_INSERT_POINT` |
+| `planBlockUpdate(t, proto, blob, doc, previous?)` | 원형의 새 판을 템플릿에 전파하는 계획(`planProtoUpdate`, 8.8.7)과 검사 목록 하나. 대상 블록(그 원형을 더 낮은 판으로 고정한 블록)마다 자리 못 찾음(원형 키에 자리·연결이 없음 `PROTO_UNBOUND_KEY` — 없는 키마다 하나씩 전부 담고(`planProtoUpdate`는 첫 키에서 던진다), 이때 `template`이 없다. 슬롯 앵커를 바탕 문서 `doc`에서 찾지 못함 `ANCHOR_CHANGED`·`ANCHOR_AMBIGUOUS`·`ANCHOR_NOT_FOUND`, `where`는 `slots.<id>`), 입력 항목 사라짐(직전 판 원형 `previous`를 주면 `reextractBlock`과 같은 판정으로 `BLOCK_KEYS_DROPPED` 경고, `where`는 `blocks.<id>`. 주지 않으면 보지 않는다), 이름 충돌(`BLOCK_NAME_CONFLICT`), 서식 차이(슬롯 앵커가 찾은 자리의 첫 문단 기준 `BLOCK_FORMAT_DIFFERS` 경고와 `formatDiffs`)를 본다. 결과 `{ template?, updated, issues, formatDiffs }`. 오류가 있어도 `template`이 있으면 돌려준다. 입력은 바꾸지 않고, 저장할지 새로 만들지는 사용자 몫이다 |
+| `checkTemplateUpdates(t, latestOf, currentSource?)` | "최신 버전 있음" 알림 목록이다(템플릿을 바꾸지 않는다). `currentSource`(지금 바탕 문서의 sha256)가 `source.sha256`과 다르면(대소문자 무시) `TPL_SOURCE_CHANGED { template, version, expected, actual, message }`, 원형을 고정한 블록마다 `latestOf(원형 id)`가 핀보다 크면 `BLOCK_NEWER_VERSION { template, block, proto, pinned, latest, message }`. 저장소가 모르는 원형(undefined)과 분기 블록은 알리지 않는다(분기는 `listProtoUsage`의 `forked`). 순서는 바탕 문서 다음 블록(템플릿 순서). 형식 중립(`src/template/`) |
+
+- 이름 충돌의 판정: 블록 안 입력 항목 이름은 원형 `keys` + 조각 안 누름틀(`CLICK_HERE`) 이름 + 메일머지 키다(NFC). 이름마다, 그 블록에 적용되는(`where`가 없거나 그 블록인) `placeholder` 키·`clickHere` 이름·`mailMerge` 키가 그 이름인 자리들의 값이 둘 이상이면 오류다. 같은 종류 안의 충돌은 읽기가 이미 `TPL_KEY_CONFLICT`로 막으므로 이 검사는 종류를 가로지른 충돌(예: `{{사업명}}`과 누름틀 `사업명`이 다른 값)을 잡는다(요구 문서 8.3의 3: 같은 이름은 같은 값).
+- 같은 이름 공유는 새 규칙 없이 기존 규칙으로 성립한다: 2판 생성(8.8.12)의 `placeholder`·`clickHere`·`mailMerge` 자리는 원본과 선택된 블록 안의 같은 이름 전부에 같은 값(`bindValues`)을 넣는다(8.8.5). 순번(`occurrence`)이나 `where`로 좁힌 자리는 그 범위에만 적용된다.
+- `TPL_SOURCE_CHANGED`와 `TPL_SOURCE_MISMATCH`: 같은 대조(바탕 문서 바이트의 sha256 ↔ `source.sha256`)다. `TPL_SOURCE_CHANGED`는 생성 전에 저장소의 지금 바탕 문서와 견줘 알리는 보고이고, 그 문서로 생성하면 8.8.12의 1번이 `TPL_SOURCE_MISMATCH`(오류)로 막는다. 해소는 둘 다 재지정(8.8.13)으로 새 템플릿 판을 만드는 것이다.
+
+**CLI 파일 저장소** (명령은 8.4의 `block extract|insert|list`. SQLite 이관은 Codex #25)
+
+```
+<저장소>/blocks/<블록 id>/block.json        그 블록의 최신 판(block-proto@1, 정규 JSON)
+<저장소>/blocks/<블록 id>/<sha256>.json     조각 덩어리(이름 = 바이트의 sha256)
+```
+
+- 폴더 이름은 원형 id(`k` + 16진 8자)이고 `block.json`의 `id`와 같아야 한다(다르면 `block list`가 읽을 수 없는 블록으로 센다). 블록 폴더는 `fill --blobs`(8.4)의 덩어리 폴더로도 쓸 수 있다.
+- 옛 판의 원형 JSON은 따로 두지 않는다(판 기록은 `history`·`previous`). 결과 문서에서 다시 떼어 새 판을 쓰는 CLI 명령은 없다(API `reextractBlock`).
+
+**알려진 한계**
+
+- 서식 비교는 자리 문단 하나와 블록 최상위 문단만 본다(표 칸 안 문단과 글자 모양은 보지 않는다). 제목과 본문으로 된 블록을 제목 자리에 넣으면 본문 문단은 늘 다르다고 나온다(사용자 결정대로 표시만 한다).
+- 블록 안 누름틀·메일머지 이름에 템플릿 자리가 없는 것은 업데이트 검사가 알리지 않는다(생성은 등록되지 않은 필드를 손대지 않는다, 8.8.12).
+- `keys`와 바뀐 점 요약은 엔진이 계산하지만 `readBlockProto`는 형식만 본다(8.8.7과 같다).
 
 ## 9. S4 — md·txt 어댑터 (`src/text/`)
 
