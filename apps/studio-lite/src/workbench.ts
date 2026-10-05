@@ -238,7 +238,7 @@ function buildText(s: Session, work: Work) {
   let text = '', filled = 0;
   for (let i = 0; i < s.rows.length; i++) {
     const row = s.rows[i]!, block = work.blocks.find(b => b.from === row.id), edit = edits.get(row.id);
-    const content = projected(block ? block.text : edit ? edit.text : row.text, dataset, !!(block || edit), !dataset && !!(block || edit));
+    const content = projected(block ? block.text : edit ? edit.text : row.text, dataset, false);
     filled += content.filled;
     if (block) i = s.rows.findIndex(r => r.id === block.to);
     if (!block || content.text !== '') text += content.text + (separators[i] ?? '');

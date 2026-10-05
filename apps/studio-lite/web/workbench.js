@@ -49,8 +49,12 @@ function controls() {
     button.disabled=name==='copyKey'?!available||!$('#key-select').value.trim():name==='importSelection'?!canEdit||!state.comparisonText:name==='copySelection'?!available:!canEdit;
   }
   blockLibraryUI.refresh();
+  if(state.kind==='text')for(const b of document.querySelectorAll('[data-action=bold],[data-action=group],[data-action=heading1],[data-action=heading2]'))b.disabled=true;
   for(const b of document.querySelectorAll('[data-action="branchDetail"]')){b.disabled=true;b.title='분기점 만들기는 다음 구현 단계에서 지원합니다.';}
   document.body.classList.toggle('has-document',Boolean(state.session));document.body.classList.toggle('text-work',state.kind==='text');document.body.classList.toggle('has-output',Boolean(state.output));
+  $('#editor-title').textContent=state.kind==='text'?'TXT 템플릿':'편집';
+  $('#copy-body').textContent=state.kind==='text'?'결과 복사':'본문 복사';
+  $('#key-select').title=state.kind==='text'?'{{항목}}에 데이터 값을 채웁니다. 구간 표기는 그대로 보존합니다.':'입력 항목 이름';
   $('#save-work').title=state.name?'작업 저장 · '+state.name:'문서를 먼저 여세요.';
   renderSelectionDetail();
   $('#dirty-state').hidden=!state.dirty;
@@ -104,17 +108,20 @@ function renderEditor() {
   if(input.value!==state.layout.text)input.value=state.layout.text;
   input.style.height='0px'; input.style.height=Math.max($('#editor-scroll').clientHeight,input.scrollHeight)+'px';
   const mirror=$('#editor-mirror');mirror.replaceChildren();
-  for(const unit of state.layout.units) {
+  let offset=0;
+  const displayUnits=state.kind==='text'?state.layout.text.split('\n').map((text,i)=>{const id=unitAt(state.layout.units,offset)?.id,start=offset;offset+=text.length+1;return {id,from:i,to:i,text,start,end:offset-1};}):state.layout.units;
+  for(const unit of displayUnits) {
     const row=paragraph(unit.id),line=document.createElement('div');line.className='editor-unit'+(unit.block?' block-unit':'')+(!row.editable?' readonly-unit':'')+(state.headings.has(unit.id)?' heading-unit':'');line.dataset.id=unit.id;
     const number=document.createElement('button');number.type='button';number.className='line-number';number.textContent=unit.from===unit.to?String(unit.from+1):(unit.from+1)+'–'+(unit.to+1);number.title=(unit.block?'블록 · ':'')+(!row.editable?reasonOf(row.reason):'원본 위치');number.setAttribute('aria-label','원본 '+number.textContent);number.tabIndex=-1;
-    number.addEventListener('click',()=>selectRow(unit.id,{focus:true}));line.append(number,document.createTextNode(unit.text+'​'));mirror.append(line);
+    number.addEventListener('click',()=>{if(state.kind==='text'){input.focus();input.setSelectionRange(unit.start,unit.end);captureCaret(false);}else selectRow(unit.id,{focus:true});});line.append(number,document.createTextNode(unit.text+'​'));mirror.append(line);
   }
+  if(state.kind==='text')$('#paragraph-count').textContent=displayUnits.length+'줄';
   markEditorSelection();controls();
 }
 function markEditorSelection() {
   const caret=state.caret??{start:0,end:0},chosen=editorSelection(state.layout,caret.start,caret.end);
   for(const line of $('#editor-mirror').children)line.classList.toggle('selected-unit',chosen.some(u=>u.id===line.dataset.id));
-  const a=chosen[0],z=chosen.at(-1);$('#selection-info').textContent=a?(state.kind==='text'?'줄 ':'문단 ')+(a.from+1)+(a.from!==z.to?'–'+(z.to+1):''):'';
+  const a=chosen[0],z=chosen.at(-1);if(state.kind==='text'){$('#selection-info').textContent=state.caret?'줄 '+state.layout.text.slice(0,caret.start).split('\n').length:'';return;}$('#selection-info').textContent=a?(state.kind==='text'?'줄 ':'문단 ')+(a.from+1)+(a.from!==z.to?'–'+(z.to+1):''):'';
 }
 function captureCaret(sync=true) {
   const input=$('#document-editor');state.caret={start:input.selectionStart,end:input.selectionEnd};
@@ -134,7 +141,7 @@ function renderOutline() {
   }
   $('#outline-menu').hidden = state.headings.size === 0;
 }
-function renderParagraphs() {renderEditor();$('#paragraph-count').textContent=String(state.paragraphs.length||'');renderOutline();}
+function renderParagraphs() {renderEditor();if(state.kind!=='text')$('#paragraph-count').textContent=String(state.paragraphs.length||'');renderOutline();}
 function selectRow(id,options={}) {
   const unit=state.layout.units.find(u=>state.paragraphs.slice(u.from,u.to+1).some(r=>r.id===id));if(!unit)return false;
   state.detailLibrary=undefined;state.activeRecommendation=undefined;state.chosen=id;state.caret={start:unit.start,end:unit.end};const input=$('#document-editor');input.setSelectionRange(unit.start,unit.end);
@@ -261,7 +268,7 @@ async function showResult() {
   if (!state.output || state.busy) return;
   document.body.classList.add('show-text-preview');setBusy(true, '생성 결과를 표시하는 중입니다.');
   try {
-    if (state.kind === 'text') {document.body.classList.add('show-text-preview');renderTextDocument('result');}
+    if (state.kind === 'text') {renderTextDocument('result');}
     else if (state.resultDoc) mountDocument(state.resultDoc, 'result');
     else await openViewer(state.output.outputUrl, 'result', state.openTicket);
     status('생성 결과 · 내려받기로 저장할 수 있습니다.', 'success');
@@ -269,6 +276,7 @@ async function showResult() {
   finally { setBusy(false); }
 }
 function updateData(info) {
+  state.detailId=undefined;
   state.records = info?.records ?? 0; state.keys = info?.keys ?? []; state.index = info?.index ?? 0;
   $('#data-info').textContent = state.records ? state.records + '개 행 연결됨' : '데이터가 없습니다.';
   const records = $('#record-select'); records.replaceChildren();
@@ -400,7 +408,7 @@ async function generate(asTemplate = false) {
     $('#body-result').open = state.kind === 'text';
     $('#output-info').textContent = asTemplate ? '누름틀 ' + result.promoted + '개 생성' : textTemplate ? '서식 반영 · 미연결 ' + result.unresolved + '곳' : result.changed + '개 편집 · ' + result.filled + '곳 채움';
     try {
-      if (state.kind === 'text') {document.body.classList.add('show-text-preview');renderTextDocument('result');}
+      if (state.kind === 'text') {renderTextDocument('result');}
       else await openViewer(result.outputUrl, 'result', state.openTicket);
     }
     catch (error) {
@@ -455,7 +463,7 @@ function undo(redo=false) {
 function useHeading(id,level){remember();state.headings.set(id,level);changed();renderEditor();renderOutline();}
 function replaceSelected(value){const c=state.caret??{start:0,end:0};applyEditorChange(c.start,c.end,value);}
 function insertKey(){const key=$('#key-select').value.trim();if(!key||!/^[\p{L}\p{N}_-]+(?:\.[\p{L}\p{N}_-]+)*$/u.test(key)){ $('#key-select').focus();status('공백 없는 필드 이름을 입력하세요.','error');return;} replaceSelected('{{'+key+'}}');}
-function makeBold(){const c=state.caret;if(!c||c.start===c.end)return;const text=state.layout.text.slice(c.start,c.end);replaceSelected(text.startsWith('**')&&text.endsWith('**')?text.slice(2,-2):'**'+text+'**');}
+function makeBold(){if(state.kind==='text')return;const c=state.caret;if(!c||c.start===c.end)return;const text=state.layout.text.slice(c.start,c.end);replaceSelected(text.startsWith('**')&&text.endsWith('**')?text.slice(2,-2):'**'+text+'**');}
 
 async function copyKey() {
   const key = $('#key-select').value.trim(); if (!key || state.busy) return;
@@ -474,6 +482,7 @@ async function copyKey() {
   }
 }
 function action(name) {
+  if(state.kind==='text'&&['bold','group','heading1','heading2'].includes(name))return;
   hideMenu();if(state.busy)return;
   try {
     if(name==='inputDetail'||name==='dataDetail'){openInputDetail(name==='dataDetail');return;}
@@ -574,7 +583,6 @@ document.addEventListener('pointerdown', (event) => {
 });
 document.addEventListener('keydown', (event) => {
   if ($('#block-library-dialog').open) return;
-  if ($('#block-library-dialog').open) return;
   if (event.key === 'Escape') { hideMenu(); closeMenus(); clearSelection(); }
   if (event.ctrlKey || event.metaKey) {
     if (event.key.toLowerCase() === 's') { event.preventDefault(); void saveWork(); }
@@ -622,6 +630,9 @@ function applyScale() {
   renderViewerNumbers();renderSourceTags();
 }
 function renderTextDocument(mode) {
+  if(state.kind==='text'&&mode!=='comparison'){
+    state.view?.destroy();state.view=undefined;state.viewMode='source';$('#pages').replaceChildren();document.body.classList.remove('show-text-preview');controls();return;
+  }
   state.view?.destroy();state.view=undefined;state.viewMode=mode;
   const container=$('#pages');container.classList.remove('page-view');container.replaceChildren();
   const sheet=document.createElement('div');sheet.className='text-document';

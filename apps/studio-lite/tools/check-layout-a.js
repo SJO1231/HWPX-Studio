@@ -17,6 +17,6 @@ async page=>{
   await page.locator('#document-editor').click({button:'right'});assert(await page.locator('#context-menu').isVisible(),'context menu');assert(await page.locator('#context-menu [data-action=branchDetail]').isDisabled(),'unsupported reason');await page.keyboard.press('Escape');
   assert(JSON.stringify(await page.locator('.source-text').allTextContents())===JSON.stringify(source),'source unchanged');assert(await page.locator('.line-number').count()===3,'TXT line numbers');
   await page.locator('#library-tab').click();assert(await page.locator('#library-list').isVisible(),'library tab');await page.locator('#document-tab').click();
-  await page.locator('#generate').click();await page.waitForFunction(()=>!document.body.classList.contains('busy'));assert(await page.locator('.original-pane').isVisible(),'TXT result visible');await page.locator('#source-view').click();assert(await page.locator('.editor-pane').isVisible(),'TXT editor restored');
+  await page.locator('#generate').click();await page.waitForFunction(()=>!document.body.classList.contains('busy'));assert(await page.locator('#copy-body').isEnabled(),'TXT result can be copied');assert(await page.locator('#document-editor').isVisible(),'TXT stays in editor');assert(await page.locator('.original-pane').isHidden(),'TXT has no viewer');assert(await page.locator('.editor-pane').isVisible(),'TXT editor restored');
   await page.evaluate(()=>document.body.dataset.layoutRegression='pass: two sizes, review exclude/undo/group, remote/context, draft, TXT, source, tabs');
 }
