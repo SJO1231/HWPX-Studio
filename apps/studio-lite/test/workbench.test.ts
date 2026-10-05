@@ -161,6 +161,10 @@ test('linked workspace HTTP: editor/static routes, same-origin, stable row selec
   try {
     for(const path of ['/','/workbench','/workbench.js','/workbench.css','/quick','/template'])assert.equal((await fetch(base+path)).status,200,path);
     const html=await (await fetch(base+'/')).text();assert.match(html,/id="document-file"/);assert.match(html,/id="paragraphs"/);
+    assert.match(html,/src="\/workbench.js"/);assert.doesNotMatch(html,/src="\/quick.js"/);
+    assert.equal(await (await fetch(base+'/workbench')).text(),html);
+    const health=await (await fetch(base+'/api/health')).json() as any;
+    assert.equal(health.surface,'workbench');assert.match(health.build,/^[a-f0-9]{10}$/);assert(Number.isFinite(Date.parse(health.startedAt)));
     const source=simple('원래 문장','OUTSIDE_FIXED');
     assert.equal((await send('open',{name:'synthetic.hwpx',content:Buffer.from(source).toString('base64')},'http://untrusted.invalid')).status,403);
     const response=await send('open',{name:'synthetic.hwpx',content:Buffer.from(source).toString('base64')});assert.equal(response.status,200);

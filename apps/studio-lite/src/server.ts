@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
 import { stripTypeScriptTypes } from 'node:module';
 import { cleanPath, resolveShared, HostError } from '../../../packages/viewer/src/host/index.ts';
 import { createQuick } from './quick-api.ts';
@@ -16,6 +17,9 @@ import { parseDocument, openPackage } from '@hwpx-studio/engine';
 
 const pathCode=(e:unknown)=>e instanceof Error && 'code' in e && typeof e.code==='string'?{code:e.code,plain:plainOf(e.code)}:{};
 const ROOT=fileURLToPath(new URL('../',import.meta.url));
+const runtimeHash=createHash('sha256');
+for(const file of ['src/server.ts','web/workbench.html','web/workbench.js','web/workbench.css']) runtimeHash.update(readFileSync(resolve(ROOT,file)));
+const runtime = { surface: 'workbench', startedAt: new Date().toISOString(), build: runtimeHash.digest('hex').slice(0,10) };
 export function createApp(database=':memory:') {
   const db=new DatabaseSync(database);
   db.exec('CREATE TABLE IF NOT EXISTS project_revision (id INTEGER PRIMARY KEY, name TEXT NOT NULL, document TEXT NOT NULL, saved_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)');
@@ -36,7 +40,7 @@ export function createApp(database=':memory:') {
       if(req.method==='GET') {
         const result=workbench.get(path,url.searchParams)??quick.get(path,url.searchParams);
         if(result)return send(200,result.body,'type' in result && typeof result.type==='string'?result.type:'application/vnd.hancom.hwpx',result.name?{'Content-Disposition':`attachment; filename="document.hwpx"; filename*=UTF-8''${encodeURIComponent(result.name)}`}:{});
-        if(path==='/api/health')return send(200,{ok:true});
+        if(path==='/api/health')return send(200,{ok:true,...runtime});
         if(path==='/api/g2b/profiles')return send(200,{profiles:g2b.profiles()});
         if(path==='/api/projects')return send(200,db.prepare('SELECT name, MAX(id) AS id, MAX(saved_at) AS saved_at FROM project_revision GROUP BY name ORDER BY id DESC').all());
         if(path==='/api/project') {

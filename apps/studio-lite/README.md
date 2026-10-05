@@ -2,7 +2,7 @@
 
 Markdown과 원본 HWPX를 같은 Field / In Template 개념으로 다루는 로컬 MVP입니다. Node.js 24.19 이상, Windows x64 기준입니다.
 
-관리 저장소는 [SJO1231/HWPX-Studio](https://github.com/SJO1231/HWPX-Studio/tree/studio-lite)이며 작업 브랜치는 `studio-lite`입니다. 이 앱은 `apps/studio-lite`에 있고 공통 `packages/hwpx-engine`를 직접 사용합니다. Studio main에는 병합하지 않았습니다. 사용자 DB·실제 참고자료·시험 산출물은 Git에 포함하지 않으며 `samples/`에는 합성 시험 문서만 포함합니다.
+관리 저장소는 [SJO1231/HWPX-Studio](https://github.com/SJO1231/HWPX-Studio)이며 이슈별 작업 가지에서 `main`으로 PR을 냅니다. 이 앱은 `apps/studio-lite`에 있고 공통 `packages/hwpx-engine`를 직접 사용합니다. 사용자 DB·실제 참고자료·시험 산출물은 Git에 포함하지 않으며 `samples/`에는 합성 시험 문서만 포함합니다.
 
 2026-10-02 리뷰의 오주입·승인·검사 판정 결함 5개를 수정하고 회귀 시험 8개를 추가했습니다. 테스트 통과는 업무용 완성 판정이 아닙니다. 상세 내용은 [검증 상태](docs/status.md), 검토 요청과 개선 순서는 [설계자 검토 의뢰서](docs/architect-review-brief.md)를 참조하세요.
 
@@ -18,7 +18,13 @@ npm start
 
 새 PC에서는 저장소 루트에서 `npm ci --ignore-scripts`를 실행합니다. 생성과 미리보기에 한컴 설치, Python, 모델 다운로드가 필요하지 않습니다. 개발 검사기는 TypeScript가 제공하는 플랫폼별 선택 의존성으로 현재 운영체제·CPU에 맞는 실행 파일을 사용합니다. TypeScript 실행에 필요하므로 설치 시 `--omit=optional`을 사용하지 않습니다.
 
-## 1분 체험
+## 기본 작업창
+
+`/`와 `/workbench`는 HWPX·TXT 문서 작업창입니다. 문서를 연 뒤 **보기**에서 원문 중심/편집 중심 배치를 선택하거나 탐색 목록을 접을 수 있습니다. TXT는 편집 한 창으로 시작합니다. **저장**은 원본·편집·데이터를 담은 중간 작업 파일이며, 저장한 템플릿으로 생성하는 기존 화면은 파일 메뉴의 별도 창에서 엽니다. 기존 빠른 생성은 `/quick`, 기존 템플릿 화면은 `/template`에 유지합니다.
+
+실행 화면 불일치가 의심되면 작업을 먼저 저장하고 서버를 다시 시작하세요. `/api/health`의 `surface`가 `workbench`인지와 `build`(서버·작업창 소스의 실행 시작 시 해시)를 확인할 수 있습니다. #60의 두 배치 비교와 사용자 인수는 진행 중이며 현재 검증 범위는 [검증 상태](docs/status.md)를 따릅니다.
+
+## 기존 템플릿 화면(`/template`) 1분 체험
 
 1. 기본 예시에서 **데이터 적용**을 누릅니다.
 2. 오른쪽 **Template / Data / HWPX**를 전환합니다. HWPX 탭은 실제 생성 바이트를 RHWP로 렌더합니다.
