@@ -1,3 +1,4 @@
+import {viewerLines, lineAt} from '/viewer-lines.js';
 import { installBlockLibrary } from '/block-library.js';
 import {editorLayout, editorSelection, unitAt, replaceEditorText, groupEditorSelection, editorChange} from '/editor-model.js';
 import { createPageView, createLatest, toPagePoint } from '/packages/viewer/src/dom/index.ts';
@@ -637,15 +638,14 @@ function renderViewerNumbers(){
   for(const old of $('#pages').querySelectorAll('.viewer-number'))old.remove();
   if(state.kind==='text'||state.viewMode!=='source'||!state.sourceDoc)return;
   const scale=Number($('#scale').value);if(!Number.isFinite(scale)||scale<=0)return;
+  let offset=0;
   for(const page of $('#pages').querySelectorAll('.page')){
-    const info=state.sourceDoc.pageInfo(Number(page.dataset.page));
-    const runs=state.sourceDoc.pageLayout(Number(page.dataset.page)).runs.filter(r=>
-      [r.x,r.y,r.w,r.h].every(Number.isFinite)&&r.x>=0&&r.y>=0&&r.x<info.width&&r.y<info.height&&r.w>0&&r.h>0&&r.text.replaceAll('\uFFFC','').trim())
-      .map(r=>({...r,row:state.paragraphs.findIndex(p=>{const pos=runPosition(r);return p.position&&pos&&sameParagraph(p.position,pos);})})).filter(r=>r.row>=0);
+    const lines=viewerLines(JSON.parse(state.sourceDoc.native.getPageRenderTree(Number(page.dataset.page))),offset);
+    offset+=lines.length;
     const badge=document.createElement('span');badge.className='viewer-number';badge.hidden=true;badge.setAttribute('aria-hidden','true');page.append(badge);
     page.onpointermove=event=>{const rect=page.getBoundingClientRect(),x=(event.clientX-rect.left)/scale,y=(event.clientY-rect.top)/scale;
-      const run=runs.find(r=>x>=r.x&&x<=r.x+r.w&&y>=r.y&&y<=r.y+r.h);badge.hidden=!run;
-      if(run){badge.textContent=String(run.row+1);badge.style.left='2px';badge.style.top=(run.y*scale)+'px';}
+      const line=lineAt(lines,x,y);badge.hidden=!line;
+      if(line){badge.textContent=String(line.number);badge.style.left='2px';badge.style.top=(line.y*scale)+'px';}
     };
     page.onpointerleave=()=>{badge.hidden=true;};
   }
