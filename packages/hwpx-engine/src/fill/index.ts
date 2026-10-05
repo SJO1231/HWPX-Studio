@@ -30,3 +30,17 @@ export { draftAnchors, type DraftBlock, type DraftedAnchor, type DraftRequest } 
 export { generateFromTemplate } from "./generate-studio.ts";
 export type { BlobLoader, CoveredPlace, StudioGenerateOptions, StudioGenerateReport, StudioGenerateResult, StudioLedger, StudioValueReport } from "./studio-common.ts";
 export { checkAnchors, planRelocation, redraftAnchor, type AnchorAddress, type AnchorCheck, type AnchorCheckState, type RedraftInput } from "./check-anchors.ts";
+export {
+  extractBlock,
+  reextractBlock,
+  planBlockInsert,
+  planBlockUpdate,
+  blockFormatDiffs,
+  blockFragment,
+  type BlockRange,
+  type BlockMeta,
+  type ExtractedBlock,
+  type BlockFormatDiff,
+  type BlockInsertPlan,
+  type BlockUpdatePlan,
+} from "./block-store.ts";
