@@ -8,13 +8,20 @@ import { markSpan } from "./marks.ts";
 import { isObj } from "./request.ts";
 import type { BlockPreviewResponse, MarkRange } from "./types.ts";
 
-/** 조각 덩어리(`fragment@1` JSON의 UTF-8 바이트)의 상한. 넘으면 풀거나 읽지 않고 `BLOCK_TOO_LARGE`(413)다 */
+/** 조각 덩어리(`fragment@1` JSON의 UTF-8 바이트)의 상한. 넘으면 읽지 않고 `BLOCK_TOO_LARGE`(413)다 */
 export const PREVIEW_MAX_BLOB = 32 * 1024 * 1024;
 
 /** 저장소에서 꺼낸 블록 하나: 원형(`block-proto@1`, 읽기 검사를 거친 것)과 그 판의 조각 덩어리 */
 export type StoredBlock = { proto: BlockProto; blob: Uint8Array };
 
-const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+/**
+ * base64(표준 글자, 길이 4의 배수, 끝의 `=` 패딩 2개까지)인가. 글자 집합 밖의 글자를 한 번 훑어 찾는다
+ * (4글자 묶음을 되풀이하는 정규식은 풀린 크기가 약 3.2 MiB를 넘는 글에서 스택을 넘는다).
+ */
+function isBase64(text: string): boolean {
+  const pad = text.endsWith("==") ? 2 : text.endsWith("=") ? 1 : 0;
+  return text.length % 4 === 0 && !/[^A-Za-z0-9+/]/.test(text.slice(0, text.length - pad));
+}
 
 const tooLarge = (): HostError => new HostError(413, "BLOCK_TOO_LARGE", `블록 조각 덩어리가 미리보기 상한(${PREVIEW_MAX_BLOB / 1024 / 1024} MiB)을 넘습니다.`);
 
@@ -31,9 +38,11 @@ function blockOf(body: unknown, loadBlock: (id: string) => StoredBlock | undefin
     return found;
   }
   if (!isObj(proto) || typeof blob !== "string") throw new HostError(400, "BAD_REQUEST", "본문은 { block } 또는 { proto, blob }이어야 합니다.");
-  // 풀기 전에 크기를 본다(base64 4글자 = 3바이트)
-  if (Math.floor(blob.length / 4) * 3 > PREVIEW_MAX_BLOB) throw tooLarge();
-  if (!BASE64.test(blob)) throw new HostError(400, "BAD_BLOB", "blob은 조각 덩어리의 base64여야 합니다.");
+  // 글자 길이만으로 상한을 넘는 것(base64 4글자 = 3바이트)은 풀지 않는다. 경계는 푼 뒤 실제 바이트 수로 본다(끝 패딩만큼 짧다)
+  if (blob.length > Math.ceil(PREVIEW_MAX_BLOB / 3) * 4) throw tooLarge();
+  if (!isBase64(blob)) throw new HostError(400, "BAD_BLOB", "blob은 조각 덩어리의 base64여야 합니다.");
+  const bytes = new Uint8Array(Buffer.from(blob, "base64"));
+  if (bytes.length > PREVIEW_MAX_BLOB) throw tooLarge();
   let read: BlockProto;
   try {
     read = readBlockProto(JSON.stringify(proto));
@@ -41,7 +50,7 @@ function blockOf(body: unknown, loadBlock: (id: string) => StoredBlock | undefin
     if (e instanceof HwpxError) throw new HostError(400, e.code, e.message);
     throw e;
   }
-  return { proto: read, blob: new Uint8Array(Buffer.from(blob, "base64")) };
+  return { proto: read, blob: bytes };
 }
 
 type Span = { path: number[]; from: number; until: number };

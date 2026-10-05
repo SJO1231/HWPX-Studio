@@ -156,7 +156,7 @@ type Unlocated = { precision: "none"; reason: string; trail: string[] }
 
 - 함수(`src/host/preview.ts`): `previewBlock(body, loadBlock): BlockPreviewResponse`. 블록 저장소는 앱이 갖는다. `loadBlock(id)`는 `{ proto, blob }`(읽기 검사를 거친 `block-proto@1` 원형과 그 판의 조각 덩어리 바이트)을 주거나, 없으면 undefined를 준다. 호스트는 상태를 갖지 않는다.
 - 요청(`BlockPreviewRequest`, `src/host/types.ts`): `{ block: "<블록 id>" }` 또는 `{ proto: <원형 JSON 객체>, blob: "<덩어리 base64>" }`. 둘을 함께 보내지 않는다. 화면은 저장한 블록을 id로 부른다(본문 방식은 저장 전 블록이나 앱 밖 블록용).
-- 상한: 덩어리 `PREVIEW_MAX_BLOB` = 32 MiB(lite 블록 저장 한도와 같다). 저장소 덩어리는 바이트 길이로, 본문 덩어리는 base64를 풀기 전에 글자 길이로 본다. 요청 본문 한도(`ShellOptions.maxBody`)는 앱이 정한다(본문 방식은 base64라 약 1.34배다).
+- 상한: 덩어리 `PREVIEW_MAX_BLOB` = 32 MiB(lite 블록 저장 한도와 같다). 저장소 덩어리는 바이트 길이로, 본문 덩어리는 base64를 푼 뒤의 바이트 길이로 본다(끝 패딩을 뺀 실제 크기. 글자 길이만으로 상한을 넘는 것은 풀지 않고 거절한다). base64 검사는 길이(4의 배수)·끝 패딩(`=` 2개까지)·글자 집합만 본다. 요청 본문 한도(`ShellOptions.maxBody`)는 앱이 정한다(본문 방식은 base64라 약 1.34배다).
 - 응답(`BlockPreviewResponse`):
 
 | 필드 | 뜻 |
@@ -167,7 +167,7 @@ type Unlocated = { precision: "none"; reason: string; trail: string[] }
 | `places` | 미리보기 문서 안 입력 항목 자리(엔진 주소 `sectionIndex`·`path`, 논리 오프셋 `start`·`end`, 여러 문단 누름틀이면 `endPath`)와 쪽 위 강조 구간 `marks: MarkRange[]` |
 | `warnings` | 경고 `{ code, message }[]`: 조각 가져오기 경고(`FRAG_UNIT_CONVERTED`·`FRAG_FORMAT_UNKNOWN`·`FRAG_DANGLING_SOURCE` 등)와 상속 오류 `GATE_INHERITED` |
 
-- `marks`: 자리 구간을 위치 변환(3절)으로 rhwp 글자 순번 구간으로 옮긴 것(`markSpan`, 앵커 강조와 같은 함수). 한 문단 자리는 하나, 여러 문단 누름틀은 문단마다(시작 문단의 뒷부분, 사이 문단 전체, 끝 문단의 앞부분)다. 값 글에 줄바꿈이 있으면 줄바꿈마다 나눈다(rhwp는 줄바꿈을 글자로 그리지 않아 덮을 글이 어긋난다). 안내문 상태 누름틀은 `guide`(안내문 사각형을 덮는다), 그 밖은 `text`(덮어야 할 글. 화면은 쪽 글자 배치와 견줘 다르면 그리지 않는다)를 준다. 옮길 수 없는 문단은 빠지므로 빈 목록일 수 있다. 한계: 지금 쪽 화면(`dom/page-view.ts`)은 쪽마다 글을 견주므로 한 구간이 쪽을 넘으면 그 구간은 그려지지 않는다(긴 값 시험에서 1,408개 중 93개, 검증 기준 30절).
+- `marks`: 자리 구간을 위치 변환(3절)으로 rhwp 글자 순번 구간으로 옮긴 것(`markSpan`, 앵커 강조와 같은 함수). 한 문단 자리는 하나, 여러 문단 누름틀은 문단마다(시작 문단의 뒷부분, 사이 문단 전체, 끝 문단의 앞부분)다. 값 글에 줄바꿈이 있으면 줄바꿈마다 나눈다(rhwp는 줄바꿈을 글자로 그리지 않아 덮을 글이 어긋난다). 안내문 상태 누름틀은 `guide`(안내문 사각형을 덮는다), 그 밖은 `text`(덮어야 할 글. 화면은 쪽 글자 배치와 견줘 다르면 그리지 않는다)를 준다. 옮길 수 없는 문단은 빠지므로 빈 목록일 수 있다. 한계: 지금 쪽 화면(`dom/page-view.ts`)은 쪽마다 글을 견주므로 한 구간이 쪽을 넘으면 그 구간은 그려지지 않는다(긴 값 시험에서 1,408개 중 93개, 검증 기준 30절). 줄을 넘는 안내문(안내문 상태 누름틀의 안내문이 두 줄 이상으로 나뉘어 그려진 것)도 강조가 그려지지 않는다: 안내문 사각형(`rhwp/layout.ts` `guideRect`)은 안내문 글 전체와 같은 좌표 없는 런 하나를 찾으므로 줄마다 나뉜 런을 찾지 못한다(독립 검증 관측. 합성 누름틀의 한 줄 안내문 6·28자는 그려지고 여러 줄로 나뉘는 127자(첫 줄 런 46자)는 그려지지 않음을 확인했다. 아직 고치지 않았다).
 - 거절(`HostError`, `{ error: { code, message } }`): 400 `BAD_REQUEST`(본문이 객체가 아님, `block`이 문자열이 아니거나 비었거나 200자를 넘음, `block`과 `proto`·`blob`을 함께 보냄, `proto`가 객체가 아니거나 `blob`이 문자열이 아님), 400 `BAD_BLOB`(base64가 아님), 404 `BLOCK_NOT_FOUND`(저장소에 없음), 413 `BLOCK_TOO_LARGE`(상한 초과), 400 엔진 코드(원형 읽기 거절 `TPL_FIELD`·`TPL_ID` 등), 422 엔진 코드(미리보기를 만들 수 없음: `TPL_FRAGMENT_MISSING`·`FRAG_SCHEMA`·`GATE_NEW_ERRORS` 등). 거절이면 바이트를 주지 않는다.
 - 화면이 할 일(Codex 몫. 뷰어·호스트에는 구현하지 않았다): 저장소 목록에서 블록을 누르면 `{ block }`을 보내고 `hwpx`를 다른 문서와 같은 뷰어(rhwp)로 연다. `places[].marks`를 쪽 위에 덧그려 입력 항목 자리를 강조하고, `fields`로 "입력 n"과 이름별 수를 보인다(n을 자리 수로 셀지 이름 수로 셀지는 화면이 정한다). `warnings`는 쉬운 말로 보인다. 거절이면 이유를 보이고 원문 일부 보기로 대신한다. 첫 줄의 빈 바탕 문단은 블록의 일부가 아니다. 미리보기는 표시용이다(저장·편집 결과를 호스트로 돌려보내지 않는다). 쪽 설정은 바탕의 A4이므로 원본과 줄 나뉨이 다를 수 있다(엔진 명세 8.8.18 한계).
 

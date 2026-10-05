@@ -219,6 +219,18 @@ test("8.8.18 형식 버전: 바탕은 1.5, 1.5 원본 블록은 변환 없음, 1
   checkPreview(d1, rd, bd, pd);
 });
 
+test("8.8.18 빈 바탕의 구역 설정은 한글 2024 새 문서 저장본과 같은 자식을 갖는다(감추기·줄 번호가 없으면 한글이 열지 못한다. 개요 번호만 0)", () => {
+  const secPrOf = (bytes: Uint8Array): string => {
+    const d = reparse(bytes);
+    return utf8.decode(readEntry(d.pkg.archive, d.pkg.bytes, d.pkg.sectionEntries[0]!)).match(/<hp:secPr[\s\S]*?<\/hp:secPr>/)?.[0] ?? "";
+  };
+  const src = readFixture("hancom/blocks");
+  const block = blockOf(reparse(src), { sectionIndex: 0, parentPath: [], from: 1, to: 3 });
+  const hancom = secPrOf(src);
+  assert.ok(hancom.includes("<hp:visibility ") && hancom.includes("<hp:lineNumberShape ") && hancom.includes('outlineShapeIDRef="1"'));
+  assert.equal(secPrOf(buildBlockPreviewDocument(block.proto, block.blob).bytes), hancom.replace('outlineShapeIDRef="1"', 'outlineShapeIDRef="0"'));
+});
+
 test("8.8.18 거절: 글 블록·덩어리 해시 불일치 TPL_FRAGMENT_MISSING, 조각 JSON 아님 FRAG_SCHEMA, 게이트 새 오류 GATE_NEW_ERRORS(바이트를 내지 않음)", () => {
   const src = reparse(readFixture("hancom/blocks"));
   const block = blockOf(src, { sectionIndex: 0, parentPath: [], from: 1, to: 3 });

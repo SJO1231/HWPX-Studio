@@ -1704,10 +1704,11 @@ buildBlockPreviewDocument(proto: BlockProto, blob: Uint8Array, options?: ImportO
 | --- | --- |
 | `version.xml` | `xmlVersion="1.5"`(`PREVIEW_XML_VERSION`), application `HWPX Studio` |
 | `Contents/header.xml` | 루트에 한글 저장본과 같은 접두사 선언(`hwpunitchar` 포함), `version="1.5"`, `secCnt="1"`. 자원: 글꼴(7개 언어마다 하나, 함초롬바탕), 테두리 1, 글자 모양 0(10pt), 탭 0, 문단 모양 0(여백 0, 줄 간격 160%), 스타일 0(바탕글) |
-| `Contents/section0.xml` | 문단 하나(글 없음): 구역 설정(A4 세로 59528×84186, 여백 왼쪽·오른쪽 8504·위 5668·아래 4252·머리말·꼬리말 4252, 한글 새 문서의 기본값)과 단 설정(1단) |
+| `Contents/section0.xml` | 문단 하나(글 없음): 구역 설정(A4 세로 59528×84186, 여백 왼쪽·오른쪽 8504·위 5668·아래 4252·머리말·꼬리말 4252, 한글 새 문서의 기본값)과 단 설정(1단). 구역 설정의 자식은 한글 2024가 새 문서를 저장한 모양 그대로다: 격자, 시작 번호, 감추기(`hp:visibility`), 줄 번호(`hp:lineNumberShape`), 용지(`gutterType` 포함), 각주·미주 모양, 쪽 테두리 3개(양쪽·짝수·홀수). 개요 번호 `outlineShapeIDRef`만 0(없음)이다(바탕에 번호 모양이 없다) |
 | `Contents/content.hpf`, `META-INF/container.xml`, `META-INF/manifest.xml` | header·section0 등록. 미리보기 글(`Preview/`)·settings는 없다 |
 
 - ZIP은 `createHwpxArchive`(3.2). 검사기 결과는 오류 0, 경고 `PKG_NO_PREVIEW_TEXT` 1이다.
+- 한글 2024(13.0.0.711)에서 미리보기 문서 5건(합성 2, 실제 공고서 블록 3)이 모두 열리고 쪽 수가 rhwp와 같다(검증 기준 30절). 구역 설정에 감추기·줄 번호·각주·미주·쪽 테두리가 없던 첫 구현은 같은 5건 모두 열리지 않았다(독립 검증 관측: `hp:visibility`만 더해도 열린다).
 - **형식 버전 1.5를 고른 이유**: 실제 공고서 16건이 모두 1.5이고(검증 기준 27절) 블록은 대개 그런 문서에서 뗀다. 같은 형식이면 7.66 변환이 없어 블록 자원 원문이 그대로 들어가므로, 미리보기의 서식이 그 블록을 다른 1.5 문서에 넣은 결과와 같다. 1.5 미만 원본의 블록은 1.5 문서에 넣을 때와 같은 올림 변환을 거친다. 원본 형식에 따라 바탕 버전을 바꾸지 않는다(같은 블록이라도 원본마다 바탕이 달라지고, 넣을 곳이 1.5인 실제 쓰임과 어긋난다).
 
 **입력 항목 자리** (8.8.17 "블록 안 입력 항목 이름"과 같은 범위)
@@ -1728,7 +1729,6 @@ buildBlockPreviewDocument(proto: BlockProto, blob: Uint8Array, options?: ImportO
 - 첫 줄에 바탕 문단(글 없는 줄)이 하나 보인다.
 - 바탕 스타일 "바탕글"과 모양이 다른 블록 스타일 "바탕글"은 미리보기 문서 안에서 "바탕글 (2)"가 된다(7.5. 블록 원형·덩어리는 바뀌지 않는다).
 - 머리말·꼬리말·바탕쪽은 없다(블록은 본문 문단이다).
-- 한글에서 미리보기 문서를 여는 것은 확인하지 않았다(미리보기는 rhwp로 그린다).
 
 ## 9. S4 — md·txt 어댑터 (`src/text/`)
 

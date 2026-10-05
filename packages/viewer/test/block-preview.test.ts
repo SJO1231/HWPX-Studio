@@ -114,6 +114,29 @@ test("#75 미리보기 거절: 본문 400 BAD_REQUEST·BAD_BLOB, 없는 블록 4
   assert.deepEqual(status(() => previewBlock({ block: "x" }, () => ({ proto: brokenProto, blob: broken }))), [422, "GATE_NEW_ERRORS"]);
 });
 
+test("#75 미리보기 큰 덩어리: 4 MiB·31 MiB 본문도 정해진 코드(base64 검사가 던지지 않는다), 상한은 푼 뒤 바이트 수(32 MiB까지 통과, 32 MiB+1 거절)", () => {
+  const block = blockOf(parse(readFixture("hancom/blocks")), { parentPath: [], from: 1, to: 3 });
+  const proto = JSON.parse(writeBlockProto(block.proto)) as Record<string, unknown>;
+  const MiB = 1024 * 1024;
+  /** n바이트 덩어리(ASCII 무늬: UTF-8이지만 조각 JSON이 아니다)를 원형의 조각 해시를 그 덩어리에 맞춰 본문으로 보낸다. 해시가 맞으면 푼 바이트가 보낸 것과 같다 */
+  const send = (n: number, tail = ""): [number, string] => {
+    const blob = Buffer.alloc(n, "0123456789abcdef");
+    const e = hostFailure(() => previewBlock({ proto: { ...proto, content: { fragment: sha256Hex(blob) } }, blob: blob.toString("base64") + tail }, none));
+    assert.ok([400, 413, 422].includes(e.status), `${n}: ${e.status}`);
+    return [e.status, e.code];
+  };
+  for (const n of [4 * MiB, 31 * MiB]) {
+    assert.deepEqual(send(n), [422, "FRAG_SCHEMA"], `${n / MiB} MiB: 풀고 해시까지 맞은 뒤 조각이 아니라서 거절`);
+    assert.deepEqual(send(n, "@@@@"), [400, "BAD_BLOB"], `${n / MiB} MiB: base64 밖 글자`);
+  }
+  // 경계: 셋 다 base64 44,739,244자이고 끝 패딩(2·1·0개)만 다르다
+  assert.deepEqual(send(PREVIEW_MAX_BLOB - 1), [422, "FRAG_SCHEMA"]);
+  assert.deepEqual(send(PREVIEW_MAX_BLOB), [422, "FRAG_SCHEMA"]);
+  assert.deepEqual(send(PREVIEW_MAX_BLOB + 1), [413, "BLOCK_TOO_LARGE"]);
+  // 저장소 덩어리도 같은 경계(32 MiB+1은 위 거절 시험)
+  assert.deepEqual(status(() => previewBlock({ block: "big" }, () => ({ proto: block.proto, blob: new Uint8Array(PREVIEW_MAX_BLOB) }))), [422, "TPL_FRAGMENT_MISSING"]);
+});
+
 // ── 2. 강조 구간 ──────────────────────────────────────────────
 
 test("#75 자리 강조: {{}}·메일머지 값은 rhwp가 그린 그 글을 덮고, 안내문 상태 누름틀은 안내문을, 여러 문단 누름틀은 문단마다 구간을 낸다", () => {

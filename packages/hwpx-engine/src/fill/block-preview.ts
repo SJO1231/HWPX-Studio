@@ -59,12 +59,27 @@ const HEADER =
   `<hh:styles itemCnt="1"><hh:style id="0" type="PARA" name="바탕글" engName="Normal" paraPrIDRef="0" charPrIDRef="0" nextStyleIDRef="0" langID="1042" lockForm="0"/></hh:styles>` +
   `</hh:refList></hh:head>`;
 
-/** 구역: 구역 설정(A4 세로, 한글 새 문서의 기본 여백)과 단 설정을 담은 빈 문단 하나. 블록은 이 문단 뒤에 들어간다 */
+/** 각주·미주 모양(한글 새 문서의 값. 둘은 구분선 길이·간격·놓는 곳만 다르다) */
+const notePr = (tag: string, lineLength: string, between: string, place: string): string =>
+  `<hp:${tag}><hp:autoNumFormat type="DIGIT" userChar="" prefixChar="" suffixChar=")" supscript="0"/><hp:noteLine length="${lineLength}" type="SOLID" width="0.12 mm" color="#000000"/>` +
+  `<hp:noteSpacing betweenNotes="${between}" belowLine="567" aboveLine="850"/><hp:numbering type="CONTINUOUS" newNum="1"/><hp:placement place="${place}" beneathText="0"/></hp:${tag}>`;
+const pageBorderFill = (type: string): string =>
+  `<hp:pageBorderFill type="${type}" borderFillIDRef="1" textBorder="PAPER" headerInside="0" footerInside="0" fillArea="PAPER"><hp:offset left="1417" right="1417" top="1417" bottom="1417"/></hp:pageBorderFill>`;
+
+/**
+ * 구역: 구역 설정(A4 세로, 한글 새 문서의 기본 여백)과 단 설정을 담은 빈 문단 하나. 블록은 이 문단 뒤에 들어간다.
+ * 구역 설정의 자식은 한글 2024가 새 문서를 저장한 모양 그대로다(감추기·줄 번호·각주·미주·쪽 테두리. `hp:visibility`가 없으면 한글이 열지 못한다).
+ * 개요 번호(`outlineShapeIDRef`)만 바탕에 번호 모양이 없어 0(없음)이다.
+ */
 const SECTION =
   `${XML_DECL}<hs:sec${NAMESPACES}><hp:p id="0" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0"><hp:run charPrIDRef="0">` +
   `<hp:secPr id="" textDirection="HORIZONTAL" spaceColumns="1134" tabStop="8000" tabStopVal="4000" tabStopUnit="HWPUNIT" outlineShapeIDRef="0" memoShapeIDRef="0" textVerticalWidthHead="0" masterPageCnt="0">` +
   `<hp:grid lineGrid="0" charGrid="0" wonggojiFormat="0"/><hp:startNum pageStartsOn="BOTH" page="0" pic="0" tbl="0" equation="0"/>` +
-  `<hp:pagePr landscape="WIDELY" width="59528" height="84186"><hp:margin header="4252" footer="4252" gutter="0" left="8504" right="8504" top="5668" bottom="4252"/></hp:pagePr></hp:secPr>` +
+  `<hp:visibility hideFirstHeader="0" hideFirstFooter="0" hideFirstMasterPage="0" border="SHOW_ALL" fill="SHOW_ALL" hideFirstPageNum="0" hideFirstEmptyLine="0" showLineNumber="0"/>` +
+  `<hp:lineNumberShape restartType="0" countBy="0" distance="0" startNumber="0"/>` +
+  `<hp:pagePr landscape="WIDELY" width="59528" height="84186" gutterType="LEFT_ONLY"><hp:margin header="4252" footer="4252" gutter="0" left="8504" right="8504" top="5668" bottom="4252"/></hp:pagePr>` +
+  `${notePr("footNotePr", "-1", "283", "EACH_COLUMN")}${notePr("endNotePr", "14692344", "0", "END_OF_DOCUMENT")}` +
+  `${pageBorderFill("BOTH")}${pageBorderFill("EVEN")}${pageBorderFill("ODD")}</hp:secPr>` +
   `<hp:ctrl><hp:colPr id="" type="NEWSPAPER" layout="LEFT" colCount="1" sameSz="1" sameGap="0"/></hp:ctrl></hp:run><hp:run charPrIDRef="0"/></hp:p></hs:sec>`;
 
 const CONTENT_HPF =
