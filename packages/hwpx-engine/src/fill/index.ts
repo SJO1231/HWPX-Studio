@@ -1,5 +1,5 @@
 export { resolveAnchors, makeLineAnchor, makeWordAnchor, linePrintOf, wordPrintAt, WORD_CONTEXT, LINE_PREFIX, type AnchorResolution, type ResolvedAnchor } from "./anchors.ts";
-export { collectFields, fieldFillBlock, type FieldTarget } from "./fields.ts";
+export { collectFields, fieldAnchorOf, fieldFillBlock, fieldRangeIn, type FieldTarget } from "./fields.ts";
 export { makeRangeAnchor, locateRange, rangePrintOf, type FoundRange, type RangeDraft, type RangeLocation } from "./range.ts";
 export { makeCellAnchor, makeObjectAnchor, cellPrintOf, objectPrintOf } from "./prints.ts";
 export { remapAddress } from "./moves.ts";

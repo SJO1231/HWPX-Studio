@@ -25,7 +25,7 @@ export type FieldTarget = {
   end: FieldMark | null;
 };
 
-/** 이 필드를 가리키는 `field` 앵커 초안(`id` 없이): 키가 있는 메일 머지 필드는 `mergeKey`, 그 밖은 `name`. 순번은 같은 이름(키) 안의 것이다. */
+/** 이 필드를 가리키는 `field` 앵커 초안(`id` 없이): 키가 있는 메일 머지 필드는 `mergeKey`, 그 밖은 `name`. 순번은 같은 이름(키) 안의 것이다. 공개 API(명세 8.8.15). */
 export function fieldAnchorOf(info: FieldInfo): Omit<FieldAnchor, "id"> {
   return info.mergeKey === undefined ? { kind: "field", name: info.name, occurrence: info.occurrence } : { kind: "field", mergeKey: info.mergeKey, occurrence: info.occurrence };
 }
@@ -226,7 +226,8 @@ export function fieldFillBlock(target: FieldTarget): Fail["fail"] | undefined {
 /**
  * 문단 `p`에서 이 누름틀의 글이 차지하는 논리 구간 `[from, until]`. 이 문단이 누름틀의 글에 들어 있지 않으면 undefined.
  * 한 문단 안 누름틀은 시작·끝 표식 사이, 여러 문단에 걸친 누름틀은 시작 문단의 표식 뒤부터 끝까지, 사이 문단 전부, 끝 문단의 처음부터 끝 표식 앞까지다.
- * (채울 수 있는 모양의 누름틀에 쓴다.)
+ * (채울 수 있는 모양의 누름틀에 쓴다. 끝 표식이 없거나 다른 컨테이너에 있으면 undefined다.)
+ * 공개 API(명세 8.8.15): 메일 머지 필드가 맡는 표시 글(8.3)을 앱이 엔진과 같은 구간으로 가릴 때 쓴다. 어느 필드가 맡는지(키가 경로 꼴이고 `fieldFillBlock`이 없음, 또는 규칙이 가리킴)는 호출자가 판정한다.
  */
 export function fieldRangeIn(target: FieldTarget, p: ParagraphNode): { from: number; until: number } | undefined {
   const { paragraph, endParagraph, begin, end } = target;

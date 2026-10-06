@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
-  planBlockInsert, applyPlan, detectHeadings, headingRangeOf, charDelta, checkValueText, compareToBaseline, compileDocument, draftAnchors, emptyTemplate, findPlaceholders, generate,
+  planBlockInsert, applyPlan, detectHeadings, headingRangeOf, charDelta, checkValueText, collectFields, compareToBaseline, compileDocument, draftAnchors, emptyTemplate, fieldRangeIn, findPlaceholders, generate,
   isValidPath, makeLineAnchor, makeRangeAnchor, makeWordAnchor, openPackage, parseDocument,
   planApplyCharFormat, readDataset, readTemplate, remapAddress, resolvePathValue, sanitizeFileStem, validateDocument,
   verifyPreservation, walkParagraphs, type CompileTarget, type Dataset, type HwpxDocument,
@@ -29,6 +29,35 @@ const rowId = (section: number, path: number[]) => `p:${section}:${path.join('.'
 const sameParent = (a: Row, b: Row) => a.sectionIndex === b.sectionIndex && a.path.length === b.path.length && a.path.slice(0, -1).every((n, i) => n === b.path[i]);
 const contains = (a: Row, b: Row, row: Row) => sameParent(a, row) && row.path.at(-1)! >= a.path.at(-1)! && row.path.at(-1)! <= b.path.at(-1)!;
 const paragraph = (doc: HwpxDocument, row: Pick<Row, 'sectionIndex' | 'path'>) => [...walkParagraphs(doc.sections[row.sectionIndex]!.paragraphs)].find(p => p.path.length === row.path.length && p.path.every((n, i) => n === row.path[i]));
+type Input = { kind: 'clickHere' | 'mailMerge' | 'placeholder'; name: string; row: string; start: number; end: number; usable?: boolean };
+
+/**
+ * 추천 목록의 입력 항목 후보(문서 순서): 누름틀(이름 있음)·메일머지(키 있음)와 필드 표시 글 밖의 `{{키}}`. 필드 표시 글 안의 `{{키}}`는 그 필드가 맡으므로
+ * 따로 올리지 않는다(엔진 명세 8.8.5. 구간은 엔진의 `fieldRangeIn`). `start`·`end`는 그 줄 글(`Row.text`)의 위치이고, 필드는 시작 문단의 표시 글 구간이다.
+ */
+function inputsOf(s: Session): Input[] {
+  const spans = new Map<string, { start: number; end: number }[]>();
+  const out: Input[] = [];
+  for (const t of s.doc ? collectFields(s.doc) : []) {
+    const { type, name, mergeKey, shape, sectionIndex, path } = t.info;
+    if (type !== 'CLICK_HERE' && type !== 'MAILMERGE') continue;
+    const paragraphs = shape === 'crossParagraph' ? walkParagraphs(t.section.paragraphs) : [t.paragraph];
+    for (const p of paragraphs) {
+      const r = fieldRangeIn(t, p);
+      if (r !== undefined) spans.set(rowId(sectionIndex, p.path), [...(spans.get(rowId(sectionIndex, p.path)) ?? []), { start: r.from, end: r.until }]);
+    }
+    const key = type === 'CLICK_HERE' ? name : mergeKey;
+    if (key === undefined || key === '') continue;
+    const first = fieldRangeIn(t, t.paragraph), start = first?.from ?? t.paragraph.pieces[t.begin.pieceIndex]?.logicalEnd ?? 0;
+    out.push({ kind: type === 'CLICK_HERE' ? 'clickHere' : 'mailMerge', name: key, row: rowId(sectionIndex, path), start, end: first?.until ?? start, usable: isValidPath(key) });
+  }
+  for (const r of s.rows) for (const m of r.text.matchAll(/\{\{([^{}#/]+)\}\}/g)) {
+    if ((spans.get(r.id) ?? []).some(x => m.index < x.end && m.index + m[0].length > x.start)) continue;
+    out.push({ kind: 'placeholder', name: m[1]!, row: r.id, start: m.index, end: m.index + m[0].length });
+  }
+  const order = new Map(s.rows.map((r, i) => [r.id, i]));
+  return out.sort((a, b) => (order.get(a.row) ?? 0) - (order.get(b.row) ?? 0) || a.start - b.start);
+}
 
 function placementInfo(s:Session,selected:Placement,library:BlockLibrary){
   need(s.doc,'BLOCK_HWPX');
@@ -304,7 +333,7 @@ export function createWorkbench(library?: BlockLibrary) {
     });
     if (sessions.size >= 8) sessions.delete(sessions.keys().next().value!);
     const session = randomUUID(); sessions.set(session, s);
-    return {session,kind:s.kind,name:s.name,sourceUrl:`/api/workbench/source?session=${session}`,...(s.sourceText===undefined?{}:{sourceText:s.sourceText}),paragraphs:s.rows,fields,outline,blockCandidates};
+    return {session,kind:s.kind,name:s.name,sourceUrl:`/api/workbench/source?session=${session}`,...(s.sourceText===undefined?{}:{sourceText:s.sourceText}),paragraphs:s.rows,fields,inputs:inputsOf(s),outline,blockCandidates};
   };
   return {
     // Unsaved placements exist only here; block deletion must see every open session.
