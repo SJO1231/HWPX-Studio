@@ -1365,6 +1365,8 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 - 고르지 않은 블록의 글·누름틀은 출력에 없다(8.8.12).
 - lite의 `selectBlocks`처럼 동률·조건 값 누락을 묻지 않고 고르는 동작은 2판에 없다. 이관 때의 차이는 `MIG_POLICY`다(8.8.14).
 
+계약 예약(사용자 결정 2026-10-02·10-07): 참조 번호 자동 재정렬과 상호 배타 규칙은 경우 표 계약에 들어간다(#63·#58). 원문 요지([진행 방향](roadmap.md) 2차): (1) 조건으로 블록이 빠져도 본문의 "[붙임 2]" 같은 번호와 실제 순번이 맞게 한다. (2) 함께 참일 수 없는 조건을 선언하고 어기면 생성 전에 막는다. 지금 2판의 `undecided`(최고 우선순위 동률이면 막음)는 (2)와 닮았지만 조건 사이의 배타 선언이 아니다. 세부(선언 위치·번호 표기 인식·오류 코드)는 미정이다.
+
 #### 8.8.9 이번 건 `case@1`
 
 소유: 엔진 = Claude(읽기·검사·적용 규칙). 저장·진행 중 덮어쓰기 = Codex.
@@ -1559,6 +1561,33 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 
 **결정성**: 같은 입력을 두 번 이관하면 JSON과 덩어리의 바이트가 같다.
 
+**`/api/g2b` 2판 이관 계약(초안, 2026-10-07, #117)**
+
+소유: `/api/g2b` 계약 = Studio(Claude). G2B Helper 저장소는 별도 세션이 맡고 Studio는 고치지 않는다(요구 문서 8.9의 14). 이 소절은 초안이며 구현 전이다. 바꾸는 점은 Helper 이슈로 알린다.
+
+1판 다리(지금, `apps/studio-lite/src/g2b.ts`·`src/server.ts`, 2026-10-03 구현. 유지한다):
+
+| 경로 | 요청 | 응답 | 규칙 |
+| --- | --- | --- | --- |
+| `GET /api/g2b/profiles` | — | `{ profiles: Profile[] }` | Origin 없는 로컬 요청 허용(Host 검사는 그대로) |
+| `POST /api/g2b/profiles` | `Profile = { id, label, revisionId, outputDirectory }` | `{ profile }` | Studio Origin이 있어야 한다(없으면 403). `id`는 `[A-Za-z0-9_-]{1,80}`, `revisionId`는 lite 저장 프로젝트 행, `outputDirectory`는 절대 경로. 틀리면 400 `INVALID_PROFILE`·`MISSING_REVISION`·`INVALID_DIRECTORY` |
+| `POST /api/g2b/generate` | `{ requestId, profileId, sourceKind, items }`: `requestId` 1~200자, `sourceKind`는 `"screen"` 또는 `"db"`, `items`는 `Item` 1~100개 | `{ requestId, status, results: Result[], summary: { succeeded, needsInput, failed } }` | 형식이 틀리면 400 `INVALID_REQUEST`·`INVALID_ITEMS`. 같은 `requestId`에 다른 본문은 409 `REQUEST_CONFLICT`. 같은 요청을 다시 보내면 기록한 생성 계획으로 같은 결과를 돌려준다 |
+| `Item` | `{ fields, userValues, children, source?, identity?, stage? }` | — | `fields`·`userValues`는 열 이름 → 스칼라(글·수·불리언·null). 둘을 합쳐 한 행으로 쓰고 이름이 겹치면 `FIELD_COLLISION`. `children`은 `{ key, label, kind: items·qualification·other, rows }`이고 `rows`가 비어 있지 않으면 `UNSUPPORTED_CHILDREN` |
+| `Result` | — | `{ itemIndex, status: success·needs-input·error, path?, reused?, code?, message?, missingFields?, conflicts? }` | 전체 `status`는 결과가 섞이면 `partial`. `message`에는 값 원문을 넣지 않는다 |
+| 값·선택 문제(needs-input) | — | `MISSING_PROFILE`·`MISSING_REVISION`·`INVALID_CHILDREN`·`UNSUPPORTED_CHILDREN`·`INVALID_FIELDS`·`FIELD_COLLISION`·`MISSING_FIELDS`·`MONEY_PRECISION`·`MISSING_CONDITION_FIELDS`·`BLOCK_SELECTION`·`GENERATION_INPUT` | 확정 Field의 열이 없거나 null이면 `MISSING_FIELDS`(빈 글은 값). 금액은 정수 원만(`금`·`원`·`원정`·쉼표·`₩`는 떼고 읽음). 블록은 저장한 선택이 먼저, 없으면 조건·우선순위(동률·없음은 `BLOCK_SELECTION`) |
+| 출력 문제(error) | — | `OUTPUT_ERROR` | 출력은 프로필 폴더의 `g2b-<requestId의 sha256>-<순번>.hwpx`. 같은 이름의 다른 파일은 덮어쓰지 않는다 |
+
+2판(template@2)으로 옮길 때(초안):
+
+- **요청·응답 형은 1판 그대로 둔다**(Helper를 고치지 않고 옮기는 것이 목표). 프로필의 `revisionId`(lite 저장 프로젝트)는 Studio 안에서 템플릿 id·판으로 바꾼다(위 대응표의 "G2B 프로필은 이관 뒤 새 템플릿 판으로"). 요청에 템플릿·출력 경로를 받지 않는 규칙도 그대로다.
+- **라벨–값 JSON이 들어가는 자리**: 한 `Item`의 `fields` + `userValues`를 데이터 한 행(`dataset@1`의 레코드, 8.2)으로 보고 `generateFromTemplate(bytes, t, record, case, loadBlob, opts)`(8.8.12)에 넣는다. 그 안에서 ③ `bindValues`(8.8.4)가 연결로 값을 찾고, ④ `selectSlots`(8.8.8)가 분기를 고르고, ⑥ 구조 → 값 2단계 생성을 한다. `case`는 프로필에 묶은 고정 선택(`selectedBlocks` → `case@1`의 `manual` 선택, 대응표)이다.
+- **같은 이름 자동 연결**: 템플릿 `bindings[]`의 `key`는 행의 최상위 열 이름 그대로다(8.8.4. 공백·점·괄호도 그대로). 그래서 Helper의 라벨이 `key`와 같으면 따로 연결하지 않아도 찾는다.
+- **다른 이름 연결의 저장 위치**: 한 번 연결한 다른 이름은 그 값의 `bindings[]` 항목의 `aliases`(또는 `key`)로 템플릿에 저장하고 새 템플릿 판이 된다(8.8.4 끝줄). 연결표·표 보기(요구 문서 8.9의 1, #6)는 이 `bindings[]`를 고치는 화면이며 따로 저장하지 않는 것이 초안이다. 한 키를 두 값에 잇는 것은 `TPL_KEY_CONFLICT`, 별칭 둘 이상에 값이 있으면 `DATA_ALIAS_CONFLICT`다.
+- **타입·표시 형식**: 지금 2판 값 형식은 `text`·`money`뿐이다(`money` 출력은 `1,234원`). 날짜·시각·전화·식별번호·수량 형식, 문서에 이미 "원"이 있을 때의 처리는 **미정(사용자 결정 8.9의 2 뒤)**이다. 앞자리 0은 `text` 값이 글로 들어올 때만 지킬 수 있다(숫자로 오면 Studio가 되살리지 못한다). 1판은 `"1,234원"` 같은 글을 금액으로 받지만 2판 `money`는 `DATA_FORMAT`이므로, 이 차이를 이관 때 정규화할지는 미정이다.
+- **알림 규칙**: 템플릿이 쓰는 값이 행에 없으면(`missing`) 누락 정책(템플릿 `options.missing`, 기본 `error`)으로 막고 `needs-input`으로 돌려준다. `missingFields`에는 값 이름이 아니라 행에서 찾던 열 이름(키·별칭)을 적는다. 조건에 필요한 값이 없으면 `SEL_UNDECIDED`(`valueMissing`)다. 행에만 있는 키는 알리지 않는다(1판과 같음).
+- **오류 코드**: 새 코드를 만들지 않고 엔진 코드를 다시 쓴다. 값·선택 문제(`needs-input`): `DATA_MISSING`·`DATA_FORMAT`·`DATA_NOT_SCALAR`·`DATA_ALIAS_CONFLICT`·`VALUE_CONTROL_CHAR`·`SEL_UNDECIDED`·`SEL_RECHECK`. 템플릿·게이트·원본 문제(`error`): `TPL_*`(8.8.10)·`TPL_SOURCE_MISMATCH`·`GATE_*`. 1판 코드와의 대응: `MISSING_FIELDS` ↔ `DATA_MISSING`, `MONEY_PRECISION` ↔ `DATA_FORMAT`, `INVALID_FIELDS` ↔ `DATA_NOT_SCALAR`·`VALUE_CONTROL_CHAR`, `MISSING_CONDITION_FIELDS` ↔ `SEL_UNDECIDED`(`valueMissing`), `BLOCK_SELECTION` ↔ `SEL_UNDECIDED`(`tie`·`noCandidate`)·`SEL_RECHECK`. Helper가 1판 코드 이름에 기대는지(응답 `code`를 엔진 코드로 바꿀지, 1판 코드를 두고 엔진 코드를 덧붙일지)는 Helper 쪽 확인 뒤 정한다.
+- 바뀌지 않는 것: `children`의 행(반복·하위 표)은 2판 다리에서도 받지 않는다(`UNSUPPORTED_CHILDREN`). 요청 지문·생성 계획 기록과 덮어쓰지 않는 저장은 그대로다.
+
 #### 8.8.15 공개 API
 
 소유: 엔진 = Claude.
@@ -1653,6 +1682,7 @@ type AnchorAddress = Pick<WordAnchor, "kind" | "at" | "start" | "end"> | Pick<Li
 | 함수 | 규칙 |
 | --- | --- |
 | `extractBlock(doc, range, meta)` | `range`는 `range`·`headingRange` 앵커나 초안(`id`는 보지 않는다). `checkAnchors`(8.8.13)로 찾아 exact·relocated만 받고(relocated는 `ANCHOR_RELOCATED` 경고를 `issues`에 담고 찾은 자리에서 뗀다), changed·ambiguous·notFound는 그 코드로 던진다. 거절은 조각 계약과 같다(`FRAG_SECTION_PROPS`, `FRAG_SPLITS_FIELD`. 표 칸 경계는 범위 앵커가 같은 부모의 연속 문단이라 넘을 수 없다). `meta = { id, name, at, note?, change? }`. 결과 `{ proto(1판), fragment, blob, issues }`. 원형은 정규 JSON으로 쓰고 다시 읽어 검사한 것이다(id 형식 `TPL_ID`, 빈 이름·시각 꼴 `TPL_FIELD`). `history`는 `[{ version: 1, at, change: change ?? "첫 저장" }]`. 같은 입력은 같은 원형 JSON·덩어리 바이트다 |
+| `protoFromFragment(fragment, meta)` | 조각(`extractFragment` 결과. 예: 옛 저장소에서 옮겨 오는 블록)에서 원형 1판과 덩어리를 만든다(#112). 덩어리·내용 해시·`keys`는 `extractBlock`과 같은 내부 함수로 만든다: 덩어리는 `serializeFragment`의 UTF-8 바이트, `keys`는 조각 문단(하위 목록 포함)의 느슨한 `{{ 키 }}` 가운데 조각 안 누름틀·메일머지 표시 구간 밖의 것이다(필드 짝은 조각 안에서 찾는다. 조각은 누름틀 짝을 자르지 않으므로 같은 범위를 문서에서 뗀 결과와 같다). 떼어 낸 문서·구간·시각을 모르므로 `source`·`history`는 없다. `meta = { id, name, note? }`, 결과 `{ proto, blob }`. 원형은 정규 JSON으로 쓰고 다시 읽어 검사한 것이다(`TPL_ID`·`TPL_FIELD`). 같은 범위를 `extractBlock`으로 뗀 원형에서 `source`·`history`를 뺀 것과 같다 |
 | `reextractBlock(resultDoc, range, proto, meta)` | 결과 문서(넣고 고친 문서)의 범위를 다시 떼어 같은 블록의 새 판을 만든다: id 그대로, `version` + 1, `previous`는 직전 판 번호와 내용 해시, `history`는 직전 기록에 새 줄을 더한 것(직전에 기록이 없으면 새 줄만), `source`는 결과 문서의 해시·구간·지문·`meta.at`, `keys`는 다시 계산한다. 바뀐 점은 `meta.change`, 없으면 `meta.previous`(직전 판의 조각)와 견준 수량 요약(문단·표·그림·누름틀·입력 항목(`keys`) 수의 변화 — 예: "입력 항목 2→0개", 글이 다른 문단 수, 서식 참조가 다른 곳 수. 모두 같으면 "내용 변화 없음"), 그것도 없으면 "다시 저장"이다. `meta = { at, change?, previous?, name?, note? }`. 이름은 `meta.name`이 없으면 그대로이고, 직전 판의 `note`는 넘기지 않는다(새 판의 메모는 `meta.note`). 직전 판 `keys` 가운데 새 판에 없는 것이 있으면(NFC로 견준다) 경고 `BLOCK_KEYS_DROPPED` 하나를 `issues`에 더한다(메시지에 사라진 키를 직전 판 순서로 적는다, `where`는 `block:<id>`). 채운 결과 문서에서 다시 떼면 `{{키}}`가 이번 건 값으로 바뀌어 있어 그 값이 공용 블록 글이 되기 때문이다. 막지 않는다 |
 | `planBlockInsert(target, proto, blob, at, options?)` | `blockFragment(proto, blob)`로 덩어리를 확인하고(글 블록이거나 해시가 `content.fragment`와 다르면 `TPL_FRAGMENT_MISSING`, 조각 JSON이 아니면 `FRAG_SCHEMA`) `planImport`(7.5)를 그대로 쓴다(블록 서식 유지, 자동 변경 없음. `options`는 `planImport`의 옵션 `{ reissueInternalDuplicates? }` 그대로). 넣는 자리 문단(`at`의 문단)과 블록 최상위 문단들의 서식이 다르면 경고 `BLOCK_FORMAT_DIFFERS` 하나와 `formatDiffs`를 더한다. `summary.formatDiffParagraphs`는 서식이 다른 블록 문단 수다 |
 | `blockFormatDiffs(target, fragment, at)` | 블록 최상위 문단마다 문단 모양(`paraPr`)·스타일(`style`)의 자원 지문(7.4)을 자리 문단의 것과 견줘, 다른 것만 `{ paragraph, property, block, target }`(블록 문단 순서, 한 문단 안에서 `paraPr` 다음 `style`)으로 돌려준다. 모양으로 견주므로 문서마다 id가 달라도 같은 모양이면 같다. 참조 없음은 `none`, 없는 자원은 `missing:<id>`로 본다. 블록 쪽은 넣은 뒤의 모양으로 본다: 원본에도 없던 자원을 가리키는 참조(`FRAG_DANGLING_SOURCE`. 문단의 참조와 자원 안의 참조 모두, 예: 문단 모양 → 탭)는 가져오기가 id를 그대로 옮기므로(7.5) 그 id를 대상에서 풀어 지문을 만든다(#99 D5). 글자 모양은 보지 않는다. 자리 문단이 없으면 `FRAG_INSERT_POINT` |

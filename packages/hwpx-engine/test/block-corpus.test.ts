@@ -12,7 +12,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { sameSnapshot, scanCorpus, snapshotOf } from "../../../tools/stress/corpus.ts";
 import { applyPlan, fingerprintResource, makeLookup, openPackage, parseDocument, validateDocument, type HwpxDocument } from "../src/index.ts";
-import { blockFormatDiffs, detectHeadings, extractBlock, generate, headingRangeOf, makeHeadingRangeAnchor, makeRangeAnchor, planBlockInsert, reextractBlock, type Heading } from "../src/fill/index.ts";
+import { blockFormatDiffs, detectHeadings, extractBlock, generate, headingRangeOf, makeHeadingRangeAnchor, makeRangeAnchor, planBlockInsert, protoFromFragment, reextractBlock, type Heading } from "../src/fill/index.ts";
 import { hasSecPr } from "../src/fill/doc.ts";
 import { parseFragmentXml } from "../src/fill/fragment-fill.ts";
 import { listAtParent, splitsField } from "../src/fill/range.ts";
@@ -73,7 +73,7 @@ test("8.8.17 실제 공고서: 제목 범위 떼기 → 임시 저장소 왕복 
   }
   assert.ok(docs.length >= 10, `읽은 문서 ${docs.length}건`);
   const store = mkdtempSync(join(tmpdir(), "hwpx-block-corpus-"));
-  const counts = { blockParagraphs: 0, sameSpotChecks: 0, extracted: 0, rejected: 0, stored: 0, planned: 0, formatWarned: 0, formatDiffParagraphs: 0, replaced: 0, reextracted: 0, placedV2: 0, newErrors: 0 };
+  const counts = { blockParagraphs: 0, sameSpotChecks: 0, extracted: 0, rejected: 0, stored: 0, planned: 0, formatWarned: 0, formatDiffParagraphs: 0, replaced: 0, reextracted: 0, placedV2: 0, newErrors: 0, fromFragment: 0, keys: 0 };
   const rejectedCodes: Record<string, number> = {};
   const rows: string[] = [];
   try {
@@ -106,6 +106,11 @@ test("8.8.17 실제 공고서: 제목 범위 떼기 → 임시 저장소 왕복 
         const again = extractBlock(d.doc, draft, { id, name: `블록 ${id}`, at: AT });
         assert.equal(writeBlockProto(again.proto), writeBlockProto(block.proto));
         assert.ok(bytesEqual(again.blob, block.blob));
+        // 조각에서 만든 1판(#112, 옛 저장소 이관)도 덩어리·내용 해시·keys가 같다(문서 글을 메시지에 넣지 않는다)
+        const own = protoFromFragment(block.fragment, { id, name: `블록 ${id}` });
+        assert.ok(bytesEqual(own.blob, block.blob) && JSON.stringify([own.proto.content, own.proto.keys]) === JSON.stringify([block.proto.content, block.proto.keys]), `${d.id}: 조각에서 만든 원형이 다르다`);
+        counts.fromFragment++;
+        counts.keys += block.proto.keys.length;
 
         // 임시 저장소 왕복
         const folder = join(store, "blocks", id);

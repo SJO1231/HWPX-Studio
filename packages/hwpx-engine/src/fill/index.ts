@@ -32,6 +32,7 @@ export type { BlobLoader, CoveredPlace, StudioGenerateOptions, StudioGenerateRep
 export { checkAnchors, planRelocation, redraftAnchor, type AnchorAddress, type AnchorCheck, type AnchorCheckState, type RedraftInput } from "./check-anchors.ts";
 export {
   extractBlock,
+  protoFromFragment,
   reextractBlock,
   planBlockInsert,
   planBlockUpdate,

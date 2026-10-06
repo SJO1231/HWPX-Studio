@@ -8,7 +8,7 @@ import type { Fragment, FragmentSelection, ImportOptions, ImportPlan, InsertPoin
 import { parseResource } from "../fragment/units.ts";
 import { refsOf } from "../model/header.ts";
 import { fieldTypeOf, walkParagraphs } from "../model/paragraph.ts";
-import type { HwpxDocument, ParagraphNode, ResourceItem } from "../model/types.ts";
+import type { HwpxDocument, ParagraphNode, ResourceItem, SectionModel } from "../model/types.ts";
 import { sha256Hex } from "../template/hash.ts";
 import { planProtoUpdate, unboundKeys } from "../template/studio-proto.ts";
 import { readBlockProto } from "../template/studio-read.ts";
@@ -17,7 +17,7 @@ import { contentSha256, writeBlockProto } from "../template/studio-write.ts";
 import { decodeUtf8, encodeUtf8 } from "../xml/parse.ts";
 import type { HeadingRangeAnchor, RangeAnchor } from "./anchor-types.ts";
 import { checkAnchors, type AnchorAddress } from "./check-anchors.ts";
-import { collectFields } from "./fields.ts";
+import { collectFields, type FieldTarget } from "./fields.ts";
 import { parseFragmentXml } from "./fragment-fill.ts";
 import { fieldSpans } from "./generate-studio.ts";
 import { makeRangeAnchor } from "./range.ts";
@@ -69,9 +69,12 @@ function locate(doc: HwpxDocument, range: BlockRange): { selection: FragmentSele
   return { selection: { sectionIndex: found.at.sectionIndex, parentPath: [...found.at.parentPath], from: found.from, to: found.to }, issues: check.issues };
 }
 
-/** 문단들(하위 목록 포함)의 느슨한 `{{ 키 }}`(8.8.5). 누름틀·메일머지 표시 구간 안의 것은 그 필드 자리가 맡으므로 뺀다. NFC로 같은 키는 처음 것만 */
-function placeholderKeys(doc: HwpxDocument, paragraphs: ParagraphNode[]): string[] {
-  const spans = fieldSpans(collectFields(doc));
+/**
+ * 원형의 `keys`(8.8.17): 문단들(하위 목록 포함)의 느슨한 `{{ 키 }}`(8.8.5). 누름틀·메일머지 표시 구간 안의 것은 그 필드 자리가 맡으므로 뺀다. NFC로 같은 키는 처음 것만.
+ * `fields`는 그 문단들이 든 문서(또는 조각)의 필드다. `extractBlock`과 `protoFromFragment`가 함께 쓴다.
+ */
+function placeholderKeys(fields: readonly FieldTarget[], paragraphs: ParagraphNode[]): string[] {
+  const spans = fieldSpans(fields);
   const seen = new Set<string>();
   const keys: string[] = [];
   for (const p of walkParagraphs(paragraphs)) {
@@ -86,6 +89,24 @@ function placeholderKeys(doc: HwpxDocument, paragraphs: ParagraphNode[]): string
 }
 
 /**
+ * 원형 1판의 뼈대(8.8.7·8.8.17): 덩어리는 `serializeFragment`의 UTF-8 바이트이고 내용 해시는 그 sha256이다. 출처·판 기록은 부르는 쪽이 더한다.
+ * `extractBlock`과 `protoFromFragment`가 함께 쓴다.
+ */
+function firstVersion(fragment: Fragment, keys: string[], meta: Pick<BlockMeta, "id" | "name" | "note">): { proto: BlockProto; blob: Uint8Array } {
+  const blob = encodeUtf8(serializeFragment(fragment));
+  const proto: BlockProto = {
+    schema: BLOCK_PROTO_SCHEMA,
+    id: meta.id,
+    version: 1,
+    name: meta.name,
+    content: { fragment: sha256Hex(blob) },
+    keys,
+    ...(meta.note === undefined ? {} : { note: meta.note }),
+  };
+  return { proto, blob };
+}
+
+/**
  * 범위에서 블록을 떼어 원형 1판과 조각 덩어리를 만든다(8.8.17). 조각은 `extractFragment` 결과 그대로이고(블록 자신의 서식 자원·이진 자료 포함, 7.3),
  * 거절도 조각 계약과 같다(구역 설정 `FRAG_SECTION_PROPS`, 누름틀 자름 `FRAG_SPLITS_FIELD`, 표 칸 경계는 같은 부모의 연속 문단만).
  * 범위가 exact·relocated가 아니면 그 앵커 코드로 던진다. 원형의 `keys`는 범위 안 `{{ 키 }}`(필드 표시 구간 밖), `source`는 원본 해시·찾은 구간·지문·`meta.at`,
@@ -96,19 +117,26 @@ export function extractBlock(doc: HwpxDocument, range: BlockRange, meta: BlockMe
   const fragment = extractFragment(doc, selection);
   const print = makeRangeAnchor(doc, selection)?.print;
   if (print === undefined) throw new HwpxError("FRAG_SELECTION", "블록 범위의 지문을 만들지 못했습니다.");
-  const blob = encodeUtf8(serializeFragment(fragment));
+  const first = firstVersion(fragment, placeholderKeys(collectFields(doc), resolveSelection(doc, selection).paragraphs), meta);
   const proto: BlockProto = {
-    schema: BLOCK_PROTO_SCHEMA,
-    id: meta.id,
-    version: 1,
-    name: meta.name,
-    content: { fragment: sha256Hex(blob) },
-    keys: placeholderKeys(doc, resolveSelection(doc, selection).paragraphs),
-    ...(meta.note === undefined ? {} : { note: meta.note }),
+    ...first.proto,
     source: { sha256: fragment.source.sha256, selection, print, extractedAt: meta.at },
     history: [{ version: 1, at: meta.at, change: meta.change ?? FIRST_CHANGE }],
   };
-  return { proto: checked(proto), fragment, blob, issues: [...issues, ...fragment.issues] };
+  return { proto: checked(proto), fragment, blob: first.blob, issues: [...issues, ...fragment.issues] };
+}
+
+/**
+ * 조각(예: 옛 저장소에서 옮겨 오는 블록)에서 원형 1판과 조각 덩어리를 만든다(8.8.17). 덩어리·내용 해시와 `keys`는 `extractBlock`과 같은 규칙이다:
+ * `keys`는 조각 문단(하위 목록 포함)의 `{{ 키 }}` 가운데 조각 안 누름틀·메일머지 표시 구간 밖의 것이다. 떼어 낸 문서·구간·시각을 모르므로 `source`·`history`는 없다.
+ * `meta`가 형식에 맞지 않으면(`TPL_ID`·`TPL_FIELD`) 던진다.
+ */
+export function protoFromFragment(fragment: Fragment, meta: Pick<BlockMeta, "id" | "name" | "note">): { proto: BlockProto; blob: Uint8Array } {
+  const { text, root, paragraphs } = parseFragmentXml(fragment);
+  // 필드 짝짓기(`collectFields`)는 구역을 훑는다. 조각 문단을 구역 하나로 본다(참조 목록은 쓰지 않아 비운다)
+  const section: SectionModel = { entryName: "fragment", index: 0, text, root, paragraphs, bodyRefs: [] };
+  const { proto, blob } = firstVersion(fragment, placeholderKeys(collectFields({ sections: [section] }), paragraphs), meta);
+  return { proto: checked(proto), blob };
 }
 
 const differing = (a: readonly string[], b: readonly string[]): number => {
