@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
-  applyPlan, detectHeadings, charDelta, checkValueText, compareToBaseline, compileDocument, draftAnchors, emptyTemplate, findPlaceholders, generate,
+  applyPlan, detectHeadings, headingRangeOf, charDelta, checkValueText, compareToBaseline, compileDocument, draftAnchors, emptyTemplate, findPlaceholders, generate,
   isValidPath, makeLineAnchor, makeRangeAnchor, makeWordAnchor, openPackage, parseDocument,
   planApplyCharFormat, readDataset, readTemplate, remapAddress, resolvePathValue, sanitizeFileStem, validateDocument,
   verifyPreservation, walkParagraphs, type CompileTarget, type Dataset, type HwpxDocument,
@@ -254,7 +254,19 @@ function buildText(s: Session, work: Work) {
 export function createWorkbench(library?: BlockLibrary) {
   const sessions = new Map<string, Session>();
   const sessionOf = (id: unknown) => { const s = typeof id === 'string' ? sessions.get(id) : undefined; if (!s) throw new HostError(404, 'WORKBENCH_SESSION', '문서를 다시 올려 주세요.'); return s; };
-  const registered = (s: Session) => { const fields = s.kind === 'hwpx' ? analyzePlaces(s.source).fields : []; if (sessions.size >= 8) sessions.delete(sessions.keys().next().value!); const session = randomUUID(); sessions.set(session, s); return { session, kind: s.kind, name: s.name, sourceUrl: `/api/workbench/source?session=${session}`, ...(s.sourceText === undefined ? {} : { sourceText: s.sourceText }), paragraphs: s.rows, fields, outline: s.doc ? detectHeadings(s.doc).map(h => ({id: rowId(h.at.sectionIndex, [...h.at.parentPath,h.index]), name:h.text, level:h.marker.level})) : [] }; };
+  const registered = (s: Session) => {
+    const fields = s.kind === 'hwpx' ? analyzePlaces(s.source).fields : [];
+    const headings = s.doc ? detectHeadings(s.doc) : [];
+    const outline = headings.map(h => ({id:rowId(h.at.sectionIndex,[...h.at.parentPath,h.index]),name:h.text,level:h.marker.level}));
+    const blockCandidates = headings.flatMap(h => {
+      const range=headingRangeOf(s.doc!,h.at,h.index);if(!range)return [];
+      const from=rowId(h.at.sectionIndex,[...h.at.parentPath,range.from]),to=rowId(h.at.sectionIndex,[...h.at.parentPath,range.to]);
+      return [{from,to,name:h.text,paragraphCount:range.to-range.from+1}];
+    });
+    if (sessions.size >= 8) sessions.delete(sessions.keys().next().value!);
+    const session = randomUUID(); sessions.set(session, s);
+    return {session,kind:s.kind,name:s.name,sourceUrl:`/api/workbench/source?session=${session}`,...(s.sourceText===undefined?{}:{sourceText:s.sourceText}),paragraphs:s.rows,fields,outline,blockCandidates};
+  };
   return {
     get(path: string, query: URLSearchParams): { body: Uint8Array; name?: string; type?: string } | undefined {
       if (path !== '/api/workbench/source' && path !== '/api/workbench/result') return;

@@ -17,7 +17,7 @@ const state = {
 const opens = createLatest(), picks = createLatest(), views = createLatest(), dataLoads = createLatest();
 const keyCopies = createLatest(), bodyCopies = createLatest();
 let resizeFrame, contextRequest = 0;
-const blockLibraryUI = installBlockLibrary({selection: blockSelection, session: () => state.session, api, status, beforeOpen: hideMenu});
+const blockLibraryUI = installBlockLibrary({selection: blockSelection, session: () => state.session, api, status, beforeOpen: hideMenu, onSaved:()=>{const r=state.activeRecommendation;if(r?.kind==='block'){r.status='confirmed';renderRecommendations();}void renderLibraryTab();}});
 
 function status(text, kind = '') {
   $('#status').textContent = text; $('#status').className = kind; $('#status').title = text;
@@ -51,6 +51,8 @@ function controls() {
     button.dataset.actionTitle??=button.title;
     button.title=button.disabled?(state.busy?'문서 처리가 끝난 뒤 사용하세요.':!state.session?'문서를 먼저 여세요.':!item?'문서에서 부분을 먼저 고르세요.':!item.editable?'표·개체 또는 보호된 서식이 있는 문단은 직접 편집할 수 없습니다.':name==='importSelection'?'비교 문서에서 가져올 글을 선택하세요.':'입력 항목 이름을 먼저 적으세요.'):button.dataset.actionTitle;
   }
+  for(const check of document.querySelectorAll('.rec-line input'))check.disabled=state.busy||check.dataset.confirmed==='true';
+  $('#save-checked-blocks').disabled=state.busy||!state.recommendations.some(r=>r.kind==='block'&&r.status==='recommended');
   blockLibraryUI.refresh();
   for(const b of document.querySelectorAll('[data-action="branchDetail"]')){b.disabled=true;b.title='분기점 만들기는 다음 구현 단계에서 지원합니다.';}
   document.body.classList.toggle('has-document',Boolean(state.session));document.body.classList.toggle('text-work',state.kind==='text');document.body.classList.toggle('has-output',Boolean(state.output));
@@ -140,7 +142,7 @@ function renderOutline() {
 function renderParagraphs() {renderEditor();$('#paragraph-count').textContent=String(state.paragraphs.length||'');renderOutline();}
 function selectRow(id,options={}) {
   const unit=state.layout.units.find(u=>state.paragraphs.slice(u.from,u.to+1).some(r=>r.id===id));if(!unit)return false;
-  state.detailLibrary=undefined;state.chosen=id;state.caret={start:unit.start,end:unit.end};const input=$('#document-editor');input.setSelectionRange(unit.start,unit.end);
+  state.detailLibrary=undefined;state.activeRecommendation=undefined;state.chosen=id;state.caret={start:unit.start,end:unit.end};const input=$('#document-editor');input.setSelectionRange(unit.start,unit.end);
   if(options.focus)input.focus({preventScroll:true});
   if(options.scroll!==false)$('#editor-mirror').querySelector('[data-id="'+unit.id+'"]')?.scrollIntoView({block:'nearest'});
   markEditorSelection();highlightTextRow(id);if(!options.fromPick)void showRowInSource(id);controls();return true;
@@ -189,7 +191,7 @@ async function selectPicked(event, options = {}) {
         : '이 위치에서는 연결할 문단을 확인할 수 없습니다.');
       return false;
     }
-    state.selection = result.location;
+    state.activeRecommendation=undefined;state.selection = result.location;
     state.marks.set(result.id, marksOf(result.location, result.id));
     displaySourceMarks(state.marks.get(result.id));
     selectRow(result.id, {...options, fromPick: true});
@@ -425,6 +427,7 @@ function blockSelection() {
   if(state.busy)throw Error('문서 처리가 끝난 뒤 선택하세요.');
   if(!state.session||state.kind!=='hwpx')throw Error('HWPX 원문을 열고 범위를 선택하세요.');
   if(state.viewMode!=='source')throw Error('원본 보기에서 범위를 선택하세요.');
+  if(state.activeRecommendation?.kind==='block'&&state.activeRecommendation.status==='excluded')throw Error('제외한 후보입니다. 추천 목록에서 유지에 체크한 뒤 저장하세요.');
   const caret=state.caret;if(!caret)throw Error('원문이나 문단 목록에서 저장할 범위를 선택하세요.');
   const picked=state.blockPick;
   let from,to;
@@ -735,30 +738,34 @@ function followHeading(){
   }
   setCurrentHeading(current??state.outline[0]?.id);
 }
-function buildReview(){
+function buildReview(opened){
   state.recommendations=state.paragraphs.flatMap(p=>[...p.text.matchAll(/\{\{([^{}#/]+)\}\}/g)].map(m=>({id:p.id+':'+m.index,row:p.id,name:m[1],start:m.index,end:m.index+m[0].length,kind:'input',status:'recommended',excerpt:p.text.slice(Math.max(0,m.index-8),m.index+m[0].length+20)})));
+  state.recommendations.push(...(opened.blockCandidates??[]).map((c,i)=>({id:'block:'+i,row:c.from,to:c.to,name:c.name,kind:'block',status:'recommended',excerpt:c.paragraphCount+'문단 · '+(state.paragraphs.slice(state.paragraphs.findIndex(p=>p.id===c.from)+1,state.paragraphs.findIndex(p=>p.id===c.to)+1).find(p=>p.text.trim())?.text.slice(0,60)??'본문 없음')})));
 }
 function renderRecommendations(){
   const root=$('#recommendations');root.replaceChildren();const groups=new Map();
-  for(const r of state.recommendations){const h=headingOf(r.row),name=h?.name??'문서';if(!groups.has(name))groups.set(name,[]);groups.get(name).push(r);}
-  for(const [name,items] of groups){const d=uiNode('details',undefined,'rec-group');d.open=true;d.append(uiNode('summary',name+' · '+items.length));
-    for(const r of items){const line=uiNode('div',undefined,'rec-line'+(r.status==='excluded'?' excluded':''));line.dataset.review=r.id;const check=uiNode('input');check.type='checkbox';check.checked=r.status!=='excluded';check.disabled=r.status==='confirmed';check.setAttribute('aria-label',r.name+' 유지');check.onchange=()=>reviewChange([r],check.checked?'recommended':'excluded');
+  for(const r of state.recommendations){const h=headingOf(r.row),key=h?.id??'document';if(!groups.has(key))groups.set(key,{name:h?.name??'문서',items:[]});groups.get(key).items.push(r);}
+  for(const {name,items} of groups.values()){const d=uiNode('details',undefined,'rec-group');d.open=true;d.append(uiNode('summary',name+' · '+items.length));
+    for(const r of items){const line=uiNode('div',undefined,'rec-line'+(r.status==='excluded'?' excluded':''));line.dataset.review=r.id;const check=uiNode('input');check.type='checkbox';check.checked=r.status!=='excluded';check.disabled=state.busy||r.status==='confirmed';check.dataset.confirmed=String(r.status==='confirmed');check.setAttribute('aria-label',r.name+' 유지');check.onchange=()=>reviewChange([r],check.checked?'recommended':'excluded');
       const kind=({input:'입력',block:'블록',branch:'분기',place:'위치'})[r.kind],button=uiNode('button',r.name);button.type='button';button.title=r.name+' · '+r.excerpt;button.onclick=()=>selectRecommendation(r);
       const excerpt=uiNode('span',r.excerpt,'rec-excerpt');excerpt.title=r.excerpt;line.append(check,uiNode('span',kind,'kind-tag kind-'+r.kind),button,excerpt,uiNode('small',r.status==='confirmed'?'확정':r.status==='excluded'?'제외':'추천'));d.append(line);}
     const actions=uiNode('div',undefined,'group-actions');for(const [label,status] of [['묶음 제외','excluded'],['묶음 되돌리기','recommended']]){const b=uiNode('button',label);b.type='button';b.onclick=()=>reviewChange(items,status);actions.append(b);}d.append(actions);root.append(d);
   }
   if(!groups.size)root.append(uiNode('p',state.session?'추천 없음 · 원문에서 직접 고를 수 있습니다.':'문서를 열면 추천이 표시됩니다.','rail-empty'));
-  $('#review-undo').disabled=!state.reviewHistory.length;
+  $('#review-undo').disabled=state.busy||!state.reviewHistory.length;
+  const blocks=state.recommendations.filter(r=>r.kind==='block'),checked=blocks.filter(r=>r.status==='recommended');const save=$('#save-checked-blocks');save.hidden=!blocks.length;save.disabled=state.busy||!checked.length;save.textContent='체크한 블록 '+checked.length+'개 저장';
 }
-function reviewChange(items,status){state.reviewHistory.push(state.recommendations.map(r=>r.status));for(const r of items)if(r.status!=='confirmed')r.status=status;renderRecommendations();}
+function reviewChange(items,status){if(state.busy)return;state.reviewHistory.push(state.recommendations.map(r=>r.status));for(const r of items)if(r.status!=='confirmed')r.status=status;renderRecommendations();controls();}
 async function selectRecommendation(r){
   selectRow(r.row);await showRowInSource(r.row);const unit=state.layout.units.find(u=>u.id===r.row);
   if(unit&&r.start!==undefined){state.caret={start:unit.start+r.start,end:unit.start+r.end};$('#document-editor').setSelectionRange(state.caret.start,state.caret.end);}
-  state.activeRecommendation=r;$('#detail-name').value=r.name;state.detailDrafts.set(r.row,{name:r.name,key:r.name});renderSelectionDetail(true);showRemote();
+  if(r.kind==='block'&&unit){const end=state.layout.units.find(u=>u.id===r.to);if(end){state.caret={start:unit.start,end:end.end};$('#document-editor').setSelectionRange(unit.start,end.end);state.blockPick={...state.caret,from:r.row,to:r.to,blocked:false};
+    const rows=state.paragraphs.slice(state.paragraphs.findIndex(p=>p.id===r.row),state.paragraphs.findIndex(p=>p.id===r.to)+1);state.view?.setMarks(rows.filter(p=>p.position).map(p=>({id:p.id,kind:'selection',position:p.position,endOffset:p.text.length})));}}
+  state.activeRecommendation=r;$('#detail-name').value=r.name;state.detailDrafts.set(r.row,{name:r.name,key:r.name});renderSelectionDetail(true);if(r.kind==='block'){$('#detail-title').textContent='블록 후보';$('#detail-excerpt').textContent=r.excerpt;$('#confirm-input').hidden=true;}else $('#confirm-input').hidden=false;controls();showRemote();
 }
 function renderSelectionDetail(force=false){
   if(state.detailLibrary)return;
-  const row=paragraph(state.chosen);$('#detail-form').hidden=!row;
+  const row=paragraph(state.chosen);$('#detail-content').dataset.kind=state.activeRecommendation?.kind??'input';$('#detail-form').hidden=!row;$('#confirm-input').hidden=state.activeRecommendation?.kind==='block';
   if(!row){$('#detail-title').textContent='선택 상세';$('#detail-location').textContent='먼저 부분을 고르세요';$('#detail-excerpt').textContent='';return;}
   const detailId=row.id+':'+state.caret?.start+':'+state.caret?.end;if(state.detailId===detailId&&!force)return;
   state.detailId=detailId;const h=headingOf(row.id);$('#detail-title').textContent='입력 항목 편집';$('#detail-location').textContent=(state.kind==='text'?'줄 '+(state.paragraphs.indexOf(row)+1):'쪽 미확인')+' · '+(h?.name??'문서');$('#detail-excerpt').textContent=(state.caret?state.layout.text.slice(state.caret.start,state.caret.end):row.text).slice(0,160);$('#confirm-input').disabled=!row.editable||state.busy;
@@ -797,7 +804,7 @@ for(const name of ['name','key'])$('#detail-'+name).addEventListener('input',()=
 $('#confirm-input').onclick=()=>confirmInput($('#detail-name').value,$('#detail-key').value);
 $('#remote-form').onsubmit=e=>{e.preventDefault();confirmInput($('#remote-name').value,$('#detail-key').value);};
 $('#remote-close').onclick=hideMenu;
-$('#review-undo').onclick=()=>{const old=state.reviewHistory.pop();if(old)state.recommendations.forEach((r,i)=>{if(r.status!=='confirmed')r.status=old[i]??r.status;});renderRecommendations();};
+$('#review-undo').onclick=()=>{const old=state.reviewHistory.pop();if(old)state.recommendations.forEach((r,i)=>{if(r.status!=='confirmed')r.status=old[i]??r.status;});renderRecommendations();controls();};
 for(const name of ['document','library'])$('#'+name+'-tab').onclick=()=>{for(const n of ['document','library']){$('#'+n+'-tab').setAttribute('aria-selected',String(n===name));$('#'+n+'-list').hidden=n!==name;}if(name==='library')void renderLibraryTab();};
 $('#pages').addEventListener('pointerup',e=>{state.pointer={x:e.clientX,y:e.clientY};});
 $('#document-editor').addEventListener('mouseup',e=>{state.pointer={x:e.clientX,y:e.clientY};if(state.caret?.start!==state.caret?.end)showRemote();});
@@ -807,3 +814,15 @@ $('#block-library-dialog').addEventListener('close',()=>{if(!$('#library-list').
 renderHeadingTree();renderRecommendations();
 
 $('#txt-result-view').onclick=()=>showResult();
+
+$('#save-checked-blocks').onclick=async()=>{
+  const checked=state.recommendations.filter(r=>r.kind==='block'&&r.status==='recommended');
+  if(state.busy||!checked.length||!confirm('체크한 블록 후보 '+checked.length+'개를 이름 그대로 저장할까요? 원문은 바뀌지 않습니다.'))return;
+  const session=state.session;hideMenu();setBusy(true,'체크한 블록을 저장하는 중입니다.');renderRecommendations();let saved=0;const errors=[];
+  try{for(const r of checked){try{
+    const preview=await api('block-preview',{session,from:r.row,to:r.to});
+    await api('block-save',{session,previewId:preview.id,name:r.name});r.status='confirmed';saved++;
+  }catch(e){errors.push(r.name+': '+errorMessage(e));}}
+  }finally{setBusy(false);renderRecommendations();if(!$('#library-list').hidden)await renderLibraryTab();}
+  status('블록 '+saved+'개 저장'+(errors.length?' · '+errors.length+'개 저장 못함 · '+errors.join(' / '):''),errors.length?'error':'success');
+};
