@@ -835,7 +835,7 @@ async function renderLibraryTab(){
   const box=$('#library-items');box.replaceChildren(uiNode('p','불러오는 중','rail-empty'));
   try{const response=await fetch('/api/blocks?q='+encodeURIComponent($('#library-search').value));if(!response.ok)throw Error('블록 저장소를 열지 못했습니다.');const {blocks}=await response.json();if(ticket!==libraryRequest)return;box.replaceChildren();
     for(const item of blocks){const b=uiNode('button',item.name,'library-row');b.type='button';b.append(uiNode('small',`문서 ${item.sourceHash.slice(0,10)} · 판 ${item.version} · 입력 ${item.inputCount}`),uiNode('small',item.change+' · '+new Date(item.createdAt).toLocaleString('ko-KR')));b.onclick=async()=>{try{const response=await fetch('/api/block?id='+encodeURIComponent(item.id));if(!response.ok)throw Error('블록을 열지 못했습니다.');const detail=await response.json();state.detailLibrary=item.id;document.body.classList.remove('detail-collapsed');$('#detail-title').textContent='블록 편집';$('#detail-location').textContent=`${detail.location} · 판 ${detail.version} · 입력 ${detail.inputCount}`;$('#detail-excerpt').textContent=detail.excerpt;$('#detail-form').hidden=true;const tools=$('#detail-library-tools');tools.replaceChildren();const more=uiNode('button','크게 보기');more.onclick=()=>blockLibraryUI.showItem(item.id);tools.append(more);await blockLibraryUI.manage(detail,tools);}catch(e){status(e.message,'error');}};box.append(b);}
-    if(!blocks.length)box.append(uiNode('p','HWPX 원문에서 범위를 선택하고 ‘블록으로 저장’을 누르세요.','rail-empty'));
+    if(!blocks.length)box.append(uiNode('p',$('#library-search').value.trim()?'검색 결과가 없습니다.':'HWPX 원문에서 범위를 선택하고 ‘블록으로 저장’을 누르세요.','rail-empty'));
   }catch(e){box.replaceChildren(uiNode('p',e.message,'rail-empty'));}
 }
 $('#library-search').oninput=()=>void renderLibraryTab();
