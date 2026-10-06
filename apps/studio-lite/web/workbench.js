@@ -776,8 +776,11 @@ function followHeading(){
   }
   setCurrentHeading(current??state.outline[0]?.id);
 }
+/** 입력 항목이 문서에 있는 모양(추천 목록의 보조 표지). 종류 약자(입력·블록·분기·위치)는 그대로 둔다 */
+const FORMS={clickHere:'누름틀',mailMerge:'메일머지'};
 function buildReview(opened){
-  state.recommendations=state.paragraphs.flatMap(p=>[...p.text.matchAll(/\{\{([^{}#/]+)\}\}/g)].map(m=>({id:p.id+':'+m.index,row:p.id,name:m[1],start:m.index,end:m.index+m[0].length,kind:'input',status:'recommended',excerpt:p.text.slice(Math.max(0,m.index-8),m.index+m[0].length+20)})));
+  // 입력 항목 후보는 서버가 문서 순서로 준다: 누름틀·메일머지(form)와 그 표시 글 밖의 {{키}}. 표시 글 안 {{키}}는 필드가 맡아 따로 오르지 않는다
+  state.recommendations=(opened.inputs??[]).map(x=>{const text=paragraph(x.row)?.text??'';return {id:x.row+':'+x.start+':'+x.kind,row:x.row,name:x.name,start:x.start,end:x.end,kind:'input',...(x.kind==='placeholder'?{}:{form:x.kind}),...(x.usable===false?{unusable:true}:{}),status:'recommended',excerpt:(x.usable===false?'이름 규칙 밖 · ':'')+text.slice(Math.max(0,x.start-8),x.end+20).replaceAll('\uFFFC','')};});
   state.recommendations.push(...(opened.blockCandidates??[]).map((c,i)=>({id:'block:'+i,row:c.from,to:c.to,name:c.name,kind:'block',status:'recommended',excerpt:c.paragraphCount+'문단 · '+(state.paragraphs.slice(state.paragraphs.findIndex(p=>p.id===c.from)+1,state.paragraphs.findIndex(p=>p.id===c.to)+1).find(p=>p.text.trim())?.text.slice(0,60)??'본문 없음')})));
 }
 function renderRecommendations(){
@@ -785,8 +788,8 @@ function renderRecommendations(){
   for(const r of state.recommendations){const h=headingOf(r.row),key=h?.id??'document';if(!groups.has(key))groups.set(key,{name:h?.name??'문서',items:[]});groups.get(key).items.push(r);}
   for(const {name,items} of groups.values()){const d=uiNode('details',undefined,'rec-group');d.open=true;d.append(uiNode('summary',name+' · '+items.length));
     for(const r of items){const line=uiNode('div',undefined,'rec-line'+(r.status==='excluded'?' excluded':''));line.dataset.review=r.id;const check=uiNode('input');check.type='checkbox';check.checked=r.status!=='excluded';check.disabled=state.busy||r.status==='confirmed';check.dataset.confirmed=String(r.status==='confirmed');check.setAttribute('aria-label',r.name+' 유지');check.onchange=()=>reviewChange([r],check.checked?'recommended':'excluded');
-      const kind=({input:'입력',block:'블록',branch:'분기',place:'위치'})[r.kind],button=uiNode('button',r.name);button.type='button';button.title=r.name+' · '+r.excerpt;button.onclick=()=>selectRecommendation(r);
-      const excerpt=uiNode('span',r.excerpt,'rec-excerpt');excerpt.title=r.excerpt;line.append(check,uiNode('span',kind,'kind-tag kind-'+r.kind),button,excerpt,uiNode('small',r.status==='confirmed'?'확정':r.status==='excluded'?'제외':'추천'));d.append(line);}
+      const kind=({input:'입력',block:'블록',branch:'분기',place:'위치'})[r.kind],button=uiNode('button',r.name,r.unusable?'rec-unusable':undefined);button.type='button';button.title=r.name+' · '+(r.unusable?'이름이 데이터 키 규칙 밖이라 자동으로 채우지 않습니다 · ':'')+r.excerpt;button.onclick=()=>selectRecommendation(r);
+      const excerpt=uiNode('span',r.excerpt,'rec-excerpt');excerpt.title=r.excerpt;const form=r.form?[uiNode('span',FORMS[r.form],'form-tag')]:[];line.append(check,uiNode('span',kind,'kind-tag kind-'+r.kind),...form,button,excerpt,uiNode('small',r.status==='confirmed'?'확정':r.status==='excluded'?'제외':'추천'));d.append(line);}
     const actions=uiNode('div',undefined,'group-actions');for(const [label,status] of [['묶음 제외','excluded'],['묶음 되돌리기','recommended']]){const b=uiNode('button',label);b.type='button';b.onclick=()=>reviewChange(items,status);actions.append(b);}d.append(actions);root.append(d);
   }
   if(!groups.size)root.append(uiNode('p',state.session?'추천 없음 · 원문에서 직접 고를 수 있습니다.':'문서를 열면 추천이 표시됩니다.','rail-empty'));
@@ -796,7 +799,8 @@ function renderRecommendations(){
 function reviewChange(items,status){if(state.busy)return;state.reviewHistory.push(state.recommendations.map(r=>r.status));for(const r of items)if(r.status!=='confirmed')r.status=status;renderRecommendations();controls();}
 async function selectRecommendation(r){
   selectRow(r.row);await showRowInSource(r.row);const unit=state.layout.units.find(u=>u.id===r.row);
-  if(unit&&r.start!==undefined){state.caret={start:unit.start+r.start,end:unit.start+r.end};$('#document-editor').setSelectionRange(state.caret.start,state.caret.end);}
+  // 후보 위치는 원문 줄 글 기준이다. 읽기 전용 줄의 편집 글은 개체 자리(\uFFFC)를 뺀 글이므로 그만큼 당긴다
+  if(unit&&r.start!==undefined){const text=paragraph(r.row)?.text??'',at=o=>text.slice(0,o).replaceAll('\uFFFC','').length;state.caret={start:unit.start+at(r.start),end:unit.start+at(r.end)};$('#document-editor').setSelectionRange(state.caret.start,state.caret.end);}
   if(r.kind==='block'&&unit){const end=state.layout.units.find(u=>u.id===r.to);if(end){state.caret={start:unit.start,end:end.end};$('#document-editor').setSelectionRange(unit.start,end.end);state.blockPick={...state.caret,from:r.row,to:r.to,blocked:false};
     const rows=state.paragraphs.slice(state.paragraphs.findIndex(p=>p.id===r.row),state.paragraphs.findIndex(p=>p.id===r.to)+1);state.view?.setMarks(rows.filter(p=>p.position).map(p=>({id:p.id,kind:'selection',position:p.position,endOffset:p.text.length})));}}
   state.activeRecommendation=r;$('#detail-name').value=r.name;state.detailDrafts.set(r.row,{name:r.name,key:r.name});renderSelectionDetail(true);if(r.kind==='block'){$('#detail-title').textContent='블록 후보';$('#detail-excerpt').textContent=r.excerpt;$('#confirm-input').hidden=true;}else $('#confirm-input').hidden=false;controls();showRemote();

@@ -8,6 +8,7 @@ import {
   collectFields,
   emptyTemplate,
   fieldFillBlock,
+  fieldRangeIn,
   findCandidates,
   findPlaceholders,
   generateBatch,
@@ -24,6 +25,9 @@ import {
   type BatchItem,
   type BatchRecord,
   type Dataset,
+  type FieldTarget,
+  type HwpxDocument,
+  type PlanReport,
   type Template,
 } from "@hwpx-studio/engine";
 import { HostError, isObj, parseJson } from "../../../packages/viewer/src/host/index.ts";
@@ -52,11 +56,15 @@ type FieldTally = { count: number; mailMerge: number; fillable: number; merging:
  * 이름의 `usable`은 엔진이 채우는 기준(`isValidPath`)과 같다. 곳마다 채울 수 있는지는 엔진의 `fieldFillBlock`(`collectFields`의 곳별 판정, 데이터와 무관하다)만 따른다:
  * 막는 사유가 없으면 `fillable`(그 가운데 여러 문단에 걸친 모양 `crossParagraph`는 `merging`에도 센다), 있으면 `unfillable`에 센다. 여러 문단에 걸친 모양인데 막힌 곳은
  * `crossBlocked`이고 엔진이 준 사유 문구를 `reasons`에 담는다. 나머지는 모양(`object`·`crossContainer`·`unpaired`)별로 센다.
+ * `{{키}}`는 메일머지가 맡는 표시 글 안의 것을 세지 않는다(엔진 8.3: 키가 경로 꼴이고 채울 수 있는 메일머지는 표시 글 안 `{{}}`를 채우지 않고 필드가 값을 넣는다.
+ * 구간은 엔진의 `fieldRangeIn`). 그 밖의 메일머지(키가 경로 꼴이 아니거나 채울 수 없는 모양) 표시 글 안 `{{키}}`는 엔진이 채우므로 센다.
  */
 export function analyzePlaces(bytes: Uint8Array): PlacesView {
   const doc = parseDocument(openPackage(bytes));
 
   const tallies = new Map<string, FieldTally>();
+  /** 표시 글을 맡는 메일머지 */
+  const owners: FieldTarget[] = [];
   for (const target of collectFields(doc)) {
     const f = target.info;
     const key = f.type === "CLICK_HERE" ? f.name : f.type === "MAILMERGE" ? f.mergeKey : undefined;
@@ -72,6 +80,7 @@ export function analyzePlaces(bytes: Uint8Array): PlacesView {
     if (block === undefined) {
       tally.fillable++;
       if (f.shape === "crossParagraph") tally.merging++;
+      if (f.type === "MAILMERGE" && isValidPath(key)) owners.push(target);
       continue;
     }
     // 모양이 simple·empty·inline인데 막힌 곳(시작과 끝 표식이 한 조각에 붙어 있음)은 끝 표식을 따로 찾을 수 없는 `unpaired`로 센다
@@ -85,7 +94,13 @@ export function analyzePlaces(bytes: Uint8Array): PlacesView {
   const placeholderCounts = new Map<string, number>();
   for (const section of doc.sections) {
     for (const par of walkParagraphs(section.paragraphs)) {
-      for (const h of findPlaceholders(par.logicalText)) placeholderCounts.set(h.path, (placeholderCounts.get(h.path) ?? 0) + 1);
+      for (const h of findPlaceholders(par.logicalText)) {
+        const owned = owners.some((t) => {
+          const r = fieldRangeIn(t, par);
+          return r !== undefined && h.start < r.until && h.end > r.from;
+        });
+        if (!owned) placeholderCounts.set(h.path, (placeholderCounts.get(h.path) ?? 0) + 1);
+      }
     }
   }
 
@@ -245,21 +260,42 @@ function placeOf(anchor: string): string | undefined {
   return anchor.startsWith("merge:") ? `메일머지 "${anchor.slice("merge:".length)}"` : undefined;
 }
 
-/** 실제 채운 키의 줄바꿈·탭 알림. 같은 키의 다른 종류/일부 곳 건너뜀이 성공 알림을 지우지 않는다. */
-function multilineNotes(source:Uint8Array,template:Template,missing:MissingPolicy,places:PlacesView,record:BatchRecord):ReportEntry[] {
-  if (!('dataset' in record)) return [];
-  const keys = new Set([...places.fields.filter(f=>f.usable&&f.fillable>0).map(f=>f.name),...places.placeholders.map(p=>p.key)]);
-  const multiline=[...keys].filter(key=>{const j=judge(record.dataset,key);return j.state==='ok'&&j.multiline;});
-  if(!multiline.length)return [];
-  // 공개 계획의 성공 액션만 사용한다. 값 원문과 계획은 화면 응답에 넣지 않는다.
-  const actions=buildFillPlan(parseDocument(openPackage(source)),template,record.dataset,{missing}).report.actions.filter(a=>a.type==='fill'&&a.targets>0);
-  return multiline.filter(key=>actions.some(a=>a.anchor===`{{${key}}}`||a.anchor===`field:${key}`||a.anchor===`merge:${key}`||template.rules.some(r=>r.id===a.ruleId&&r.do.type==='fill'&&'path' in r.do.value&&r.do.value.path===key))).map(key=>entry('QUICK_MULTILINE',undefined,`키 ${key}`));
+/** 이 건의 계획에서 실제로 값을 넣은(대상이 있는) 채움 액션의 데이터 경로: 암묵 채움은 앵커(`{{키}}`·`field:이름`·`merge:키`), 명시 연결은 규칙의 경로다. */
+function filledPaths(plan: PlanReport, template: Template): Set<string> {
+  const paths = new Set<string>();
+  for (const a of plan.actions) {
+    if (a.type !== "fill" || a.targets === 0) continue;
+    if (a.ruleId === "implicit") {
+      const m = /^\{\{(.+)\}\}$|^(?:field|merge):(.+)$/.exec(a.anchor);
+      const path = m?.[1] ?? m?.[2];
+      if (path !== undefined) paths.add(path);
+      continue;
+    }
+    const rule = template.rules.find((r) => r.id === a.ruleId);
+    if (rule?.do.type === "fill" && "path" in rule.do.value) paths.add(rule.do.value.path);
+  }
+  return paths;
+}
+
+/**
+ * 이 건에서 줄바꿈·탭이 든 값이 실제로 들어간 자리(키)의 알림. 같은 키의 일부 곳만 건너뛰었어도(다른 종류, 채울 수 없는 모양) 한 곳이라도 채웠으면 알린다.
+ * 줄바꿈 값이 있는 건만 엔진의 공개 `buildFillPlan`으로 계획을 다시 세워 실제 채운 액션을 본다(값 원문과 계획은 응답에 넣지 않는다).
+ */
+function multilineNotes(record: BatchRecord, keys: readonly string[], planOf: (dataset: Dataset) => PlanReport, template: Template): ReportEntry[] {
+  if (!("dataset" in record)) return [];
+  const multiline = keys.filter((key) => {
+    const j = judge(record.dataset, key);
+    return j.state === "ok" && j.multiline;
+  });
+  if (multiline.length === 0) return [];
+  const filled = filledPaths(planOf(record.dataset), template);
+  return multiline.filter((key) => filled.has(key)).map((key) => entry("QUICK_MULTILINE", undefined, `키 ${key}`));
 }
 
 export type Generated = { view: ResultView; output?: Uint8Array };
 
 /** 엔진의 건별 결과(`BatchItem`)를 화면 보고로 바꾼다. 번호는 0부터이고(파일 이름의 번호는 1부터) 값 원문은 담지 않는다. */
-function toGenerated(item: BatchItem, places: PlacesView, record: BatchRecord, source:Uint8Array, template:Template, missing:MissingPolicy): Generated {
+function toGenerated(item: BatchItem, multiline: () => ReportEntry[]): Generated {
   const view: ResultView = {
     index: item.index - 1,
     name: item.name,
@@ -267,19 +303,27 @@ function toGenerated(item: BatchItem, places: PlacesView, record: BatchRecord, s
     filled: item.filled,
     skipped: item.skipped.map((s) => entry(s.code, s.message, placeOf(s.anchor))),
     errors: item.errors.map((e) => entry(e.code, e.message)),
-    notes: item.ok ? [...multilineNotes(source, template, missing, places, record), ...item.warnings.map((w) => entry(w.code, w.message, w.anchor === undefined ? undefined : placeOf(w.anchor)))] : [],
+    notes: item.ok ? [...multiline(), ...item.warnings.map((w) => entry(w.code, w.message, w.anchor === undefined ? undefined : placeOf(w.anchor)))] : [],
   };
   if (!item.ok && view.errors.length === 0) view.errors.push(entry("QUICK_GENERATE_FAILED"));
   return item.ok && item.output !== undefined ? { view, output: item.output } : { view: { ...view, ok: false } };
 }
 
 /**
- * 모든 건을 차례로 만든다(엔진의 `generateBatch`: 템플릿 없이 `{{키}}`·누름틀을 채우고, 한 건이 실패해도 나머지는 만든다. 이름은 엔진의 `planBatchNames`).
+ * 모든 건을 차례로 만든다(엔진의 `generateBatch`: 템플릿 없이 `{{키}}`·누름틀·메일머지를 채우고, 한 건이 실패해도 나머지는 만든다. 이름은 엔진의 `planBatchNames`).
  * 실제 성공 출력 바이트를 누적한다. 한도를 넘는 건부터 실패로 보고하고 이후 엔진 생성을 중단한다.
  */
 export function generateAll(source: Uint8Array, places: PlacesView, data: QuickData, fileName: string, missing: MissingPolicy, template: Template = emptyTemplate()): Generated[] {
   const out: Generated[] = [];
   let resultBytes = 0;
+  // 줄바꿈 알림을 볼 키: 채울 수 있는 누름틀·메일머지 키, `{{키}}`, 명시 연결의 경로
+  const keys = [...new Set([
+    ...places.fields.filter((f) => f.usable && f.fillable > 0).map((f) => f.name),
+    ...places.placeholders.map((p) => p.key),
+    ...template.rules.flatMap((r) => (r.do.type === "fill" && "path" in r.do.value ? [r.do.value.path] : [])),
+  ])];
+  let doc: HwpxDocument | undefined;
+  const planOf = (dataset: Dataset): PlanReport => buildFillPlan((doc ??= parseDocument(openPackage(source))), template, dataset, { missing }).report;
   for (const item of generateBatch(source, template, data.records, { baseName: fileName, missing })) {
     const bytes = item.ok ? item.output?.byteLength ?? 0 : 0;
     if (resultBytes + bytes > MAX_RESULT_BYTES) {
@@ -291,7 +335,8 @@ export function generateAll(source: Uint8Array, places: PlacesView, data: QuickD
       break;
     }
     resultBytes += bytes;
-    out.push(toGenerated(item, places, data.records[item.index - 1] as BatchRecord, source, template, missing));
+    const record = data.records[item.index - 1] as BatchRecord;
+    out.push(toGenerated(item, () => multilineNotes(record, keys, planOf, template)));
   }
   return out;
 }

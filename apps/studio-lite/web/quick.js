@@ -7,7 +7,7 @@ const SHAPES={object:'안에 그림·표가 있음',crossContainer:'표 칸 경�
 const KINDS={field:'누름틀',word:'낱말 / 선택 범위',cell:'셀',line:'문단 전체'};
 const CANDIDATES={emptyCell:'라벨 옆 빈 칸',labelColon:'라벨: 뒤 빈 곳',blankMark:'빈칸 표시'};
 function el(tag,text,cls){const n=document.createElement(tag);if(text!==undefined)n.textContent=String(text);if(cls)n.className=cls;return n;}
-function status(text,error=false){$('status').textContent=text;$('status').classList.toggle('error',error);}
+function status(text,error=false,warn=false){$('status').textContent=text;$('status').classList.toggle('error',error);$('status').classList.toggle('warn',!error&&warn);}
 function failed(e){status(e.message??String(e),true);}
 async function api(path,body){const r=await fetch(`/api/quick/${path}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const v=await r.json();if(!r.ok)throw new Error(`${v.plain??v.error??'요청 실패'}${v.code?` (${v.code})`:''}`);return v;}
 function table(node,head,rows){const h=el('thead'),tr=el('tr');head.forEach(t=>tr.append(el('th',t)));h.append(tr);const b=el('tbody');rows.forEach(row=>{const r=el('tr');row.forEach(c=>{const d=el('td');d.append(c instanceof Node?c:String(c));r.append(d);});b.append(r);});node.replaceChildren(h,b);}
@@ -63,9 +63,11 @@ const fieldKind=f=>f?.mailMerge?(f.mailMerge===f.count?'메일머지':'누름틀
 function renderPlaces(t){
   $('document-info').textContent=`${t.name} · ${t.bytes.toLocaleString()}바이트`;
   const box=$('places');box.replaceChildren();
-  const list=(title,items)=>{box.append(el('h3',`${title} ${items.length}개`));const u=el('ul');items.forEach(text=>u.append(el('li',text)));box.append(items.length?u:el('p','없음','muted'));};
-  list('누름틀·메일머지',t.places.fields.map(f=>`${fieldKind(f)} ${f.name||'(이름 없음)'} · ${f.count}곳${f.mailMerge?` (메일머지 ${f.mailMerge} · 누름틀 ${f.count-f.mailMerge})`:''}${f.usable?'':' · 데이터 경로로 쓸 수 없는 이름'}${f.merging?` · ${f.merging}곳은 문단 합침`:''}${f.unfillable.length?` · 채우지 못함: ${f.unfillable.map(u=>`${SHAPES[u.shape]} ${u.count}곳${u.reasons?` (${u.reasons.join(' ')})`:''}`).join(', ')}`:''}`));
-  list('{{키}}',t.places.placeholders.map(p=>`{{${p.key}}} · ${p.count}곳`));
+  const list=(title,items,extra='')=>{box.append(el('h3',`${title} ${items.length}개${extra}`));const u=el('ul');items.forEach(text=>u.append(el('li',text)));box.append(items.length?u:el('p','없음','muted'));};
+  // 종류별 곳 수: 메일머지가 맡는 표시 글 안 {{키}}는 서버가 세지 않으므로 같은 곳을 두 번 세지 않는다
+  const total=t.places.fields.reduce((n,f)=>n+f.count,0),merge=t.places.fields.reduce((n,f)=>n+(f.mailMerge??0),0);
+  list('누름틀·메일머지 키',t.places.fields.map(f=>`${fieldKind(f)} ${f.name||'(이름 없음)'} · ${f.count}곳${f.mailMerge&&f.mailMerge<f.count?` (메일머지 ${f.mailMerge} · 누름틀 ${f.count-f.mailMerge})`:''}${f.usable?'':' · 데이터 경로로 쓸 수 없는 이름'}${f.merging?` · ${f.merging}곳은 문단 합침`:''}${f.unfillable.length?` · 채우지 못함: ${f.unfillable.map(u=>`${SHAPES[u.shape]} ${u.count}곳${u.reasons?` (${u.reasons.join(' ')})`:''}`).join(', ')}`:''}`),` · ${total}곳 (메일머지 ${merge} · 누름틀 ${total-merge})`);
+  list('{{키}}',t.places.placeholders.map(p=>`{{${p.key}}} · ${p.count}곳`),` · ${t.places.placeholders.reduce((n,p)=>n+p.count,0)}곳`);
   list(`빈칸 후보${t.places.candidatesTruncated?' (앞 200개)':''}`,t.places.candidates.map(c=>`${CANDIDATES[c.kind]}: ${c.evidence}`));
 }
 function renderAssignments(){
@@ -81,13 +83,29 @@ function renderData(d){
   d.keys.filter(k=>k.usable&&!['object','array'].includes(k.type)).forEach(k=>{const o=el('option',`${k.path} (${k.type})`);o.value=k.path;select.append(o);});
   $('keys').replaceChildren();d.keys.forEach(k=>$('keys').append(el('p',`${k.path} · ${k.type} · ${k.records}건${k.usable?'':' · 경로 연결 불가'}`)));
   const labels={ok:'데이터 있음',missing:'데이터 없음 / null',notScalar:'객체·배열',rejected:'값 문자 차단',badKey:'데이터 경로로 쓸 수 없는 이름',unfillable:'채울 수 없는 필드'};
+  $('match-summary').textContent=matchSummary(d);
   table($('matches'),['자리 / 경로','연결 확인'],d.matches.map(m=>{const field=state.places.fields.find(f=>f.name===m.key);const shape=m.state==='unfillable'?(field?.unfillable??[]).map(u=>SHAPES[u.shape]).join(', '):'';return [`${m.kind==='field'?fieldKind(field):'{{키}}'}: ${m.key}`,`${labels[m.state]}${shape?` (${shape})`:''} · 맞음 ${m.counts.ok} / 누락 ${m.counts.missing}${m.reason?` (${m.reason})`:''}${m.multiline?' · 줄바꿈/탭 유지':''}`];}));
+}
+/** 대조표 요약: 모든 건에 데이터가 있는 키와 그 곳 수(종류별), 데이터 없음·이름 규칙 밖·그 밖의 확인 필요 키 수 */
+function matchSummary(d){
+  const by={mailMerge:0,clickHere:0,placeholder:0};let ok=0,missing=0,bad=0,other=0;
+  for(const m of d.matches){
+    if(m.state==='badKey'){bad++;continue;}
+    if(m.state==='missing'){missing++;continue;}
+    if(m.state!=='ok'){other++;continue;}
+    ok++;
+    if(m.kind==='placeholder'){by.placeholder+=state.places.placeholders.find(p=>p.key===m.key)?.count??0;continue;}
+    const f=state.places.fields.find(f=>f.name===m.key);by.mailMerge+=f?.mailMerge??0;by.clickHere+=(f?.count??0)-(f?.mailMerge??0);
+  }
+  return `데이터와 맞는 자리 ${ok}개 키 · ${by.mailMerge+by.clickHere+by.placeholder}곳 (메일머지 ${by.mailMerge} · 누름틀 ${by.clickHere} · {{키}} ${by.placeholder})${missing?` · 데이터 없음 ${missing}개 키`:''}${bad?` · 이름 규칙 밖 ${bad}개 키(채우지 않음)`:''}${other?` · 확인 필요 ${other}개 키`:''}`;
 }
 function entryList(entries){const ul=el('ul');entries.forEach(e=>{const li=el('li',`${e.place?`[${e.place}] `:''}${e.plain} (${e.code})`);if(e.detail)li.append(el('p',e.detail,'muted'));ul.append(li);});return entries.length?ul:'-';}
 function renderResults(g){
   $('results-box').hidden=false;
-  const count=g.results.filter(r=>r.ok).length;status(`${g.results.length}건 중 생성 ${count}건 · 실패 ${g.results.length-count}건`,count<g.results.length);
-  table($('results'),['건','결과 / 채운 자리','건너뜀','오류','알림','파일'],g.results.map(r=>{const file=el('div');if(r.ok){const link=el('a','내려받기');link.href=`/api/quick/result?session=${g.session}&index=${r.index}`;file.append(link);const view=el('button','미리보기','small');view.addEventListener('click',()=>showDocument(link.href,false,`생성물 · ${r.index+1}번째 건 (읽기 전용)`).catch(failed));file.append(el('br'),view);}return [String(r.index+1),el('span',`${r.ok?'성공':'실패'} · ${r.filled}곳`,r.ok?'ok':'bad'),entryList(r.skipped),entryList(r.errors),entryList(r.notes),file];}));
+  // 일부 자리를 건너뛴 성공 건은 '성공'과 따로 보인다(건너뜀 칸에 자리와 사유)
+  const count=g.results.filter(r=>r.ok).length,partial=g.results.filter(r=>r.ok&&r.skipped.length).length;
+  status(`${g.results.length}건 중 생성 ${count}건 · 실패 ${g.results.length-count}건${partial?` · 일부 자리를 건너뛴 건 ${partial}건(건너뜀 칸을 확인하세요)`:''}`,count<g.results.length,partial>0);
+  table($('results'),['건','결과 / 채운 자리','건너뜀','오류','알림','파일'],g.results.map(r=>{const file=el('div');if(r.ok){const link=el('a','내려받기');link.href=`/api/quick/result?session=${g.session}&index=${r.index}`;file.append(link);const view=el('button','미리보기','small');view.addEventListener('click',()=>showDocument(link.href,false,`생성물 · ${r.index+1}번째 건 (읽기 전용)`).catch(failed));file.append(el('br'),view);}const result=!r.ok?el('span',`실패 · ${r.filled}곳`,'bad'):r.skipped.length?el('span',`일부 채움 · ${r.filled}곳 채움 · ${r.skipped.length}곳 건너뜀`,'warn'):el('span',`성공 · ${r.filled}곳`,'ok');return [String(r.index+1),result,entryList(r.skipped),entryList(r.errors),entryList(r.notes),file];}));
 }
 function base64(bytes){let s='';for(let i=0;i<bytes.length;i+=32768)s+=String.fromCharCode(...bytes.subarray(i,i+32768));return btoa(s);}
 $('quick-document').addEventListener('change',async()=>{

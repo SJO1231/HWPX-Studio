@@ -15,7 +15,7 @@
 <aside class="quick-right">
 <section><h2>선택한 위치</h2><p id="location" class="muted">문서에서 자리를 선택하세요.</p><div id="drafts"></div><label for="mapping">연결할 데이터 경로</label><select id="mapping" disabled><option value="">데이터를 먼저 올리세요</option></select><p id="mapping-note" class="muted">낱말·누름틀·셀·문단 중 선택한 대상만 연결합니다. 문단은 문단 전체를 바꿉니다.</p><button id="assign" class="full" disabled>선택한 자리 연결</button><button id="cancel-selection" class="full" disabled>선택 취소 (Esc)</button></section>
 <section><h2>JSON 데이터</h2><label class="file-button full">JSON 데이터 올리기<input id="quick-data" type="file" accept=".json" hidden disabled></label><p id="data-info" class="muted">객체 하나 또는 객체 배열을 지원합니다.</p><details><summary>데이터 경로 목록</summary><div id="keys"></div></details></section>
-<section><h2>자리 · 데이터 대조표</h2><p class="muted">누름틀 이름·메일머지 키·{{키}}를 데이터 경로와 맞대어 봅니다. 빈칸 후보는 자동 주입하지 않습니다.</p><div class="quick-table"><table id="matches"></table></div></section>
+<section><h2>자리 · 데이터 대조표</h2><p class="muted">누름틀 이름·메일머지 키·{{키}}를 데이터 경로와 맞대어 봅니다. 빈칸 후보는 자동 주입하지 않습니다.</p><p id="match-summary" class="match-summary"></p><div class="quick-table"><table id="matches"></table></div></section>
 <section><h2>생성 설정</h2><label for="missing">값이 없을 때</label><select id="missing"><option value="error">해당 건을 실패로 처리</option><option value="keep">원래 글 유지</option><option value="empty">빈 글로 채우기</option></select><button id="generate" class="primary full" disabled>연결 확인 후 HWPX 생성</button><p class="muted">생성물은 별도로 내려받습니다. 사용자 원본을 덮어쓰지 않습니다.</p></section>
 </aside>
 </main>

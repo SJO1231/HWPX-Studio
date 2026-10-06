@@ -6,7 +6,9 @@ import {
 } from '@hwpx-studio/engine';
 import { buildHwpx, mutateEntryText, readFixture } from '../../../packages/hwpx-engine/test/helpers.ts';
 import { dataFor, longValue, rng } from '../../../packages/hwpx-engine/test/range-helpers.ts';
+import { gridTable, tableParagraph, textPara } from '../../../packages/hwpx-engine/test/table-helpers.ts';
 import { analyzePlaces, generateAll, matchPlaces, parseQuickData } from '../src/quick.ts';
+import { createWorkbench } from '../src/workbench.ts';
 
 const source=()=>readFixture('merge/merge-fields');
 const docOf=(bytes:Uint8Array)=>parseDocument(openPackage(bytes));
@@ -40,6 +42,8 @@ test('빠른 생성 MAILMERGE: 공개 33/4/8 fixture의 15메일머지 키·33�
   assert.equal(matches.filter(m=>m.kind==='field'&&m.state==='badKey').length,3);
   assert(matches.filter(m=>m.kind==='field'&&m.state!=='badKey').every(m=>m.state==='ok'&&m.counts.ok===1));
   assert(places.fields.every(f=>f.name!==''),'빈 name 대신 MAILMERGE 키로 노출해야 한다');
+  // 메일머지가 맡는 표시 글 안의 {{키}}는 다시 세지 않는다(엔진이 채우는 독립 표식 8곳만 남는다)
+  assert.equal(places.placeholders.reduce((n,p)=>n+p.count,0),8);
 });
 
 test('빠른 생성 MAILMERGE: 같은 키의 클릭·메일머지 곳 수 병합과 키 없는/다른 필드 제외',()=>{
@@ -133,3 +137,109 @@ for(const type of ['CLICK_HERE','MAILMERGE'] as const) {
     assert.deepEqual(result.view.notes.filter(note=>note.code==='QUICK_MULTILINE').map(note=>note.place),['키 같은키'],'같은 키의 한 곳은 실제로 채웠으므로 건너뜀 때문에 줄바꿈 안내를 지우지 않는다');
   });
 }
+
+// 실제 공고서 모양을 합성으로 옮긴 회귀(#24): 메일머지 30곳(본문 12·표 칸 12·머리말 6, 같은 키 반복)의 표시 글이 `{{키}}`이고 그 가운데 4곳은 키가 이름 규칙 밖이다.
+// 표시 글 안 `{{키}}`를 자리로 다시 세지 않아 "목록에 보인 채울 곳 수 = 실제 채운 곳 수"이고, 이름 규칙 밖 4곳은 건별 건너뜀(메일머지 자리 이름 포함)으로 남는다.
+const MM_BODY=['공고번호','사업명','사업명','기관명','납품 장소','계약방법','담당자','연락처','금액','금액','납품기한','공고번호'];
+const MM_CELLS=['품명','규격','수량','단가','금액(원)','납품기한','품명','규격','수량','단가','사업명','기관명'];
+const MM_HEADER=['공고번호','사업명','담당 부서','기관명','계약 방법','연락처'];
+const mmCtrl=(id:number,key:string)=>({
+  begin:'<hp:ctrl><hp:fieldBegin id="'+id+'" type="MAILMERGE" name="" editable="0" dirty="0" zorder="-1" fieldid="'+(7000+id)+'" metaTag=""><hp:parameters cnt="2" name=""><hp:stringParam name="Command">'+key+'</hp:stringParam><hp:stringParam name="FieldValue">'+key+'</hp:stringParam></hp:parameters></hp:fieldBegin></hp:ctrl>',
+  end:'<hp:ctrl><hp:fieldEnd beginIDRef="'+id+'" fieldid="'+(7000+id)+'"/></hp:ctrl>',
+});
+/** `{{키}}` 표시 글을 든 메일머지를 `<hp:t>` 안에 끼우는 원문(앞뒤 글은 같은 run) */
+const mmInline=(id:number,key:string,before:string,after=' 끝')=>{const c=mmCtrl(id,key);return before+'</hp:t>'+c.begin+'<hp:t>{{'+key+'}}</hp:t>'+c.end+'<hp:t>'+after;};
+function realShapedSource() {
+  const original=readFixture('hancom/header-footer'),section=docOf(original).sections[0]!;
+  const firstEnd=section.paragraphs[0]!.element.end;
+  let id=500;
+  const body=MM_BODY.map((key,i)=>textPara(mmInline(++id,key,'본문'+i+': ')));
+  const table=gridTable([9000,9000,9000,9000],3,[]);
+  table.cells.forEach((cell,i)=>{cell.paragraphs=[textPara(mmInline(++id,MM_CELLS[i]!,'칸'+i+' '))];});
+  const header=MM_HEADER.map((key,i)=>mmInline(++id,key,'머리'+i+' ','')).join(' / ');
+  return mutateEntryText(original,section.entryName,xml=>
+    xml.slice(0,firstEnd).replace('{{doc.title}}',header).replace('{{doc.owner}}','고정 꼬리말')+
+    body.join('')+tableParagraph(table)+textPara('비고 {{비고}} 와 다시 {{비고}}')+textPara('바깥 고정 문단')+xml.slice(xml.lastIndexOf('</hs:sec>')),
+  );
+}
+
+test('빠른 생성 MAILMERGE: 표시 글이 {{키}}인 메일머지 30곳을 {{키}}로 다시 세지 않고, 목록의 채울 곳 수와 seeded 50건×2회 실제 채움 수가 같다',t=>{
+  const bytes=realShapedSource(),before=Buffer.from(bytes),baseline=validateDocument(bytes);
+  assert.equal(baseline.errors.length,0,JSON.stringify(baseline.errors));
+  const fieldsBefore=listFields(docOf(bytes));
+  assert.equal(fieldsBefore.filter(f=>f.type==='MAILMERGE').length,30);
+  const places=analyzePlaces(bytes);
+  assert.equal(places.fields.reduce((n,f)=>n+f.count,0),30);
+  assert.equal(places.fields.reduce((n,f)=>n+(f.mailMerge??0),0),30,'전부 메일머지로 센다(누름틀 0곳)');
+  assert.deepEqual(places.placeholders,[{key:'비고',count:2}],'메일머지 표시 글 안 {{키}} 30곳은 세지 않는다');
+  const bad=places.fields.filter(f=>!f.usable);
+  assert.deepEqual(bad.map(f=>f.name).sort(),['계약 방법','금액(원)','납품 장소','담당 부서']);
+  const listed=places.fields.filter(f=>f.usable).reduce((n,f)=>n+f.fillable,0)+places.placeholders.reduce((n,p)=>n+p.count,0);
+  assert.equal(listed,28);
+
+  const next=rng(0x24f1e1d5),keys=places.fields.filter(f=>f.usable).map(f=>f.name);
+  const rows=Array.from({length:50},(_,i)=>{
+    const row:Record<string,unknown>={비고:'비고 '+i+' '+longValue(next,200,400)};
+    for(const key of keys)row[key]='SYN_'+i+'_'+key+': '+longValue(next,300,600)+'\n둘째 문장 & <확인> "인용" > 끝.\t탭 뒤 '+i;
+    row['수량']=0;row['단가']=false;row['공고번호']='00'+String(i).padStart(6,'0');
+    return row;
+  });
+  const input=encode(rows),inputBefore=Buffer.from(input),data=parseQuickData(input);
+  const matches=matchPlaces(places,data.records);
+  assert.equal(matches.filter(m=>m.kind==='field'&&m.state==='ok').length,keys.length);
+  assert.equal(matches.filter(m=>m.kind==='field'&&m.state==='badKey').length,4);
+  const first=generateAll(bytes,places,data,'shaped.hwpx','error'),second=generateAll(bytes,places,data,'shaped.hwpx','error');
+  let filled=0,skips=0,newErrors=0,direct=0;
+  for(let i=0;i<rows.length;i++){
+    const a=first[i]!,b=second[i]!,record=data.records[i]!;assert('dataset' in record);
+    assert(a.view.ok&&a.output,JSON.stringify(a.view.errors));
+    assert.deepEqual(a.output,b.output);assert.deepEqual(a.view,b.view);
+    const expected=generate(bytes,emptyTemplate(),record.dataset,{mode:'baseline',missing:'error'});
+    assert(expected.ok&&!expected.dryRun);assert.deepEqual(a.output,expected.output);direct++;
+    assert.equal(a.view.filled,listed,'목록의 채울 곳 수 = 실제 채운 곳 수');
+    const notPath=a.view.skipped.filter(s=>s.code==='MERGE_KEY_NOT_PATH');
+    assert.equal(notPath.length,4);assert.equal(a.view.skipped.length,4);
+    assert(notPath.every(s=>s.place?.startsWith('메일머지 "')));
+    const multiline=[...keys,'비고'].filter(k=>/[\n\r\t]/.test(String(rows[i]![k])));
+    assert(multiline.length>=9);
+    assert.deepEqual(a.view.notes.filter(n=>n.code==='QUICK_MULTILINE').map(n=>n.place).sort(),multiline.map(k=>'키 '+k).sort());
+    const after=listFields(docOf(a.output));
+    assert.deepEqual(after.map(f=>[f.type,f.mergeKey,f.occurrence]),fieldsBefore.map(f=>[f.type,f.mergeKey,f.occurrence]));
+    for(const f of after)if(!isValidPath(f.mergeKey!))assert.equal(f.valueText,'{{'+f.mergeKey+'}}');
+    assert(after.filter(f=>f.mergeKey==='사업명').every(f=>f.valueText===rows[i]!['사업명']));
+    assert.equal(after.find(f=>f.mergeKey==='수량')?.valueText,'0');assert.equal(after.find(f=>f.mergeKey==='단가')?.valueText,'false');
+    const errors=compareToBaseline(baseline,validateDocument(a.output)).newErrors;assert.deepEqual(errors,[]);
+    filled+=a.view.filled;skips+=notPath.length;newErrors+=errors.length;
+  }
+  assert.equal(filled,1400);assert.equal(skips,200);assert.equal(newErrors,0);assert.equal(direct,50);
+  assert.deepEqual(Buffer.from(bytes),before);assert.deepEqual(Buffer.from(input),inputBefore);
+  t.diagnostic('seed=0x24f1e1d5; mailmerge=30 (body12/cell12/header6, key_not_path=4); placeholders_listed=2; display_placeholders_not_listed=26; rows=50x2; filled=1400; skipped=200; direct=50; new_errors=0');
+});
+
+// 작업창 추천 목록(#24): 서버가 주는 입력 항목 후보에 메일머지·누름틀이 오르고, 필드 표시 글 안 {{키}}는 따로 오르지 않는다(엔진 8.8.5). TXT는 전처럼 {{키}}만.
+type Input={kind:'clickHere'|'mailMerge'|'placeholder';name:string;row:string;start:number;end:number;usable?:boolean};
+type Opened={paragraphs:{id:string;text:string}[];inputs:Input[]};
+const openIn=(name:string,bytes:Uint8Array)=>createWorkbench().post('/api/workbench/open',{name,content:Buffer.from(bytes).toString('base64')}) as Opened;
+
+test('작업창 추천 후보: 공개 합성 서식은 메일머지 33·누름틀 4·독립 {{키}} 8, 필드 후보의 위치 글이 표시 글과 같다',()=>{
+  const bytes=source(),opened=openIn('merge.hwpx',bytes),fields=listFields(docOf(bytes));
+  const count=(kind:Input['kind'])=>opened.inputs.filter(x=>x.kind===kind).length;
+  assert.deepEqual([count('mailMerge'),count('clickHere'),count('placeholder')],[33,4,8]);
+  const text=(x:Input)=>{const r=opened.paragraphs.find(p=>p.id===x.row);assert(r,x.row);return r.text.slice(x.start,x.end);};
+  const shown=opened.inputs.filter(x=>x.kind!=='placeholder');
+  assert.deepEqual(shown.map(text).sort(),fields.filter(f=>f.type==='MAILMERGE'||f.type==='CLICK_HERE').map(f=>f.valueText).sort());
+  assert.deepEqual(shown.filter(x=>x.usable===false).map(x=>x.name).sort(),fields.filter(f=>f.type==='MAILMERGE'&&!isValidPath(f.mergeKey!)).map(f=>f.mergeKey!).sort());
+  for(const x of opened.inputs.filter(i=>i.kind==='placeholder'))
+    assert(!shown.some(f=>f.row===x.row&&x.start<f.end&&x.end>f.start),'필드 표시 글 안 {{키}}는 따로 오르지 않는다');
+  const order=new Map(opened.paragraphs.map((p,i)=>[p.id,i]));
+  assert(opened.inputs.every((x,i,a)=>i===0||order.get(a[i-1]!.row)!<order.get(x.row)!||order.get(a[i-1]!.row)===order.get(x.row)&&a[i-1]!.start<=x.start),'문서 순서');
+});
+
+test('작업창 추천 후보: 실제 공고서 모양(메일머지 30곳·표시 글 {{키}})은 메일머지 30·{{키}} 2로 겹치지 않고, TXT는 {{키}}만 전처럼',()=>{
+  const opened=openIn('shaped.hwpx',realShapedSource());
+  assert.equal(opened.inputs.filter(x=>x.kind==='mailMerge').length,30);
+  assert.deepEqual(opened.inputs.filter(x=>x.kind==='placeholder').map(x=>x.name),['비고','비고']);
+  assert.equal(opened.inputs.filter(x=>x.usable===false).length,4);
+  const txt=openIn('plain.txt',new TextEncoder().encode('제목 {{사업명}}\n{{#붙임}}\n금액 {{ 금액 }} 끝\n{{/붙임}}'));
+  assert.deepEqual(txt.inputs.map(x=>[x.kind,x.name,x.row,x.start]),[['placeholder','사업명','p:0:0',3],['placeholder',' 금액 ','p:0:2',3]]);
+});

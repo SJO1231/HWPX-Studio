@@ -31,7 +31,7 @@ export type PlacesView = {
    * `count`는 `fillable`과 `unfillable`의 `count` 합이다.
    */
   fields: { name: string; count: number; mailMerge?: number; usable: boolean; fillable: number; merging: number; unfillable: { shape: UnfillableShape; count: number; reasons?: string[] }[] }[];
-  /** `{{키}}`별 곳 수 */
+  /** `{{키}}`별 곳 수. 메일머지가 맡는 표시 글 안의 `{{키}}`는 엔진이 채우지 않으므로(필드가 값을 넣는다, 엔진 명세 8.3) 세지 않는다 */
   placeholders: { key: string; count: number }[];
   /** 후보 자리(표시만). 많으면 앞의 200개 */
   candidates: { kind: CandidateKind; evidence: string }[];
