@@ -1416,8 +1416,9 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | 1판 `rules[]`와 `slots`·`places`를 함께 씀 | `TPL_MIXED_RULES` |
 | 덩어리 해시에 해당하는 덩어리가 없다 | `TPL_FRAGMENT_MISSING` |
 | 원형 핀의 내용이 블록 내용과 다르다 | `TPL_PROTO_MISMATCH` |
-| 원형의 `source`·`history`(8.8.17) 형식: 시각이 ISO 8601 UTC가 아님, 지문의 문단 수가 구간과 다름, 판 기록이 비었거나 판 번호가 오름차순이 아니거나 마지막 줄이 원형의 판이 아님 | `TPL_FIELD` |
+| 원형의 `source`·`history`(8.8.17) 형식: 시각이 ISO 8601 UTC가 아니거나 달력에 없는 날짜·시각(2월 30일·4월 31일·평년 2월 29일·24:00 등), 지문의 문단 수가 구간과 다름, 판 기록이 비었거나 판 번호가 오름차순이 아니거나 마지막 줄이 원형의 판이 아님 | `TPL_FIELD` |
 
+- 범위 지문(`range` 앵커의 `print`, 원형의 `source.print`)은 지문 자체의 형식(모르는 키 → `count` → `first` → `last` → `sha256` 순)을 먼저 보고, 그다음 `count`가 범위·구간의 문단 수와 같은지 본다. 둘 다 틀리면 지문 형식 오류가 나고 `where`는 지문 안(예: `anchors[0].print.first`)이다. 문단 수만 틀리면 `where`는 앵커·출처 자신(예: `anchors[0]`)이다(#99 D8).
 - 블록 저장소의 코드(`BLOCK_FORMAT_DIFFERS`·`BLOCK_KEYS_DROPPED`·`BLOCK_NAME_CONFLICT`·`BLOCK_NEWER_VERSION`·`TPL_SOURCE_CHANGED`, 2절)는 읽기 검사가 내지 않는다. 8.8.17의 함수가 경고·보고·검사 목록으로 낸다.
 - 읽을 때 잡지 않고 생성 때 잡는 것: `slot.parent`가 null이 아닌 중첩 슬롯(`TPL_NESTED`, 8.8.6), 원본 해시 불일치(`TPL_SOURCE_MISMATCH`, 8.8.12), 별칭 충돌·형식 오류(`DATA_ALIAS_CONFLICT`·`DATA_FORMAT`, 값 확정 때, 8.8.4).
 - `block-proto@1`·`case@1`의 판 번호가 다르면 `TPL_VERSION`, 형식이 틀리면 `TPL_FIELD`다(`where`가 어느 파일 형식인지 알려 준다).
@@ -1640,7 +1641,7 @@ type AnchorAddress = Pick<WordAnchor, "kind" | "at" | "start" | "end"> | Pick<Li
 | `source.sha256` | 떼어 낸 문서 바이트의 sha256 | 조각의 `source.sha256`과 같다 |
 | `source.selection` | 떼어 낸 구간(7.2의 조각 선택 꼴) | 범위를 그 문서에서 찾은 자리(relocated면 새 자리) |
 | `source.print` | 그 구간의 범위 지문(7.10 `range`의 `print`) | `count`는 구간의 문단 수 |
-| `source.extractedAt` | 떼어 낸 시각 | ISO 8601 UTC(예: `2026-10-06T09:30:00Z`, 밀리초 선택). 엔진은 시계를 모르므로 호출자가 준다 |
+| `source.extractedAt` | 떼어 낸 시각 | ISO 8601 UTC(예: `2026-10-06T09:30:00Z`, 밀리초 선택), 달력에 있는 날짜·시각(`history[].at`도 같다, #99 D3). 엔진은 시계를 모르므로 호출자가 준다 |
 | `history[]` | 판마다 `{ version, at, change }` | 비어 있지 않고, 판 번호 오름차순이며, 마지막 줄이 원형의 판이다. `change`는 사람이 읽는 바뀐 점이고 문서 글·값 원문을 넣지 않는다 |
 
 - `content.fragment`는 조각 덩어리(`serializeFragment(extractFragment(…))`의 UTF-8 바이트)의 sha256이다. 조각은 `extractFragment` 결과 그대로라 블록 자신의 서식 자원(의존 닫힘)과 이진 자료를 담는다. 덩어리는 원형 밖에 둔다(2판 템플릿의 덩어리와 같은 꼴).
@@ -1654,7 +1655,7 @@ type AnchorAddress = Pick<WordAnchor, "kind" | "at" | "start" | "end"> | Pick<Li
 | `extractBlock(doc, range, meta)` | `range`는 `range`·`headingRange` 앵커나 초안(`id`는 보지 않는다). `checkAnchors`(8.8.13)로 찾아 exact·relocated만 받고(relocated는 `ANCHOR_RELOCATED` 경고를 `issues`에 담고 찾은 자리에서 뗀다), changed·ambiguous·notFound는 그 코드로 던진다. 거절은 조각 계약과 같다(`FRAG_SECTION_PROPS`, `FRAG_SPLITS_FIELD`. 표 칸 경계는 범위 앵커가 같은 부모의 연속 문단이라 넘을 수 없다). `meta = { id, name, at, note?, change? }`. 결과 `{ proto(1판), fragment, blob, issues }`. 원형은 정규 JSON으로 쓰고 다시 읽어 검사한 것이다(id 형식 `TPL_ID`, 빈 이름·시각 꼴 `TPL_FIELD`). `history`는 `[{ version: 1, at, change: change ?? "첫 저장" }]`. 같은 입력은 같은 원형 JSON·덩어리 바이트다 |
 | `reextractBlock(resultDoc, range, proto, meta)` | 결과 문서(넣고 고친 문서)의 범위를 다시 떼어 같은 블록의 새 판을 만든다: id 그대로, `version` + 1, `previous`는 직전 판 번호와 내용 해시, `history`는 직전 기록에 새 줄을 더한 것(직전에 기록이 없으면 새 줄만), `source`는 결과 문서의 해시·구간·지문·`meta.at`, `keys`는 다시 계산한다. 바뀐 점은 `meta.change`, 없으면 `meta.previous`(직전 판의 조각)와 견준 수량 요약(문단·표·그림·누름틀·입력 항목(`keys`) 수의 변화 — 예: "입력 항목 2→0개", 글이 다른 문단 수, 서식 참조가 다른 곳 수. 모두 같으면 "내용 변화 없음"), 그것도 없으면 "다시 저장"이다. `meta = { at, change?, previous?, name?, note? }`. 이름은 `meta.name`이 없으면 그대로이고, 직전 판의 `note`는 넘기지 않는다(새 판의 메모는 `meta.note`). 직전 판 `keys` 가운데 새 판에 없는 것이 있으면(NFC로 견준다) 경고 `BLOCK_KEYS_DROPPED` 하나를 `issues`에 더한다(메시지에 사라진 키를 직전 판 순서로 적는다, `where`는 `block:<id>`). 채운 결과 문서에서 다시 떼면 `{{키}}`가 이번 건 값으로 바뀌어 있어 그 값이 공용 블록 글이 되기 때문이다. 막지 않는다 |
 | `planBlockInsert(target, proto, blob, at, options?)` | `blockFragment(proto, blob)`로 덩어리를 확인하고(글 블록이거나 해시가 `content.fragment`와 다르면 `TPL_FRAGMENT_MISSING`, 조각 JSON이 아니면 `FRAG_SCHEMA`) `planImport`(7.5)를 그대로 쓴다(블록 서식 유지, 자동 변경 없음. `options`는 `planImport`의 옵션 `{ reissueInternalDuplicates? }` 그대로). 넣는 자리 문단(`at`의 문단)과 블록 최상위 문단들의 서식이 다르면 경고 `BLOCK_FORMAT_DIFFERS` 하나와 `formatDiffs`를 더한다. `summary.formatDiffParagraphs`는 서식이 다른 블록 문단 수다 |
-| `blockFormatDiffs(target, fragment, at)` | 블록 최상위 문단마다 문단 모양(`paraPr`)·스타일(`style`)의 자원 지문(7.4)을 자리 문단의 것과 견줘, 다른 것만 `{ paragraph, property, block, target }`(블록 문단 순서, 한 문단 안에서 `paraPr` 다음 `style`)으로 돌려준다. 모양으로 견주므로 문서마다 id가 달라도 같은 모양이면 같다. 참조 없음은 `none`, 없는 자원은 `missing:<id>`로 본다. 글자 모양은 보지 않는다. 자리 문단이 없으면 `FRAG_INSERT_POINT` |
+| `blockFormatDiffs(target, fragment, at)` | 블록 최상위 문단마다 문단 모양(`paraPr`)·스타일(`style`)의 자원 지문(7.4)을 자리 문단의 것과 견줘, 다른 것만 `{ paragraph, property, block, target }`(블록 문단 순서, 한 문단 안에서 `paraPr` 다음 `style`)으로 돌려준다. 모양으로 견주므로 문서마다 id가 달라도 같은 모양이면 같다. 참조 없음은 `none`, 없는 자원은 `missing:<id>`로 본다. 블록 쪽은 넣은 뒤의 모양으로 본다: 원본에도 없던 자원을 가리키는 참조(`FRAG_DANGLING_SOURCE`. 문단의 참조와 자원 안의 참조 모두, 예: 문단 모양 → 탭)는 가져오기가 id를 그대로 옮기므로(7.5) 그 id를 대상에서 풀어 지문을 만든다(#99 D5). 글자 모양은 보지 않는다. 자리 문단이 없으면 `FRAG_INSERT_POINT` |
 | `planBlockUpdate(t, proto, blob, doc, previous?)` | 원형의 새 판을 템플릿에 전파하는 계획(`planProtoUpdate`, 8.8.7)과 검사 목록 하나. 대상 블록(그 원형을 더 낮은 판으로 고정한 블록)마다 자리 못 찾음(원형 키에 자리·연결이 없음 `PROTO_UNBOUND_KEY` — 없는 키마다 하나씩 전부 담고(`planProtoUpdate`는 첫 키에서 던진다), 이때 `template`이 없다. 슬롯 앵커를 바탕 문서 `doc`에서 찾지 못함 `ANCHOR_CHANGED`·`ANCHOR_AMBIGUOUS`·`ANCHOR_NOT_FOUND`, `where`는 `slots.<id>`), 입력 항목 사라짐(직전 판 원형 `previous`를 주면 `reextractBlock`과 같은 판정으로 `BLOCK_KEYS_DROPPED` 경고, `where`는 `blocks.<id>`. 주지 않으면 보지 않는다), 이름 충돌(`BLOCK_NAME_CONFLICT`), 서식 차이(슬롯 앵커가 찾은 자리의 첫 문단 기준 `BLOCK_FORMAT_DIFFERS` 경고와 `formatDiffs`)를 본다. 결과 `{ template?, updated, issues, formatDiffs }`. 오류가 있어도 `template`이 있으면 돌려준다. 입력은 바꾸지 않고, 저장할지 새로 만들지는 사용자 몫이다 |
 | `checkTemplateUpdates(t, latestOf, currentSource?)` | "최신 버전 있음" 알림 목록이다(템플릿을 바꾸지 않는다). `currentSource`(지금 바탕 문서의 sha256)가 `source.sha256`과 다르면(대소문자 무시) `TPL_SOURCE_CHANGED { template, version, expected, actual, message }`, 원형을 고정한 블록마다 `latestOf(원형 id)`가 핀보다 크면 `BLOCK_NEWER_VERSION { template, block, proto, pinned, latest, message }`. 저장소가 모르는 원형(undefined)과 분기 블록은 알리지 않는다(분기는 `listProtoUsage`의 `forked`). 순서는 바탕 문서 다음 블록(템플릿 순서). 형식 중립(`src/template/`) |
 
@@ -1674,7 +1675,8 @@ type AnchorAddress = Pick<WordAnchor, "kind" | "at" | "start" | "end"> | Pick<Li
 
 **알려진 한계**
 
-- 서식 비교는 자리 문단 하나와 블록 최상위 문단만 본다(표 칸 안 문단과 글자 모양은 보지 않는다). 제목과 본문으로 된 블록을 제목 자리에 넣으면 본문 문단은 늘 다르다고 나온다(사용자 결정대로 표시만 한다).
+- 서식 비교는 자리 문단 하나와 블록 최상위 문단만 본다(표 칸 안 문단과 글자 모양은 보지 않는다). 제목과 본문으로 된 블록을 제목 자리에 넣으면 본문 문단은 늘 다르다고 나온다(사용자 결정대로 표시만 한다. 역할별(제목 ↔ 제목, 본문 ↔ 본문)로 견줄지는 사용자 결정 대기, #99 D6).
+- 원본에도 대상에도 없는 id를 가리키는 블록 문단은 `missing:<id>`로 견준다. 가져오기가 그 id를 새로 더하는 같은 종류의 자원에 주면(대상의 다음 새 id와 같을 때) 넣은 문단은 그 새 자원을 가리키게 되어 비교와 다를 수 있다.
 - 블록 안 누름틀·메일머지 이름에 템플릿 자리가 없는 것은 업데이트 검사가 알리지 않는다(생성은 등록되지 않은 필드를 손대지 않는다, 8.8.12).
 - `keys`와 바뀐 점 요약은 엔진이 계산하지만 `readBlockProto`는 형식만 본다(8.8.7과 같다).
 

@@ -11,6 +11,7 @@ import {
   makeLookup,
   openPackage,
   parseFragment,
+  planImport,
   serializeFragment,
   validateDocument,
   walkParagraphs,
@@ -285,7 +286,7 @@ test("8.8.17 서식 비교(참·거짓): 같은 모양 자리는 경고 0건, �
   assert.ok(same >= 8 && differ >= 70, `같은 서식 ${same}, 다른 서식 ${differ}`);
 });
 
-test("8.8.17 서식 비교(독립 대조): 한컴 저장본·합성 문서 사이에서 blockFormatDiffs = 문단마다 fingerprintResource로 견준 결과", (t) => {
+test("8.8.17 서식 비교(독립 대조): 한컴 저장본·합성 문서 사이에서 blockFormatDiffs = 넣은 결과 문서에서 문단마다 fingerprintResource로 견준 결과", (t) => {
   const docs = ["D1", "D2", "D3", "D5", "hancom-merged", "merge/merge-fields"].map((n) => reparse(readFixture(n)));
   const print = (doc: HwpxDocument, kind: string, id: string | null): string => {
     if (id === null) return "none";
@@ -307,12 +308,15 @@ test("8.8.17 서식 비교(독립 대조): 한컴 저장본·합성 문서 사�
       continue;
     }
     for (const target of docs) {
+      // 블록 쪽은 실제로 넣은 결과 문서의 문단으로 본다(자원 대응은 넣는 자리와 무관하다. 원본에 없던 참조는 대상에서 풀린다, #99 D5)
+      const out = reparse(applyPlan(target.pkg, planImport(target, block.fragment, { sectionIndex: 0, parentPath: [], index: 0, position: "after" })));
+      const inserted = at(out.sections, 0).paragraphs.slice(1, 1 + to - from + 1);
       at(target.sections, 0).paragraphs.forEach((spot, j) => {
         const want: [number, string][] = [];
-        for (let i = from; i <= to; i++) {
-          const p = at(list, i);
-          if (print(src, "paraPr", p.attrs.paraPrIDRef) !== print(target, "paraPr", spot.attrs.paraPrIDRef)) want.push([i - from, "paraPr"]);
-          if (print(src, "style", p.attrs.styleIDRef) !== print(target, "style", spot.attrs.styleIDRef)) want.push([i - from, "style"]);
+        for (let i = 0; i <= to - from; i++) {
+          const p = at(inserted, i);
+          if (print(out, "paraPr", p.attrs.paraPrIDRef) !== print(target, "paraPr", spot.attrs.paraPrIDRef)) want.push([i, "paraPr"]);
+          if (print(out, "style", p.attrs.styleIDRef) !== print(target, "style", spot.attrs.styleIDRef)) want.push([i, "style"]);
         }
         const got = blockFormatDiffs(target, block.fragment, { sectionIndex: 0, parentPath: [], index: j });
         assert.deepEqual(got.map((d) => [d.paragraph, d.property]), want);
