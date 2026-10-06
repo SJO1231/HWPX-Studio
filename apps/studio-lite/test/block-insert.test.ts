@@ -32,7 +32,7 @@ test('stored block replacement: 50 records, two targets, one-pass values, restor
  }
  const edited=app.post('/api/workbench/generate',{...work,edits:[{id:opened.paragraphs[2].id,text:'outside **{{value}}**'}]}) as any;assert.equal(edited.ok,true);assert(edited.text.includes('outside 긴 값'));
  const saved=app.post('/api/workbench/save',work) as any,restored=app.post('/api/workbench/restore',{workspace:saved.workspace}) as any;
- assert.deepEqual(restored.placements,placements);assert(restored.placementWarnings[stored.id+':'+placements[0]!.from].length>0);assert.equal(restored.placementNames[stored.id],'블록 한 가지');assert.equal((app.post('/api/workbench/generate',{...work,session:restored.session}) as any).filled,52);
+ const protoId=library.material(stored.id,1).proto.id;assert.deepEqual(restored.placements,placements.map(p=>({...p,id:protoId})));assert(restored.placementWarnings[protoId+':'+placements[0]!.from].length>0);assert.equal(restored.placementNames[protoId],'블록 한 가지');assert.equal((app.post('/api/workbench/generate',{...work,session:restored.session}) as any).filled,52);
  assert.deepEqual(Buffer.from(app.get('/api/workbench/source',new URLSearchParams({session:opened.session}))!.body),Buffer.from(target));
  for(const bad of [[placements[0],placements[0]],[{...placements[0],version:2}],[{...placements[0],id:'missing'}]]){
    assert.throws(()=>app.post('/api/workbench/generate',{...work,placements:bad}));assert.throws(()=>app.get('/api/workbench/result',new URLSearchParams({session:opened.session})),(e:any)=>e.code==='WORKBENCH_RESULT');
@@ -44,7 +44,7 @@ test('stored block replacement: 50 records, two targets, one-pass values, restor
 
 test('legacy fragment migration keeps UUID and payload; proto ID is stable after repeated opens',()=>{
  const db=new DatabaseSync(':memory:');try{let library=createBlockLibrary(db);const doc=parseDocument(openPackage(buildHwpx([textPara('source')+textPara('body')]))),saved=library.save(extractBlockDraft(doc,'legacy.hwpx',{sectionIndex:0,parentPath:[],from:1,to:1}),'legacy');
- const before=db.prepare('SELECT fragment FROM lite_block WHERE id=?').get(saved.id)!.fragment;db.exec('DROP INDEX lite_block_proto_id; ALTER TABLE lite_block DROP COLUMN proto');
+ const before=db.prepare('SELECT fragment FROM lite_block WHERE id=?').get(saved.id)!.fragment;db.exec('DROP INDEX lite_block_proto_version; ALTER TABLE lite_block DROP COLUMN proto');
  library=createBlockLibrary(db);const first=library.material(saved.id,1);assert.match(first.proto.id,/^k[0-9a-f]{8}$/);assert.equal(first.proto.source,undefined);
  library=createBlockLibrary(db);assert.equal(library.material(saved.id,1).proto.id,first.proto.id);assert.equal(db.prepare('SELECT fragment FROM lite_block WHERE id=?').get(saved.id)!.fragment,before);
  const corrupt={...first.proto,content:{fragment:'0'.repeat(64)}};db.prepare('UPDATE lite_block SET proto=? WHERE id=?').run(JSON.stringify(corrupt),saved.id);assert.throws(()=>library.material(saved.id,1),(e:any)=>e.code==='TPL_FRAGMENT_MISSING');

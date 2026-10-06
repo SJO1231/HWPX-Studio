@@ -1,5 +1,5 @@
 // Store engine fragments and confirm placement before changing the generated result.
-export function installBlockLibrary({selection, session, api, status, beforeOpen, previewPlacement, onSaved}) {
+export function installBlockLibrary({selection, session, api, status, beforeOpen, previewPlacement, onSaved, currentUsage}) {
   const $ = s => document.querySelector(s), dialog = $('#block-library-dialog');
   const body = $('#block-library-body'), title = $('#block-library-title');
   let busy = false, draft, savedFocus;
@@ -23,16 +23,42 @@ export function installBlockLibrary({selection, session, api, status, beforeOpen
     body.append(element('h3', '원문 일부'), element('pre', item.excerpt, 'block-excerpt'),
       element('p', '원문 일부만 표시합니다. 블록 단독 조판 미리보기는 아직 지원하지 않습니다.', 'muted'));
   }
-  async function get(path) {
-    const response = await fetch(path), data = await response.json();
-    if (!response.ok) throw Error(data.error || '블록을 불러오지 못했습니다.');
-    return data;
+  async function get(path, data) {
+    const response = await fetch(path,data===undefined?undefined:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}), result = await response.json();
+    if (!response.ok) throw Error(result.error || '블록을 불러오지 못했습니다.');
+    return result;
+  }
+  async function manage(item, container) {
+    const group=element('section',undefined,'block-management');container.append(group);
+    const label=element('label','블록 이름'),input=element('input');input.value=item.name;input.maxLength=120;label.append(input);group.append(label);
+    const note=element('p','','block-warning');note.setAttribute('role','status');
+    const rename=button('이름 바꾸기',async()=>{
+      if(busy)return;busy=true;rename.disabled=true;
+      try{await get('/api/block/rename',{id:item.id,name:input.value});item.name=input.value.trim();if(container===body)title.textContent=item.name;note.textContent='이름을 바꿨습니다. 저장한 내용과 옛 판은 그대로입니다.';document.dispatchEvent(new Event('block-library-change'));}
+      catch(e){note.textContent=e.message;}finally{busy=false;rename.disabled=false;refresh();}
+    });group.append(rename,note);
+    try {
+      const usage=await get('/api/block/usage?id='+encodeURIComponent(item.id));
+      if(!group.isConnected)return;
+      for(const u of usage.usages)group.append(element('p',`${u.kind==='workspace'?'저장한 작업':'템플릿'} · ${u.name} · 판 ${u.pinned??u.forkedFrom} · ${{current:'현재 판',behind:'최신 판 있음',forked:'분기됨'}[u.state]}`));
+      const current=currentUsage?.(item);
+      if(current)group.append(element('p',current));
+      const remove=button('삭제',async()=>{
+        if(busy)return;
+        if(currentUsage?.(item)){note.textContent=currentUsage(item);return;}
+        const hint=usage.templateTracking?'': '\n템플릿 분기점 사용처는 아직 추적 전입니다. 저장한 작업의 사용처는 확인했습니다.';
+        if(!confirm('“'+item.name+'”의 모든 판을 삭제할까요? 되돌릴 수 없습니다.'+hint))return;
+        busy=true;remove.disabled=true;
+        try{await get('/api/block/delete',{id:item.id,confirmed:true});group.replaceChildren(element('p','블록을 삭제했습니다.'));document.dispatchEvent(new Event('block-library-change'));if(container===body)await showList();else container.closest('#detail-content')?.querySelector('#detail-excerpt')?.replaceChildren();}
+        catch(e){note.textContent=e.message;}finally{busy=false;refresh();}
+      });remove.disabled=Boolean(usage.usages.length||current);remove.title=remove.disabled?'사용 중인 블록입니다. 표시된 사용처에서 연결을 먼저 해제하세요.':'';group.append(remove);
+    }catch(e){note.textContent='사용처 확인에 실패해 삭제를 막았습니다. '+e.message;}
   }
   async function showItem(id) {
     busy = true;
     try {
       const item = await get('/api/block?id=' + encodeURIComponent(id));
-      open(item.name); details(item);
+      open(item.name); details(item);await manage(item,body);
       body.append(element('p', `${item.change} · ${new Date(item.createdAt).toLocaleString('ko-KR')}`), button('저장소 목록', showList));
       if(previewPlacement){
         const place=button('선택한 범위에 넣기',async()=>{
@@ -66,7 +92,7 @@ export function installBlockLibrary({selection, session, api, status, beforeOpen
           element('td', `${item.version} · 입력 ${item.inputCount}`), element('td', item.change),
           element('td', new Date(item.createdAt).toLocaleString('ko-KR'))); table.append(tr);
       }
-      const scroll = element('div', undefined, 'block-list-scroll'); scroll.append(table); body.append(scroll);
+      const search=element('input');search.type='search';search.maxLength=200;search.placeholder='이름 또는 출처 검색';search.setAttribute('aria-label','블록 검색');search.oninput=()=>{const q=search.value.toLocaleLowerCase();for(const row of [...table.rows].slice(1))row.hidden=!row.textContent.toLocaleLowerCase().includes(q);};const scroll = element('div', undefined, 'block-list-scroll'); scroll.append(table); body.append(search,scroll);
     } catch (e) { status(e.message, 'error'); }
     finally { busy = false; refresh(); }
   }
@@ -107,5 +133,5 @@ export function installBlockLibrary({selection, session, api, status, beforeOpen
       el.disabled = Boolean(reason) || busy; el.title = reason || '선택한 문단 전체를 확인한 뒤 저장합니다.';
     }
   }
-  return {begin, refresh};
+  return {begin, refresh, manage, showItem};
 }

@@ -24,7 +24,7 @@ type Heading = { id: string; level: 1 | 2 };
 type Block = { id: string; from: string; to: string; text: string; alias: string };
 type Placement = {id:string;version:number;from:string;to:string};
 type Work = { edits: Edit[]; headings: Heading[]; blocks: Block[]; placements: Placement[]; index: number; missing: "error" | "keep" };
-type Session = { kind: 'hwpx' | 'text'; name: string; source: Uint8Array; doc?: HwpxDocument; sourceText?: string; rows: Row[]; data?: QuickData; dataContent?: string; output?: Uint8Array; blockPreviews?: Map<string, BlockDraft> };
+type Session = { workspaceId?: string; kind: 'hwpx' | 'text'; name: string; source: Uint8Array; doc?: HwpxDocument; sourceText?: string; rows: Row[]; data?: QuickData; dataContent?: string; output?: Uint8Array; blockPreviews?: Map<string, BlockDraft> };
 const rowId = (section: number, path: number[]) => `p:${section}:${path.join('.')}`;
 const sameParent = (a: Row, b: Row) => a.sectionIndex === b.sectionIndex && a.path.length === b.path.length && a.path.slice(0, -1).every((n, i) => n === b.path[i]);
 const contains = (a: Row, b: Row, row: Row) => sameParent(a, row) && row.path.at(-1)! >= a.path.at(-1)! && row.path.at(-1)! <= b.path.at(-1)!;
@@ -293,6 +293,7 @@ export function createWorkbench(library?: BlockLibrary) {
   const sessions = new Map<string, Session>();
   const sessionOf = (id: unknown) => { const s = typeof id === 'string' ? sessions.get(id) : undefined; if (!s) throw new HostError(404, 'WORKBENCH_SESSION', '문서를 다시 올려 주세요.'); return s; };
   const registered = (s: Session) => {
+    s.workspaceId ??= randomUUID();
     const fields = s.kind === 'hwpx' ? analyzePlaces(s.source).fields : [];
     const headings = s.doc ? detectHeadings(s.doc) : [];
     const outline = headings.map(h => ({id:rowId(h.at.sectionIndex,[...h.at.parentPath,h.index]),name:h.text,level:h.marker.level}));
@@ -324,10 +325,13 @@ export function createWorkbench(library?: BlockLibrary) {
         if (path === '/api/workbench/restore') {
           need(typeof input.workspace !== 'string' || Buffer.byteLength(input.workspace) <= 20 * 1024 * 1024, 'WORKBENCH_WORKSPACE');
           const raw: unknown = typeof input.workspace === 'string' ? JSON.parse(input.workspace) : input.workspace;
-          need(isObj(raw) && raw.schema === schema && (raw.kind === 'text' || raw.kind === 'hwpx') && Object.keys(raw).every(k => ['schema', 'kind', 'name', 'source', 'sha256', 'data', 'edits', 'headings', 'blocks', 'placements', 'index', 'missing'].includes(k)), 'WORKBENCH_WORKSPACE');
+          need(isObj(raw) && raw.schema === schema && (raw.kind === 'text' || raw.kind === 'hwpx') && Object.keys(raw).every(k => ['schema', 'kind', 'name', 'source', 'sha256', 'data', 'edits', 'headings', 'blocks', 'placements', 'index', 'missing', 'workspaceId'].includes(k)), 'WORKBENCH_WORKSPACE');
           const s = open(raw.name, raw.source); need(raw.kind === s.kind, 'WORKBENCH_WORKSPACE'); need(raw.sha256 === hash(s.source), 'WORKBENCH_SOURCE_HASH');
           if (raw.data !== undefined) { const parsed = parseData(raw.data, 'data.json'); s.data = parsed.data; s.dataContent = parsed.content; }
+          need(raw.workspaceId===undefined||typeof raw.workspaceId==='string'&&/^[0-9a-f-]{36}$/.test(raw.workspaceId),'WORKBENCH_WORKSPACE');
+          s.workspaceId=raw.workspaceId as string|undefined;
           const work = workOf(s, raw);
+          for(const p of work.placements){need(library,'BLOCK_STORE');p.id=library.material(p.id,p.version).proto.id;}
           return { ...registered(s), ...work, placementNames:Object.fromEntries(work.placements.map(p=>{need(library,'BLOCK_STORE');return [p.id,library.material(p.id,p.version).item.name];})), placementWarnings:Object.fromEntries(work.placements.map(p=>{need(library,'BLOCK_STORE');return [p.id+':'+p.from,placementInfo(s,p,library).warnings];})), dataInfo: dataInfo(s) };
         }
         const s = sessionOf(input.session);
@@ -384,8 +388,11 @@ export function createWorkbench(library?: BlockLibrary) {
           const makeTemplate = path.endsWith('/template');
           if (makeTemplate && s.kind !== 'hwpx') return fail('WORKBENCH_TEMPLATE_HWPX', '실제 누름틀은 HWPX 문서에서 만들 수 있습니다. TXT에서는 {{키}}를 그대로 사용하세요.');
           const work = workOf(s, input);
-          for(const p of work.placements){need(library,'BLOCK_STORE');library.material(p.id,p.version);}
-          if (path.endsWith('/save')) return { name: `${sanitizeFileStem(s.name.replace(/\.txt$/i, ''))}.workspace.json`, workspace: JSON.stringify({ schema, kind: s.kind, name: s.name, source: Buffer.from(s.source).toString('base64'), sha256: hash(s.source), ...(s.dataContent === undefined ? {} : { data: s.dataContent }), ...work }) };
+          for(const p of work.placements){need(library,'BLOCK_STORE');p.id=library.material(p.id,p.version).proto.id;}
+          if (path.endsWith('/save')) {
+            library?.saveWorkspace(s.workspaceId!,s.name,work.placements);
+            return { name: `${sanitizeFileStem(s.name.replace(/\.txt$/i, ''))}.workspace.json`, workspace: JSON.stringify({ schema, workspaceId:s.workspaceId, kind: s.kind, name: s.name, source: Buffer.from(s.source).toString('base64'), sha256: hash(s.source), ...(s.dataContent === undefined ? {} : { data: s.dataContent }), ...work }) };
+          }
           const result = s.kind === 'text' ? buildText(s, work) : build(s, work, makeTemplate, library); s.output = result.output;
           return { ok: true, kind: s.kind, text: result.text, outputUrl: `/api/workbench/result?session=${input.session}`, filled: result.filled, changed: result.changed, bytes: result.output.length, notes: result.notes, ...('template' in result && result.template ? { template: true } : {}), ...('promoted' in result ? { promoted: result.promoted } : {}), ...('unresolved' in result ? { unresolved: result.unresolved } : {}) };
         }

@@ -18,7 +18,7 @@ const state = {
 const opens = createLatest(), picks = createLatest(), views = createLatest(), dataLoads = createLatest();
 const keyCopies = createLatest(), bodyCopies = createLatest();
 let resizeFrame, contextRequest = 0;
-const blockLibraryUI = installBlockLibrary({selection: blockSelection, session: () => state.session, api, status, beforeOpen: hideMenu, previewPlacement, onSaved:()=>{const r=state.activeRecommendation;if(r?.kind==='block'){r.status='confirmed';renderRecommendations();}void renderLibraryTab();}});
+const blockLibraryUI = installBlockLibrary({selection: blockSelection, session: () => state.session, api, status, beforeOpen: hideMenu, previewPlacement, currentUsage:item=>state.placements.some(p=>p.id===item.protoId||p.id===item.id)?'현재 작업에서 사용 중입니다. 배치를 취소한 뒤 다시 확인하세요.':undefined, onSaved:()=>{const r=state.activeRecommendation;if(r?.kind==='block'){r.status='confirmed';renderRecommendations();}void renderLibraryTab();}});
 
 function status(text, kind = '') {
   $('#status').textContent = text; $('#status').className = kind; $('#status').title = text;
@@ -736,11 +736,11 @@ $('#compare-file').addEventListener('change',async event=>{
 });
 
 async function previewPlacement(item){
-  const range=blockSelection(),placement={id:item.id,version:item.version,...range},session=state.session,revision=state.revision;
+  const range=blockSelection(),placement={id:item.protoId,version:item.version,...range},session=state.session,revision=state.revision;
   const result=await api('block-placement-preview',{...snapshot(),placements:[...state.placements,placement]});
   return {...result,commit(){
     if(session!==state.session||revision!==state.revision)throw Error('문서가 바뀌었습니다. 넣을 범위를 다시 확인하세요.');
-    remember();state.placements.push(placement);state.placementNames[item.id]=item.name;state.placementWarnings[item.id+':'+placement.from]=result.warnings;changed();renderEditor();void generate();
+    remember();state.placements.push(placement);state.placementNames[placement.id]=item.name;state.placementWarnings[placement.id+':'+placement.from]=result.warnings;changed();renderEditor();void generate();
   }};
 }
 function renderPlacements(){
@@ -801,6 +801,7 @@ async function selectRecommendation(r){
 }
 function renderSelectionDetail(force=false){
   if(state.detailLibrary)return;
+  $('#detail-library-tools').replaceChildren();
   const row=paragraph(state.chosen);$('#detail-content').dataset.kind=state.activeRecommendation?.kind??'input';$('#detail-form').hidden=!row;$('#confirm-input').hidden=state.activeRecommendation?.kind==='block';
   if(!row){$('#detail-title').textContent='선택 상세';$('#detail-location').textContent='먼저 부분을 고르세요';$('#detail-excerpt').textContent='';return;}
   const detailId=row.id+':'+state.caret?.start+':'+state.caret?.end;if(state.detailId===detailId&&!force)return;
@@ -828,13 +829,17 @@ function renderSourceTags(){
   }
 }
 function showRemote(){if(!state.chosen||state.busy)return;const el=$('#selection-remote');el.hidden=false;$('#remote-name').value=$('#detail-name').value;const p=state.pointer??{x:$('.original-pane').getBoundingClientRect().left+30,y:150};const r=el.getBoundingClientRect();el.style.left=Math.max(8,Math.min(p.x,innerWidth-r.width-8))+'px';el.style.top=Math.max(55,Math.min(p.y+8,innerHeight-r.height-35))+'px';}
+let libraryRequest=0;
 async function renderLibraryTab(){
+  const ticket=++libraryRequest;
   const box=$('#library-items');box.replaceChildren(uiNode('p','불러오는 중','rail-empty'));
-  try{const response=await fetch('/api/blocks');if(!response.ok)throw Error('블록 저장소를 열지 못했습니다.');const {blocks}=await response.json();box.replaceChildren();
-    for(const item of blocks){const b=uiNode('button',item.name,'library-row');b.type='button';b.append(uiNode('small',`문서 ${item.sourceHash.slice(0,10)} · 판 ${item.version} · 입력 ${item.inputCount}`),uiNode('small',item.change+' · '+new Date(item.createdAt).toLocaleString('ko-KR')));b.onclick=async()=>{try{const response=await fetch('/api/block?id='+encodeURIComponent(item.id));if(!response.ok)throw Error('블록을 열지 못했습니다.');const detail=await response.json();state.detailLibrary=item.id;document.body.classList.remove('detail-collapsed');$('#detail-title').textContent='블록 편집';$('#detail-location').textContent=`${detail.location} · 판 ${detail.version} · 입력 ${detail.inputCount}`;$('#detail-excerpt').textContent=detail.excerpt;$('#detail-form').hidden=true;}catch(e){status(e.message,'error');}};box.append(b);}
+  try{const response=await fetch('/api/blocks?q='+encodeURIComponent($('#library-search').value));if(!response.ok)throw Error('블록 저장소를 열지 못했습니다.');const {blocks}=await response.json();if(ticket!==libraryRequest)return;box.replaceChildren();
+    for(const item of blocks){const b=uiNode('button',item.name,'library-row');b.type='button';b.append(uiNode('small',`문서 ${item.sourceHash.slice(0,10)} · 판 ${item.version} · 입력 ${item.inputCount}`),uiNode('small',item.change+' · '+new Date(item.createdAt).toLocaleString('ko-KR')));b.onclick=async()=>{try{const response=await fetch('/api/block?id='+encodeURIComponent(item.id));if(!response.ok)throw Error('블록을 열지 못했습니다.');const detail=await response.json();state.detailLibrary=item.id;document.body.classList.remove('detail-collapsed');$('#detail-title').textContent='블록 편집';$('#detail-location').textContent=`${detail.location} · 판 ${detail.version} · 입력 ${detail.inputCount}`;$('#detail-excerpt').textContent=detail.excerpt;$('#detail-form').hidden=true;const tools=$('#detail-library-tools');tools.replaceChildren();const more=uiNode('button','크게 보기');more.onclick=()=>blockLibraryUI.showItem(item.id);tools.append(more);await blockLibraryUI.manage(detail,tools);}catch(e){status(e.message,'error');}};box.append(b);}
     if(!blocks.length)box.append(uiNode('p','HWPX 원문에서 범위를 선택하고 ‘블록으로 저장’을 누르세요.','rail-empty'));
   }catch(e){box.replaceChildren(uiNode('p',e.message,'rail-empty'));}
 }
+$('#library-search').oninput=()=>void renderLibraryTab();
+document.addEventListener('block-library-change',()=>void renderLibraryTab());
 $('#detail-toggle').onclick=()=>{const collapsed=document.body.classList.toggle('detail-collapsed');$('#detail-toggle').textContent=collapsed?'상세':'접기';$('#detail-toggle').setAttribute('aria-expanded',String(!collapsed));};
 for(const name of ['name','key'])$('#detail-'+name).addEventListener('input',()=>{if(state.chosen)state.detailDrafts.set(state.chosen,{name:$('#detail-name').value,key:$('#detail-key').value});});
 $('#confirm-input').onclick=()=>confirmInput($('#detail-name').value,$('#detail-key').value);

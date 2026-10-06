@@ -38,7 +38,8 @@ export function createApp(database=':memory:') {
       if(req.method==='GET') {
         const result=workbench.get(path,url.searchParams)??quick.get(path,url.searchParams);
         if(result)return send(200,result.body,'type' in result && typeof result.type==='string'?result.type:'application/vnd.hancom.hwpx',result.name?{'Content-Disposition':`attachment; filename="document.hwpx"; filename*=UTF-8''${encodeURIComponent(result.name)}`}:{});
-        if(path==='/api/blocks')return send(200,{blocks:blockLibrary.list()});
+        if(path==='/api/blocks')return send(200,{blocks:blockLibrary.list(url.searchParams.get('q')??'')});
+        if(path==='/api/block/usage')return send(200,blockLibrary.usage(url.searchParams.get('id')));
         if(path==='/api/block')return send(200,blockLibrary.get(url.searchParams.get('id')));
         if(path==='/api/health')return send(200,{ok:true});
         if(path==='/api/g2b/profiles')return send(200,{profiles:g2b.profiles()});
@@ -69,6 +70,8 @@ export function createApp(database=':memory:') {
       const chunks:Buffer[]=[];let size=0;
       for await(const chunk of req){size+=chunk.length;if(size>32*1024*1024)return send(413,{error:'요청은 32MB 이내여야 합니다.'});chunks.push(chunk);}
       const input=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      if(path==='/api/block/rename')return send(200,blockLibrary.rename(input?.id,input?.name));
+      if(path==='/api/block/delete')return send(200,blockLibrary.remove(input?.id,input?.confirmed));
       if(path.startsWith('/api/quick/'))return send(200,quick.post(path,input));
       if(path.startsWith('/api/workbench/'))return send(200,workbench.post(path,input));
       if(path==='/api/g2b/profiles') {

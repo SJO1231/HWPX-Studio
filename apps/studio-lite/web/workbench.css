@@ -28,3 +28,5 @@ body.text-work.detail-collapsed .workspace{grid-template-columns:210px minmax(0,
 body.text-work.show-text-preview .original-pane{display:none}body.text-work.show-text-preview .editor-pane{display:flex}body.text-work #txt-result-view,body.text-work [data-action=bold],body.text-work [data-action=group],body.text-work .zoom{display:none}
 
 .txt-missing{display:none}body.text-work .txt-missing{display:block}body.text-work [data-action=anchor],body.text-work #make-template{display:none}body.text-work.show-comparison .original-pane{display:flex}body.text-work.show-comparison .editor-pane{display:none}
+
+#library-search{width:100%;margin:8px 0}.block-management{border-top:1px solid var(--line);padding-top:12px;margin-top:12px}.block-management input{width:100%;max-width:450px;margin:8px 0}.block-management button{margin:4px 8px 4px 0}.block-management p{font-size:12px;overflow-wrap:anywhere}
