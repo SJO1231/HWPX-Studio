@@ -68,6 +68,7 @@ export function installBlockLibrary({selection, session, api, status, beforeOpen
       const usage=await get('/api/block/usage?id='+encodeURIComponent(item.id));
       if(!group.isConnected)return;
       for(const u of usage.usages)group.append(element('p',`${u.kind==='workspace'?'저장한 작업':'템플릿'} · ${u.name} · 판 ${u.pinned??u.forkedFrom} · ${{current:'현재 판',behind:'최신 판 있음',forked:'분기됨'}[u.state]}`));
+      if(usage.usages.some(u=>u.kind==='workspace'))group.append(element('p','저장한 작업을 다시 열어 배치를 취소한 뒤 다시 저장하면 사용 연결이 해제됩니다.','muted'));
       const current=currentUsage?.(item);
       if(current)group.append(element('p',current));
       const remove=button('삭제',async()=>{

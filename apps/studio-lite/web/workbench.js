@@ -44,6 +44,7 @@ function controls() {
   for(const id of ['scale','zoom-in','zoom-out']) $('#'+id).disabled=!available;
   $('#key-select').disabled=!available; $('#make-template').disabled=!available||state.kind!=='hwpx';
   $('#copy-body').disabled=state.busy||typeof state.output?.text!=='string';
+  $('#copy-body').title=state.busy?'문서 처리가 끝난 뒤 복사하세요.':!state.session?'문서를 먼저 여세요.':!state.output?'현재 업무 건과 편집 내용으로 다시 생성한 뒤 복사하세요.':'';
   $('#document-editor').disabled=!state.session; $('#document-editor').readOnly=state.busy;
   $('#undo').disabled=!available||!state.history.length; $('#redo').disabled=!available||!state.future.length;
   for(const button of document.querySelectorAll('[data-action]')) {
@@ -55,7 +56,7 @@ function controls() {
   for(const check of document.querySelectorAll('.rec-line input'))check.disabled=state.busy||check.dataset.confirmed==='true';
   $('#save-checked-blocks').disabled=state.busy||!state.recommendations.some(r=>r.kind==='block'&&r.status==='recommended');
   blockLibraryUI.refresh();
-  if(state.kind==='text')for(const b of document.querySelectorAll('[data-action=bold],[data-action=group],[data-action=heading1],[data-action=heading2]'))b.disabled=true;
+  if(state.kind==='text')for(const b of document.querySelectorAll('[data-action=bold],[data-action=group]'))b.disabled=true;
   for(const b of document.querySelectorAll('[data-action="branchDetail"]')){b.disabled=true;b.title='분기점 만들기는 다음 구현 단계에서 지원합니다.';}
   document.body.classList.toggle('has-document',Boolean(state.session));document.body.classList.toggle('text-work',state.kind==='text');document.body.classList.toggle('has-output',Boolean(state.output));
   $('#editor-title').textContent=state.kind==='text'?'TXT 템플릿':'편집';
@@ -492,7 +493,7 @@ async function copyKey() {
   }
 }
 function action(name) {
-  if(state.kind==='text'&&['bold','group','heading1','heading2'].includes(name))return;
+  if(state.kind==='text'&&['bold','group'].includes(name))return;
   hideMenu();if(state.busy)return;
   try {
     if(name==='inputDetail'||name==='dataDetail'){openInputDetail(name==='dataDetail');return;}
@@ -599,7 +600,7 @@ document.addEventListener('keydown', (event) => {
     if (event.key.toLowerCase() === 's') { event.preventDefault(); void saveWork(); }
     else if (event.key === 'Enter') { event.preventDefault(); void generate(); }
     else if (event.key.toLowerCase() === 'b' && document.activeElement?.id==='document-editor') { event.preventDefault(); makeBold(); }
-    else if (event.key.toLowerCase()==='z' && document.activeElement?.id==='document-editor') {event.preventDefault();undo(event.shiftKey);}
+    else if (event.key.toLowerCase()==='z' && (document.activeElement?.id==='document-editor'||state.kind==='hwpx'&&!document.activeElement?.matches('input,textarea,[contenteditable=true]'))) {event.preventDefault();undo(event.shiftKey);}
     else if (event.key.toLowerCase()==='g' && document.activeElement?.id==='document-editor') {event.preventDefault();action('group');}
     else if (event.key.toLowerCase() === 'o') { event.preventDefault(); if (!state.busy) $('#document-file').click(); }
   }
@@ -836,7 +837,7 @@ async function renderLibraryTab(){
   const box=$('#library-items');box.replaceChildren(uiNode('p','불러오는 중','rail-empty'));
   try{const response=await fetch('/api/blocks?q='+encodeURIComponent($('#library-search').value));if(!response.ok)throw Error('블록 저장소를 열지 못했습니다.');const {blocks}=await response.json();if(ticket!==libraryRequest)return;box.replaceChildren();
     for(const item of blocks){const b=uiNode('button',item.name,'library-row');b.type='button';b.append(uiNode('small',`문서 ${item.sourceHash.slice(0,10)} · 판 ${item.version} · 입력 ${item.inputCount??'미확인'}`),uiNode('small',item.change+' · '+new Date(item.createdAt).toLocaleString('ko-KR')));b.onclick=async()=>{try{const response=await fetch('/api/block?id='+encodeURIComponent(item.id));if(!response.ok)throw Error('블록을 열지 못했습니다.');const detail=await response.json();state.detailLibrary=item.id;document.body.classList.remove('detail-collapsed');$('#detail-title').textContent='블록 편집';$('#detail-location').textContent=`${detail.location} · 판 ${detail.version} · 입력 ${detail.inputCount??'미확인'}`;$('#detail-excerpt').textContent='';$('#detail-form').hidden=true;const tools=$('#detail-library-tools');blockLibraryUI.dispose(tools);tools.replaceChildren();const more=uiNode('button','크게 보기');more.onclick=()=>blockLibraryUI.showItem(item.id);tools.append(more);void blockLibraryUI.preview(detail,tools);await blockLibraryUI.manage(detail,tools);}catch(e){status(e.message,'error');}};box.append(b);}
-    if(!blocks.length)box.append(uiNode('p','HWPX 원문에서 범위를 선택하고 ‘블록으로 저장’을 누르세요.','rail-empty'));
+    if(!blocks.length)box.append(uiNode('p',$('#library-search').value.trim()?'검색 결과가 없습니다.':'HWPX 원문에서 범위를 선택하고 ‘블록으로 저장’을 누르세요.','rail-empty'));
   }catch(e){box.replaceChildren(uiNode('p',e.message,'rail-empty'));}
 }
 $('#library-search').oninput=()=>void renderLibraryTab();
