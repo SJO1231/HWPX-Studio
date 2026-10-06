@@ -18,6 +18,8 @@ const T_KNOWN = new Set([
 /** 한컴이 여러 문단에 같은 값을 쓰는 것으로 알려진 자리값(미검증) */
 const PLACEHOLDER_PARA_IDS = new Set(["", "0", "2147483648", "4294967295"]);
 const TABLE_DEPTH_WARN = 3;
+/** 구역 설정(`secPr`)의 자식 가운데 없으면 한글 2024가 문서를 열지 못하는 것(COM 실측, 한컴 저장본의 순서. 검증 기준 31절) */
+const SEC_PR_REQUIRED = ["startNum", "visibility"];
 
 const SPACE_PARA = "paragraph id";
 const SPACE_OBJECT = "object id (표·도형)";
@@ -86,6 +88,14 @@ function firstChild(el: XElement, local: string): XElement | undefined {
   return subElements(el).find((c) => c.local === local);
 }
 
+/** 구역 설정의 자식 검사. 한글이 열지 못하는 누락은 오류, 쪽 설정 누락은 경고(한글은 열지만 용지 크기 없이 배치한다). 나머지 자식(줄 번호·각주·미주·쪽 테두리·격자)은 없어도 한글이 같은 쪽 수로 연다 */
+function checkSecPr(secPr: XElement, fname: string, log: IssueLog): void {
+  const kids = new Set(subElements(secPr).map((c) => c.local));
+  const missing = SEC_PR_REQUIRED.filter((k) => !kids.has(k));
+  if (missing.length > 0) log.err("SEC_PR_INCOMPLETE", `구역 설정(secPr)에 ${missing.join("·")} 요소가 없음(한글이 문서를 열지 못함)`, fname);
+  if (!kids.has("pagePr")) log.warn("SEC_PR_PAGE_MISSING", "구역 설정(secPr)에 쪽 설정(pagePr)이 없음(한글은 열지만 용지 크기 없이 배치해 쪽 수가 크게 달라짐)", fname);
+}
+
 function checkTable(tbl: XElement, fname: string, log: IssueLog): void {
   const rows = subElements(tbl).filter((c) => c.local === "tr");
   const rowAttr = attrValue(tbl, "rowCnt");
@@ -138,6 +148,7 @@ export function scanSectionBody(root: XElement, fname: string, log: IssueLog, ac
       if (pid !== undefined) pushId(acc, SPACE_PARA, pid, `${fname} [${anc.slice(-3).join(">")}]`);
     }
     if (tag === "pic") acc.pictures++;
+    if (tag === "secPr") checkSecPr(el, fname, log);
     if (OBJECT_TAGS.has(tag)) {
       const oid = attrValue(el, "id");
       if (oid !== undefined && oid !== "") pushId(acc, SPACE_OBJECT, oid, `${fname} <${tag}>`);

@@ -55,6 +55,8 @@ const TABLE: Readonly<Record<string, string>> = {
   RES_NO_ID: "번호가 없는 서식 항목이 있습니다.",
   RES_NO_REFLIST: "문서에 서식 목록이 없습니다.",
   RES_UNIT_SWITCH_LEGACY: "예전 형식 문서에 새 형식의 여백 표기가 있어 한글에서 들여쓰기·문단 간격이 절반으로 보일 수 있습니다.",
+  SEC_PR_INCOMPLETE: "문서의 구역 설정에 꼭 있어야 할 항목(감추기·시작 번호 설정)이 빠져 있어 한글이 문서를 열지 못합니다.",
+  SEC_PR_PAGE_MISSING: "문서의 구역 설정에 용지 설정이 없어 한글에서 쪽 나눔이 크게 어긋나 보일 수 있습니다.",
   TBL_ATTR_MISSING: "표에 행 수 또는 열 수 정보가 없습니다.",
   TBL_CELL: "표 칸에 칸 주소 정보가 없습니다.",
   TBL_CELL_RANGE: "표 칸이 표의 행·열 범위를 벗어납니다.",

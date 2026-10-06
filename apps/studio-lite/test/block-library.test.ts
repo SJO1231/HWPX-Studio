@@ -1,10 +1,11 @@
+import {plainOf as blockMessage} from '../../studio/src/messages.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { reextractBlock, makeRangeAnchor, extractFragment, openPackage, parseDocument } from '@hwpx-studio/engine';
+import { buildBlockPreviewDocument, serializeFragment, reextractBlock, makeRangeAnchor, extractFragment, openPackage, parseDocument } from '@hwpx-studio/engine';
 import { buildHwpx, readFixture } from '../../../packages/hwpx-engine/test/helpers.ts';
 import { gridTable, tableParagraph, textPara } from '../../../packages/hwpx-engine/test/table-helpers.ts';
 import { createBlockLibrary, extractBlockDraft } from '../src/block-library.ts';
@@ -142,4 +143,56 @@ test('saved workspaces normalize legacy UUID pins to proto IDs and only their ow
  const other=open(app,src);app.post('/api/workbench/save',{...work,session:other.session});assert.equal(lib.usage(stored.id).usages.length,2);
  const restored=app.post('/api/workbench/restore',{workspace:saved.workspace}) as any;app.post('/api/workbench/save',{...work,session:restored.session,placements:[]});assert.equal(lib.usage(stored.id).usages.length,1);assert.throws(()=>lib.remove(stored.id,true),/사용 중/);
  }finally{db.close();}
+});
+
+
+test('stored block preview HTTP uses viewer host bytes/marks, keeps source/proto intact and rejects unknown blocks',async()=>{
+ const server=createApp();await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
+ const base='http://127.0.0.1:'+(server.address() as any).port;
+ try {
+ const post=async(path:string,input:unknown)=>{const r=await fetch(base+'/api/workbench/'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)});assert.equal(r.status,200);return r.json() as Promise<any>;};
+ const source=readFileSync(new URL('../../../examples/quick/template-braces.hwpx',import.meta.url)),opened=await post('open',{name:'example.hwpx',content:content(source)});
+ const selected=opened.paragraphs.find((p:any)=>p.text.includes('신청인:'));
+ const draft=await post('block-preview',{session:opened.session,from:selected.id,to:selected.id}),stored=await post('block-save',{session:opened.session,previewId:draft.id,name:'예시 입력 블록'});
+ const response=await fetch(base+'/api/block/preview?id='+stored.id);assert.equal(response.status,200);const preview=await response.json() as any;
+ assert(preview.fields.some((f:any)=>f.name==='성명'));assert(preview.places.some((p:any)=>p.marks.length));
+ const doc=parseDocument(openPackage(Buffer.from(preview.hwpx,'base64')));assert(doc.sections.some(s=>s.paragraphs.some(p=>p.logicalText.includes('{{성명}}'))));
+ const again=await(await fetch(base+'/api/block/preview?id='+stored.id)).json() as any;assert.equal(again.hwpx,preview.hwpx);
+ assert.deepEqual(Buffer.from(await(await fetch(base+opened.sourceUrl)).arrayBuffer()),source);
+ const missing=await fetch(base+'/api/block/preview?id=missing');assert.equal(missing.status,404);assert.equal((await missing.json() as any).plain,'저장한 블록을 찾지 못했습니다.');
+ }finally{await new Promise<void>(r=>server.close(()=>r()));}
+});
+
+test('block preview rejection gives a plain sentence without codes or ids; input count becomes unknown, not invented',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'lite-block-reject-')),path=join(dir,'blocks.sqlite');
+ const server=createApp(path);await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
+ const base='http://127.0.0.1:'+(server.address() as any).port;
+ try {
+ const post=async(route:string,input:unknown)=>{const r=await fetch(base+'/api/workbench/'+route,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)});assert.equal(r.status,200);return r.json() as Promise<any>;};
+ const source=readFileSync(new URL('../../../examples/quick/template-braces.hwpx',import.meta.url)),opened=await post('open',{name:'example.hwpx',content:content(source)});
+ const selected=opened.paragraphs.find((p:any)=>p.text.includes('신청인:'));
+ const draft=await post('block-preview',{session:opened.session,from:selected.id,to:selected.id}),stored=await post('block-save',{session:opened.session,previewId:draft.id,name:'거절 예시'});
+ const db=new DatabaseSync(path);try{const row=db.prepare('SELECT proto FROM lite_block WHERE id=?').get(stored.id) as {proto:string},proto=JSON.parse(row.proto);proto.content.fragment='0'.repeat(64);db.prepare('UPDATE lite_block SET proto=? WHERE id=?').run(JSON.stringify(proto),stored.id);}finally{db.close();}
+ const response=await fetch(base+'/api/block/preview?id='+stored.id),body=await response.json() as any;
+ assert(response.status>=400);assert.equal(body.code,'TPL_FRAGMENT_MISSING');assert.equal(body.plain,blockMessage('TPL_FRAGMENT_MISSING'));
+ assert.doesNotMatch(body.plain,/[A-Z]{2,}_[A-Z_]+|block:|k[0-9a-f]{8}/);
+ const restarted=createApp(path);await new Promise<void>(r=>restarted.listen(0,'127.0.0.1',r));
+ try{const list=await(await fetch('http://127.0.0.1:'+(restarted.address() as any).port+'/api/blocks')).json() as any;assert.equal(list.blocks[0].inputCount,null);}
+ finally{await new Promise<void>(r=>restarted.close(()=>r()));}
+ }finally{await new Promise<void>(r=>server.close(()=>r()));rmSync(dir,{recursive:true,force:true});}
+});
+
+test('library input counts match preview and exclude placeholders inside mailmerge display text, including old rows',()=>{
+  const db=new DatabaseSync(':memory:');try{
+    const doc=parseDocument(openPackage(readFixture('merge/merge-fields')));
+    const draft=extractBlockDraft(doc,'example.hwpx',{sectionIndex:0,parentPath:[],from:1,to:doc.sections[0]!.paragraphs.length-1});
+    const preview=buildBlockPreviewDocument(draft.proto,new TextEncoder().encode(serializeFragment(draft.fragment)));
+    const expected=preview.fields.reduce((sum,f)=>sum+f.count,0);
+    assert(preview.fields.some(f=>f.kind==='mailMerge'));
+    assert.equal(draft.inputCount,expected);
+    const library=createBlockLibrary(db),stored=library.save(draft,'메일머지 예시');
+    db.prepare('UPDATE lite_block SET input_count=999 WHERE id=?').run(stored.id);
+    const reopened=createBlockLibrary(db);
+    assert.equal(reopened.list()[0]!.inputCount,expected);assert.equal(reopened.get(stored.id).inputCount,expected);
+  }finally{db.close();}
 });
