@@ -99,7 +99,7 @@
 | 비전문가용 사용 안내 | [사용 안내](docs/user-guide.md) |
 | lite 앱의 구현·검증 상태 | [apps/studio-lite/docs/status.md](apps/studio-lite/docs/status.md) |
 
-**역할 분담**(사용자 결정 2026-10-04) — Claude = 엔진(`packages/hwpx-engine`)·뷰어(`packages/viewer`)·템플릿 모델·정본 문서(`docs/`)·검증·합치기. Codex = 앱(`apps/studio-lite`)·화면·SQLite 저장·데이터 입력·Helper 연결·CI(`.github/`). 서로의 파일을 건드리지 않는다. 상대 영역의 변경이 필요하면 이슈로 요청한다. 문서의 "결정"은 총괄의 임시 선택이며 사용자 확정 요구로 취급하지 않는다.
+**역할 분담** — **2026-10-06부터(사용자 결정)**: Codex 중단. Claude가 엔진(`packages/hwpx-engine`)·뷰어(`packages/viewer`)·템플릿 모델·정본 문서(`docs/`)·검증·합치기에 더해 앱(`apps/studio-lite`)·화면·SQLite 저장·데이터 입력·Helper 연결·CI(`.github/`)까지 전부 맡는다. 요구 문서·스튜디오 명세의 'Codex 몫' 표기는 소유자만 Claude로 읽는다. 합치기 권한은 사용자가 거두기 전까지 계속. 이전 2026-10-04 결정(Claude = 엔진·뷰어·템플릿 모델·정본 문서·검증·합치기, Codex = 앱·화면·SQLite 저장·데이터 입력·Helper 연결·CI)은 역사로만 남긴다. 문서의 "결정"은 총괄의 임시 선택이며 사용자 확정 요구로 취급하지 않는다.
 
 **참고 프로젝트와 의존** — rhwp·kordoc·hwpx-filler·python-hwpx 등은 원리만 참고한다. 코드·식별자·주석·구조를 가져오지 않는다. 런타임 의존은 `@rhwp/core`(뷰어)와 Node 내장만 허용한다. 새 의존은 사용자 승인 없이 넣지 않는다. `kordoc`·`markdown-it`은 제거 대상이다(사용자 지시 2026-10-04. 엔진의 문단 삽입으로 대체).
 
