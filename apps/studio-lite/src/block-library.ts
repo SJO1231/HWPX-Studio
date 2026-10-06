@@ -1,6 +1,6 @@
-import { randomUUID, randomBytes, createHash } from 'node:crypto';
+import { randomUUID, randomBytes } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import { extractBlock, blockFragment, listProtoUsage, readStudioTemplate, type StudioTemplate, makeRangeAnchor, parseFragment, serializeFragment, readBlockProto, findPlaceholders, buildBlockPreviewDocument, type BlockProto, type Fragment, type FragmentSelection, type HwpxDocument } from '@hwpx-studio/engine';
+import { extractBlock, blockFragment, listProtoUsage, readStudioTemplate, type StudioTemplate, makeRangeAnchor, parseFragment, serializeFragment, readBlockProto, protoFromFragment, buildBlockPreviewDocument, type BlockProto, type Fragment, type FragmentSelection, type HwpxDocument } from '@hwpx-studio/engine';
 import { HostError } from '../../../packages/viewer/src/host/index.ts';
 import { plainOf } from './quick-messages.ts';
 
@@ -68,10 +68,14 @@ export function createBlockLibrary(db: DatabaseSync) {
   const ids=new Set((db.prepare('SELECT proto FROM lite_block WHERE proto IS NOT NULL').all() as {proto:string}[]).map(r=>readBlockProto(r.proto).id));
   for(const row of db.prepare('SELECT id,name,fragment FROM lite_block WHERE proto IS NULL').all() as {id:string;name:string;fragment:string}[]){
     let id: string;do{id='k'+randomBytes(4).toString('hex');}while(ids.has(id));ids.add(id);
-    const fragment=parseFragment(row.fragment),blob=serializeFragment(fragment);
-    // Legacy rows lack the source range fingerprint. Do not invent extraction metadata.
-    const proto=readBlockProto(JSON.stringify({schema:'hwpx-studio/block-proto@1',id,version:1,name:row.name,content:{fragment:createHash('sha256').update(blob).digest('hex')},keys:[...new Set(fragment.texts.flatMap(t=>findPlaceholders(t).map(k=>k.path)))]}));
+    // Legacy rows lack the source range fingerprint. Do not invent extraction metadata. Hash and keys follow the engine's extractBlock rule.
+    const {proto}=protoFromFragment(parseFragment(row.fragment),{id,name:row.name});
     db.prepare('UPDATE lite_block SET proto=? WHERE id=? AND proto IS NULL').run(JSON.stringify(proto),row.id);
+  }
+  // Rows migrated before #112 counted only strict {{key}}. Recount keys with the engine rule; keys are not in the content hash, so pins stay valid.
+  for(const row of db.prepare("SELECT id,proto,fragment FROM lite_block WHERE json_extract(proto,'$.source') IS NULL").all() as {id:string;proto:string;fragment:string}[]){
+    const proto=readBlockProto(row.proto),keys=protoFromFragment(parseFragment(row.fragment),{id:proto.id,name:proto.name}).proto.keys;
+    if(JSON.stringify(keys)!==JSON.stringify(proto.keys))db.prepare('UPDATE lite_block SET proto=? WHERE id=?').run(JSON.stringify({...proto,keys}),row.id);
   }
   db.exec("DROP INDEX IF EXISTS lite_block_proto_id; CREATE UNIQUE INDEX IF NOT EXISTS lite_block_proto_version ON lite_block(json_extract(proto,'$.id'), version)");
   const columns = `id, json_extract(proto,'$.id') AS protoId, name, source_name AS sourceName, source_hash AS sourceHash, location,

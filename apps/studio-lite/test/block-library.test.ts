@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { buildBlockPreviewDocument, serializeFragment, reextractBlock, makeRangeAnchor, extractFragment, openPackage, parseDocument } from '@hwpx-studio/engine';
+import { buildBlockPreviewDocument, serializeFragment, reextractBlock, makeRangeAnchor, extractFragment, openPackage, parseDocument, findPlaceholders, readBlockProto, blockFragment } from '@hwpx-studio/engine';
 import { buildHwpx, readFixture } from '../../../packages/hwpx-engine/test/helpers.ts';
-import { gridTable, tableParagraph, textPara } from '../../../packages/hwpx-engine/test/table-helpers.ts';
+import { gridTable, paragraph, tableParagraph, textPara } from '../../../packages/hwpx-engine/test/table-helpers.ts';
 import { createBlockLibrary, extractBlockDraft } from '../src/block-library.ts';
 import { createWorkbench } from '../src/workbench.ts';
 import { plainOf } from '../src/quick-messages.ts';
@@ -195,4 +196,63 @@ test('library input counts match preview and exclude placeholders inside mailmer
     const reopened=createBlockLibrary(db);
     assert.equal(reopened.list()[0]!.inputCount,expected);assert.equal(reopened.get(stored.id).inputCount,expected);
   }finally{db.close();}
+});
+
+test('legacy rows: migration uses the engine proto rule (spaced keys, field display excluded); already migrated rows only get keys recounted; idempotent; ids, versions and pins kept',ctx=>{
+  const mm=(id:number,key:string,shown:string)=>`<hp:ctrl><hp:fieldBegin id="${id}" type="MAILMERGE" name="" editable="0" dirty="0" zorder="-1" fieldid="627928423" metaTag=""><hp:parameters cnt="5" name=""><hp:booleanParam name="Fiexde">1</hp:booleanParam><hp:integerParam name="Prop">8</hp:integerParam><hp:stringParam name="Command">${key}</hp:stringParam><hp:stringParam name="FieldType">USER_DEFINE</hp:stringParam><hp:stringParam name="FieldValue">${key}</hp:stringParam></hp:parameters></hp:fieldBegin></hp:ctrl><hp:t>${shown}</hp:t><hp:ctrl><hp:fieldEnd beginIDRef="${id}" fieldid="627928423"/></hp:ctrl>`;
+  const click=(id:number,name:string,shown:string)=>`<hp:ctrl><hp:fieldBegin id="${id}" type="CLICK_HERE" name="${name}" editable="1" dirty="0" zorder="-1" fieldid="627272811" metaTag=""/></hp:ctrl><hp:t>${shown}</hp:t><hp:ctrl><hp:fieldEnd beginIDRef="${id}" fieldid="627272811"/></hp:ctrl>`;
+  const long='제출 서류는 원본 1부입니다. 문의: 담당 부서 &amp; 지원 팀. &lt;참고&gt; 기한을 지키십시오. '.repeat(4);
+  const body=Array.from({length:40},(_,i)=>[
+    textPara(`${i}. {{ 담당 부서 }} 안내 {{사업명}} {{  공고 번호${i%5}  }} ${long}`),
+    paragraph(mm(100+i,'기관명','{{기관명}}')+`<hp:t> 그리고 {{ 기관 명칭 }}</hp:t>`),
+    paragraph(click(200+i,'성명','{{ 성명 }}')+`<hp:t> 뒤 {{ 연락 처 }} {{성명}}</hp:t>`),
+    tableParagraph(gridTable([9000,9000],1,[[`칸 {{ 칸 키 ${i%3} }}`,'{{사업명}} 칸']],{id:String(7000+i)})),
+    textPara(`{{ ${'담당 부서'.normalize('NFD')} }} 다시 {{ ${'새 항목'.normalize('NFD')} }}`),
+  ][i%5]!);
+  const doc=parseDocument(openPackage(buildHwpx([textPara('settings')+body.join('')])));
+  const db=new DatabaseSync(':memory:');
+  try {
+    let lib=createBlockLibrary(db);
+    const insert=db.prepare(`INSERT INTO lite_block (id,name,source_name,source_hash,location,version,change,created_at,paragraph_count,input_count,excerpt,warnings,fragment,proto)
+      VALUES (?,?,'synthetic.hwpx',?,'본문',1,'첫 저장','2026-10-01T00:00:00.000Z',?,-1,'','[]',?,?)`);
+    const strict=(texts:string[])=>[...new Set(texts.flatMap(t=>findPlaceholders(t).map(k=>k.path)))];
+    const engineKeys=new Map<string,string[]>(),fresh:string[]=[],old:string[]=[];
+    let seed=112;
+    for(let i=0;i<60;i++){
+      seed=(Math.imul(seed,1664525)+1013904223)>>>0;
+      const from=1+seed%38,to=from+(seed>>>8)%3,draft=extractBlockDraft(doc,'synthetic.hwpx',{sectionIndex:0,parentPath:[],from,to});
+      const text=serializeFragment(draft.fragment),row='legacy-'+i;engineKeys.set(row,draft.proto.keys);
+      if(i%2===0){insert.run(row,'옛 블록 '+i,draft.sourceHash,to-from+1,text,null);fresh.push(row);continue;}
+      // A row migrated by the pre-#112 app: strict keys only, no source.
+      const id='k'+(0xa000+i).toString(16).padStart(8,'0');
+      const proto=readBlockProto(JSON.stringify({schema:'hwpx-studio/block-proto@1',id,version:1,name:'옛 블록 '+i,content:{fragment:createHash('sha256').update(text).digest('hex')},keys:strict(draft.fragment.texts)}));
+      insert.run(row,'옛 블록 '+i,draft.sourceHash,to-from+1,text,JSON.stringify(proto));old.push(row);
+    }
+    const before=new Map((db.prepare('SELECT id,proto FROM lite_block WHERE proto IS NOT NULL').all() as {id:string;proto:string}[]).map(r=>[r.id,JSON.parse(r.proto)]));
+    const pins=old.slice(0,10).map(r=>({id:before.get(r).id,version:1}));
+    lib.saveWorkspace('work-112','예시 작업',pins);
+    const pinRow=JSON.stringify(db.prepare('SELECT * FROM lite_workspace_usage').all());
+    lib=createBlockLibrary(db);
+    const rows=new Map((db.prepare('SELECT id,proto FROM lite_block').all() as {id:string;proto:string}[]).map(r=>[r.id,readBlockProto(r.proto)]));
+    let match=0,spaced=0,gap=0;
+    for(const [row,keys] of engineKeys){
+      const proto=rows.get(row)!;
+      assert.deepEqual(proto.keys,keys,row);match++;
+      if(keys.some(k=>/\s/.test(k)))spaced++;
+      assert.equal('source' in proto||'history' in proto,false);
+      blockFragment(proto,new TextEncoder().encode(String(db.prepare('SELECT fragment FROM lite_block WHERE id=?').get(row)!.fragment))); // throws if the content hash no longer matches the stored fragment
+    }
+    for(const row of old){
+      const was=before.get(row),now=rows.get(row)!;
+      if(JSON.stringify(was.keys)!==JSON.stringify(now.keys))gap++;
+      assert.deepEqual({...now,keys:was.keys},was,'only keys change: id, version, name and content stay');
+    }
+    assert.equal(JSON.stringify(db.prepare('SELECT * FROM lite_workspace_usage').all()),pinRow);
+    for(const p of pins){assert.equal(lib.material(p.id,1).proto.version,1);assert.equal(lib.usage(p.id).usages[0]!.state,'current');}
+    const snapshot=JSON.stringify(db.prepare('SELECT * FROM lite_block ORDER BY id').all());
+    createBlockLibrary(db);createBlockLibrary(db);
+    assert.equal(JSON.stringify(db.prepare('SELECT * FROM lite_block ORDER BY id').all()),snapshot,'running the migration again changes nothing');
+    ctx.diagnostic(`rows ${engineKeys.size} (new ${fresh.length}, migrated before #112 ${old.length}); engine keys match ${match}/${engineKeys.size}; rows with spaced keys ${spaced}; recounted ${gap}/${old.length}; pins ${pins.length} kept; second and third run identical`);
+    assert.equal(match,60);assert(spaced>=25&&gap>=10,`spaced ${spaced}, recounted ${gap}`);
+  } finally { db.close(); }
 });
