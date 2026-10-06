@@ -1,5 +1,6 @@
 import { HwpxError } from "../errors.ts";
 import type { BatchRecord } from "../template/read.ts";
+import type { ReportDrop } from "../template/types.ts";
 import { lookupPath } from "../template/value.ts";
 import { generate, type GenerateOptions } from "./gate.ts";
 
@@ -83,6 +84,12 @@ export type BatchItem = {
    * `anchor`는 경고가 가리키는 규칙 id나 자리(`Issue.where`)다. 없으면 빈 배열. 단건 `generate`의 보고는 같은 경고를 `report.issues`에 severity와 함께 싣는다.
    */
   warnings: { code: string; message: string; anchor?: string }[];
+  /**
+   * 버린 자리(`generate` 보고 `plan.dropped`와 같다): 예를 들어 여러 문단에 걸친 바깥 누름틀의 구간 치환으로 함께 지워진 안쪽 누름틀·메일 머지 필드·`{{}}`·책갈피.
+   * `kind`가 실제로 지워진 자리(`covered`)와 메일 머지 필드가 맡는 표시 글 안 `{{}}`(`mergeDisplay`)를 가른다.
+   * 값 원문은 없다(앵커·사유만). 계획 전에 실패한 건(데이터 오류·문서 예외)은 빈 배열이다.
+   */
+  dropped: ReportDrop[];
   /** 실패한 건의 오류 코드(중복 없이, 처음 나온 순서) */
   errorCodes: string[];
   /** 실패한 건의 오류(코드와 메시지) */
@@ -98,7 +105,7 @@ export function* generateBatch(bytes: Uint8Array, template: Parameters<typeof ge
   const { baseName, nameFrom, ...generateOptions } = options;
   const names = planBatchNames(records, baseName, nameFrom);
   for (const [i, record] of records.entries()) {
-    const base = { index: i + 1, name: names[i] ?? "", filled: 0, skipped: [], warnings: [] };
+    const base = { index: i + 1, name: names[i] ?? "", filled: 0, skipped: [], warnings: [], dropped: [] };
     if ("error" in record) {
       yield { ...base, ok: false, errorCodes: [record.error.code], errors: [record.error] };
       continue;
@@ -114,12 +121,13 @@ export function* generateBatch(bytes: Uint8Array, template: Parameters<typeof ge
     const plan = result.report.plan;
     const skipped = plan.skipped.map((s) => ({ code: s.code, anchor: s.anchor, message: s.message }));
     const warnings = plan.issues.filter((x) => x.severity === "warning").map((x) => ({ code: x.code, message: x.message, ...(x.where === undefined ? {} : { anchor: x.where }) }));
+    const dropped = plan.dropped.map((d) => ({ ruleId: d.ruleId, anchor: d.anchor, reason: d.reason, kind: d.kind }));
     if (result.ok) {
       const filled = plan.actions.filter((a) => a.type === "fill").reduce((n, a) => n + a.targets, 0);
-      yield { ...base, ok: true, ...(result.dryRun ? {} : { output: result.output }), filled, skipped, warnings, errorCodes: [], errors: [] };
+      yield { ...base, ok: true, ...(result.dryRun ? {} : { output: result.output }), filled, skipped, warnings, dropped, errorCodes: [], errors: [] };
     } else {
       const errors = result.report.issues.filter((x) => x.severity === "error").map((x) => ({ code: x.code, message: x.message }));
-      yield { ...base, ok: false, skipped, warnings, errorCodes: [...new Set(errors.map((x) => x.code))], errors };
+      yield { ...base, ok: false, skipped, warnings, dropped, errorCodes: [...new Set(errors.map((x) => x.code))], errors };
     }
   }
 }

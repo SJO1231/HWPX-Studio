@@ -1,8 +1,11 @@
 import { createServer } from 'node:http';
 import { stripTypeScriptTypes } from 'node:module';
-import { cleanPath, resolveShared, HostError } from '../../../packages/viewer/src/host/index.ts';
+import { cleanPath, resolveShared, HostError, previewBlock } from '../../../packages/viewer/src/host/index.ts';
 import { createQuick } from './quick-api.ts';
+import { createWorkbench } from './workbench.ts';
+import { createBlockLibrary } from './block-library.ts';
 import { plainOf } from './quick-messages.ts';
+import { plainOf as blockMessage, KNOWN_CODES } from '../../studio/src/messages.ts';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +16,8 @@ import { demo, demoSources } from './demo.ts';
 import { createG2B, G2BRequestError } from './g2b.ts';
 import { parseDocument, openPackage } from '@hwpx-studio/engine';
 
+// Preview rejections: engine codes use the shared plain table; app/host codes already carry a plain sentence.
+const previewPlain=(e:unknown)=>{const code=(e as {code?:unknown}|null)?.code;return typeof code==='string'&&KNOWN_CODES.includes(code)?blockMessage(code):e instanceof HostError?e.message:'블록 미리보기를 만들지 못했습니다.';};
 const pathCode=(e:unknown)=>e instanceof Error && 'code' in e && typeof e.code==='string'?{code:e.code,plain:plainOf(e.code)}:{};
 const ROOT=fileURLToPath(new URL('../',import.meta.url));
 export function createApp(database=':memory:') {
@@ -20,6 +25,8 @@ export function createApp(database=':memory:') {
   db.exec('CREATE TABLE IF NOT EXISTS project_revision (id INTEGER PRIMARY KEY, name TEXT NOT NULL, document TEXT NOT NULL, saved_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)');
   const g2b=createG2B(db);
   const quick=createQuick();
+  const blockLibrary=createBlockLibrary(db);
+  const workbench=createWorkbench(blockLibrary);
   const server=createServer(async(req,res)=>{
     const send=(status:number,body:unknown,type='application/json; charset=utf-8',headers:Record<string,string>={})=>{
       const data=body instanceof Uint8Array ? body : type.startsWith('application/json') ? JSON.stringify(body) : String(body);
@@ -32,8 +39,16 @@ export function createApp(database=':memory:') {
       const url=new URL(req.url??'/',origins[0]);
       const path=url.pathname;
       if(req.method==='GET') {
-        const result=quick.get(path,url.searchParams);
-        if(result)return send(200,result.body,'application/vnd.hancom.hwpx',result.name?{'Content-Disposition':`attachment; filename="document.hwpx"; filename*=UTF-8''${encodeURIComponent(result.name)}`}:{});
+        const result=workbench.get(path,url.searchParams)??quick.get(path,url.searchParams);
+        if(result)return send(200,result.body,'type' in result && typeof result.type==='string'?result.type:'application/vnd.hancom.hwpx',result.name?{'Content-Disposition':`attachment; filename="document.hwpx"; filename*=UTF-8''${encodeURIComponent(result.name)}`}:{});
+        if(path==='/api/block/preview') {
+          const item=blockLibrary.get(url.searchParams.get('id'));
+          const preview=previewBlock({block:item.id},id=>blockLibrary.material(id,item.version));
+          return send(200,{...preview,warnings:preview.warnings.map(w=>({...w,message:blockMessage(w.code)}))});
+        }
+        if(path==='/api/blocks')return send(200,{blocks:blockLibrary.list(url.searchParams.get('q')??'')});
+        if(path==='/api/block/usage'){const use=blockLibrary.usage(url.searchParams.get('id'));return send(200,{...use,openPlacement:workbench.inUse(use.proto)});}
+        if(path==='/api/block')return send(200,blockLibrary.get(url.searchParams.get('id')));
         if(path==='/api/health')return send(200,{ok:true});
         if(path==='/api/g2b/profiles')return send(200,{profiles:g2b.profiles()});
         if(path==='/api/projects')return send(200,db.prepare('SELECT name, MAX(id) AS id, MAX(saved_at) AS saved_at FROM project_revision GROUP BY name ORDER BY id DESC').all());
@@ -43,7 +58,7 @@ export function createApp(database=':memory:') {
         }
         if(path==='/api/demo')return send(200,demo());
         if(path==='/api/demo-sources')return send(200,demoSources);
-        const files:Record<string,string>={'/':'web/quick.html','/template':'web/index.html','/quick.js':'web/quick.js','/quick.css':'web/quick.css','/app.js':'web/app.js','/style.css':'web/style.css','/rhwp.js':'vendor/rhwp/rhwp.js','/rhwp_bg.wasm':'vendor/rhwp/rhwp_bg.wasm'};
+        const files:Record<string,string>={'/':'web/workbench.html','/workbench':'web/workbench.html','/block-library.js':'web/block-library.js','/workbench.js':'web/workbench.js','/workbench.css':'web/workbench.css','/editor-model.js':'src/editor-model.ts','/viewer-lines.js':'src/viewer-lines.ts','/quick':'web/quick.html','/template':'web/index.html','/quick.js':'web/quick.js','/quick.css':'web/quick.css','/app.js':'web/app.js','/style.css':'web/style.css','/rhwp.js':'vendor/rhwp/rhwp.js','/rhwp_bg.wasm':'vendor/rhwp/rhwp_bg.wasm'};
         const shared=cleanPath(path);
         const sharedFile=shared===undefined?undefined:resolveShared(shared);
         if(sharedFile){
@@ -53,7 +68,8 @@ export function createApp(database=':memory:') {
         }
         if(files[path]) {
           const types:Record<string,string>={'.html':'text/html; charset=utf-8','.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.wasm':'application/wasm'};
-          return send(200,readFileSync(resolve(ROOT,files[path])),types[extname(files[path])]);
+          const file=files[path];
+          return send(200,file.endsWith('.ts')?stripTypeScriptTypes(readFileSync(resolve(ROOT,file),'utf8'),{mode:'strip'}):readFileSync(resolve(ROOT,file)),file.endsWith('.ts')?types['.js']:types[extname(file)]);
         }
         return send(404,{error:'없는 경로입니다.'});
       }
@@ -62,7 +78,14 @@ export function createApp(database=':memory:') {
       const chunks:Buffer[]=[];let size=0;
       for await(const chunk of req){size+=chunk.length;if(size>32*1024*1024)return send(413,{error:'요청은 32MB 이내여야 합니다.'});chunks.push(chunk);}
       const input=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      if(path==='/api/block/rename')return send(200,blockLibrary.rename(input?.id,input?.name));
+      if(path==='/api/block/delete'){
+        // Placements not yet saved to a work file are known only to open workbench sessions.
+        if(input?.confirmed===true&&workbench.inUse(blockLibrary.get(input.id).protoId))throw new HostError(400,'BLOCK_IN_USE','사용 중이라 삭제할 수 없습니다: 열린 작업에서 저장 전 배치 중입니다. 그 작업에서 배치를 취소한 뒤 다시 시도하세요.');
+        return send(200,blockLibrary.remove(input?.id,input?.confirmed));
+      }
       if(path.startsWith('/api/quick/'))return send(200,quick.post(path,input));
+      if(path.startsWith('/api/workbench/'))return send(200,workbench.post(path,input));
       if(path==='/api/g2b/profiles') {
         if(!req.headers.origin)return send(403,{error:'생성 프로필은 Studio의 Helper 연결 화면에서 설정하세요.'});
         return send(200,{profile:g2b.saveProfile(input)});
@@ -93,7 +116,7 @@ export function createApp(database=':memory:') {
         return send(200,{id:Number(result.lastInsertRowid),saved:true});
       }
       send(404,{error:'없는 API입니다.'});
-    } catch(e) {send(e instanceof G2BRequestError || e instanceof HostError?e.status:400,{error:e instanceof Error?e.message:'요청 처리에 실패했습니다.',...(e instanceof G2BRequestError?{status:'error',code:e.code}:pathCode(e))});}
+    } catch(e) {send(e instanceof G2BRequestError || e instanceof HostError?e.status:400,{error:e instanceof Error?e.message:'요청 처리에 실패했습니다.',...(e instanceof G2BRequestError?{status:'error',code:e.code}:pathCode(e)),...(req.url?.split('?')[0]==='/api/block/preview'?{plain:previewPlain(e)}:{})});}
   });
   server.on('close',()=>db.close());
   return server;

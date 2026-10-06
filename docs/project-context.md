@@ -35,6 +35,7 @@
 | 뷰어 시험 앱 | `node apps/viewer-poc/server.ts` → `http://127.0.0.1:4173` (`.claude/launch.json`의 `viewer-poc`) | 확인 |
 | 뷰어 위치 대조(실제 문서) | `HWPX_CORPUS_DIR=<폴더> node packages/viewer/tools/crosscheck.ts --clicks --after-fill --report tools/stress/out/<이름>.json` | 확인 |
 | 한컴으로 열기·PDF | `python tools/com/open_check.py --out 결과.json [--pdf-dir 폴더] 파일...` | 확인(한컴 13) |
+| 한컴 문단모양 대조(이식본 ↔ 원본) | `python tools/com/read_para_props.py --spec 명세.json --out 결과.json [--timeout 60]` (명세는 `tools/com/README.md`) | 확인(한컴 13) |
 | 한컴 시험 문서 다시 만들기 | `python tools/com/make_fixtures.py` | 확인 |
 | 빠른 생성 예시 서식 다시 만들기 | `python tools/com/make_examples.py` → `examples/quick/*.hwpx` | 확인(한컴 13) |
 | 여러 문단 누름틀 정답 문서 다시 만들기 | `python tools/com/make_span_fixtures.py` → `tools/com/out/field-span*.hwpx`, `inline-breaks-filled.hwpx`(한컴이 직접 채운 정답. 사본은 `packages/hwpx-engine/test/fixtures/span/`) | 확인(한컴 13) |
@@ -51,7 +52,7 @@
 | `apps/studio-lite/` | Markdown·원본 HWPX 생성 MVP. 공통 엔진 사용. 상세 상태는 앱의 `docs/status.md` | 포함 |
 | `apps/viewer-poc/` | 뷰어 시험 앱(로컬 서버와 웹 화면) | 포함 |
 | `apps/studio/` | 빠른 생성 화면과 로컬 서버(`server.ts`, 4174). 사용자 결정(2026-10-04)으로 `apps/studio-lite`에 흡수될 예정 | 포함 |
-| `apps/studio-lite/` | 제품 앱의 바탕(사용자 결정 2026-10-04). 비교 Grid·블록·조건·SQLite 저장·Helper 연결. `npm run start:lite` → 4318. 소유: Codex | 포함 |
+| `apps/studio-lite/` | 제품 앱의 바탕(사용자 결정 2026-10-04). 비교 Grid·블록·조건·SQLite 저장·Helper 연결. `npm run start:lite` → 4318. 소유: Claude(2026-10-06부터. 이전 Codex) | 포함 |
 | `examples/quick/` | 빠른 생성 예시 서식(한컴 저장본)과 데이터(가짜 값). 사용자가 고쳐 시험하는 용도. 순서는 그 폴더의 `README.md` | 포함 |
 | `tools/oracle/` | 검증 보조 스크립트(선택 실행) | 포함 |
 | `docs/` | 정본 문서 | 포함 |
@@ -92,10 +93,11 @@
 - 이 저장소 한정 설정: 작성자는 GitHub noreply 주소, `core.autocrlf=false`, `.gitattributes`의 `* -text`.
 - **수정 사항은 GitHub 이슈로 등록한 뒤 처리한다**(사용자 지시 2026-10-04). 이슈 하나에 결함·보강 하나. 본문은 현상·재현·수정 범위·검증 방법만 적고 개인 경로·실제 문서 이름·대화 인용은 넣지 않는다. 커밋 메시지에 이슈 번호를 적고 끝나면 닫는다.
 - 이슈·PR 명령은 `gh` CLI를 쓴다(설치·로그인은 사용자가 한다: `winget install GitHub.cli`, `gh auth login`). 없으면 등록할 이슈 목록을 보고에 적어 두었다가 생기는 대로 등록한다.
-- **의존 정책**(사용자 지시 2026-10-04): 런타임 의존은 `@rhwp/core`와 Node 내장만. `apps/studio-lite`의 `kordoc`·`markdown-it`은 제거한다(Markdown→HWPX 생성은 엔진의 문단 삽입·조각으로 대체, Markdown 미리보기는 자체 최소 변환). lite의 `vendor/rhwp` 사본은 공용 뷰어의 `@rhwp/core`로 통일한다. CI에서 런타임 의존 허용 목록을 검사한다(Codex 소유).
-- **역할 분담**(사용자 결정 2026-10-04): Claude = 엔진(`packages/hwpx-engine`)·뷰어(`packages/viewer`)·템플릿 모델·정본 문서(`docs/`)·검증·합치기. Codex = 앱(`apps/studio-lite`)·화면·SQLite 저장·데이터 입력·Helper 연결·CI(`.github/`). 서로의 파일을 건드리지 않는다. 엔진 API 변경으로 앱이 깨지면 엔진 옵션으로 흡수하거나 이슈로 넘긴다.
+- **의존 정책**(사용자 지시 2026-10-04): 런타임 의존은 `@rhwp/core`와 Node 내장만. `apps/studio-lite`의 `kordoc`·`markdown-it`은 제거한다(Markdown→HWPX 생성은 엔진의 문단 삽입·조각으로 대체, Markdown 미리보기는 자체 최소 변환). lite의 `vendor/rhwp` 사본은 공용 뷰어의 `@rhwp/core`로 통일한다. CI에서 런타임 의존 허용 목록을 검사한다(2026-10-06부터 Claude 소유. 이전 Codex).
+- **역할 분담**: **2026-10-06부터(사용자 결정)** Codex 중단. Claude가 엔진(`packages/hwpx-engine`)·뷰어(`packages/viewer`)·템플릿 모델·정본 문서(`docs/`)·검증·합치기에 더해 앱(`apps/studio-lite`)·화면·SQLite 저장·데이터 입력·Helper 연결·CI(`.github/`)까지 전부 맡는다. 요구 문서·스튜디오 명세의 'Codex 몫' 표기는 소유자만 Claude로 읽는다. 합치기 권한은 사용자가 거두기 전까지 계속. 이전 2026-10-04 결정(Claude = 엔진·뷰어·템플릿 모델·정본 문서·검증·합치기, Codex = 앱·화면·SQLite 저장·데이터 입력·Helper 연결·CI)은 역사로만 남긴다.
 - **가지**: `studio-lite` 가지는 2026-10-04 main에 합쳤고(`6394dbb`) 삭제한다. 이후 가지는 이슈별 작업 가지(`issue-N-주제`)뿐이며 PR 대상은 main이다.
 - **단계 운영**(사용자 지시 2026-10-04): 단계마다 마일스톤(목표·범위·제외사항·완료 기준)과 이슈(작업 내용·선행 작업·검사 방법·산출물)를 초안으로 먼저 보이고 기존 것과 중복을 확인한 뒤 등록한다. 첫 화면 검토와 단계 종료 검토는 별도 이슈다. 이슈마다 가지(`issue-N-주제`)와 PR을 만들고, 구현 중 진행 상황과 검사 근거(테스트 수치, 독립 검증 요지)를 이슈·PR에 남긴다. 합치기는 CI 통과와 필요한 독립 검증 뒤에 한다.
+- **화면 PR 규칙**(사용자 결정 2026-10-06): 모든 화면(`apps/studio-lite`) PR 본문에 ① 확인 문장 자체 점검표(이슈의 확인 문장별 보임/일부/안 보임과 근거) ② 검사 명령과 수치(`npm run typecheck`, lite 시험, `npm run verify`) ③ 저장소의 `examples/quick/` 예시 파일로 찍은 캡처(가짜 값만. 실제 공고서 캡처 금지) ④ 미검증 범위를 넣는다. 이슈 하나당 가지(`issue-N-주제`)·PR 하나. 합치기 전 내장 브라우저로 실제 공고서(환경 변수 경로, 읽기 전용)를 열어 확인 문장을 다시 본다(여는 순서는 아래 "브라우저 자동 시험" 절. 그 화면 그림은 이슈·PR에 올리지 않는다).
 
 ## Skill
 
@@ -106,3 +108,12 @@
 | `.claude/agents/` | 위임 역할 3종 |
 
 Skill을 고칠 때는 `skills/`를 고치고 `.claude/skills/`로 다시 복사한다.
+
+## 브라우저 자동 시험에서 파일 선택 창 없이 문서 열기 (2026-10-06)
+
+브라우저 자동화 도구(내장 브라우저, Chrome 확장)는 파일 선택 창과 `file://` 주소를 쓰지 못한다. 실행 중인 lite 앱에 문서를 올려 화면 흐름(열기 → 드래그 → 저장)을 시험할 때는 다음 순서를 쓴다. 제품 코드를 바꾸지 않는다.
+
+1. 시험 스크립트(Python 등)에서 `POST /api/workbench/open` `{ name: "<SHA-256 앞 10자>.hwpx", content: base64 }`로 문서를 올리고 응답의 `sourceUrl`(`/api/workbench/source?session=…`)을 받는다. 세션은 서버에 8개까지만 남으므로 주입 직전에 연다. 이름은 실제 파일 이름 대신 식별자를 쓴다.
+2. 페이지 안에서 `fetch(sourceUrl)` → `File` → `DataTransfer`로 `#document-file.files`에 넣고 `change` 이벤트를 보낸다. 앱은 보통의 열기 흐름을 탄다.
+3. 열린 문서에 저장 안 한 변경이 있으면 `window.confirm`이 떠서 주입이 취소되므로 먼저 새로 고친다.
+4. 실제 문서가 보이는 화면 그림은 이슈·PR에 올리지 않는다.

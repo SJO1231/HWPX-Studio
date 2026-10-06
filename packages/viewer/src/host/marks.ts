@@ -20,10 +20,11 @@ export function resolveDrafts(doc: HwpxDocument, anchors: AnchorDraft[]): (Resol
   return anchors.map((_, i) => found.get(`t${i}`));
 }
 
-type Target = { sectionIndex: number; path: number[]; from: number; until: number; guideOf?: boolean };
+/** 강조할 자리: 문단 주소와 그 문단 논리 텍스트의 구간. `guideOf`가 참이면 누름틀 값 구간이라 안내문 상태이면 안내문을 덮는다 */
+export type MarkTarget = { sectionIndex: number; path: number[]; from: number; until: number; guideOf?: boolean };
 
 /** 누름틀 해석의 `i`번째 대상이 가리키는 문단과 값 구간. 시작·끝 조각이 없으면 undefined. */
-function fieldTarget(resolved: Extract<ResolvedAnchor, { kind: "field" }>, i: number): Target | undefined {
+function fieldTarget(resolved: Extract<ResolvedAnchor, { kind: "field" }>, i: number): MarkTarget | undefined {
   const target = resolved.targets[i];
   const begin = target === undefined ? undefined : target.paragraph.pieces[target.begin.pieceIndex];
   const end = target?.end == null ? undefined : target.paragraph.pieces[target.end.pieceIndex];
@@ -32,7 +33,7 @@ function fieldTarget(resolved: Extract<ResolvedAnchor, { kind: "field" }>, i: nu
 }
 
 /** 앵커 초안이 가리키는 문단과 논리 구간. 엔진이 못 찾았거나, 지문으로 다시 찾아 주소가 바뀐(`relocated`) 앵커처럼 주소를 정할 수 없으면 undefined. */
-function targetOf(anchor: AnchorDraft, resolved: ResolvedAnchor | undefined): Target | undefined {
+function targetOf(anchor: AnchorDraft, resolved: ResolvedAnchor | undefined): MarkTarget | undefined {
   if (resolved === undefined) return undefined;
   // 이름이 같은 누름틀이 여럿이면 첫째(순번을 준 앵커는 하나뿐이다)
   if (resolved.kind === "field") return fieldTarget(resolved, 0);
@@ -50,7 +51,13 @@ function targetOf(anchor: AnchorDraft, resolved: ResolvedAnchor | undefined): Ta
 }
 
 /** 대상 하나를 쪽 위에 강조할 rhwp 글자 순번 구간으로 옮긴다. 옮길 수 없으면 undefined. */
-function markFor(doc: HwpxDocument, anchor: AnchorDraft, target: Target): MarkRange | undefined {
+function markFor(doc: HwpxDocument, anchor: AnchorDraft, target: MarkTarget): MarkRange | undefined {
+  // 글자 구간(낱말·누름틀 값)은 덮어야 할 글을 함께 준다(화면이 쪽 글자 배치와 맞는지 확인하는 데 쓴다). 문단 전체 강조는 순번이 필요 없다
+  return markSpan(doc, target, anchor.kind === "word" || anchor.kind === "field");
+}
+
+/** 문단 구간 하나를 쪽 위에 강조할 rhwp 글자 순번 구간으로 옮긴다(`withText`면 덮어야 할 글도 준다). 안내문 상태 누름틀 값 구간이면 안내문을 덮는다. 옮길 수 없으면 undefined. */
+export function markSpan(doc: HwpxDocument, target: MarkTarget, withText: boolean): MarkRange | undefined {
   const address = { sectionIndex: target.sectionIndex, path: target.path };
   const paragraph = paragraphAtAddress(doc, address);
   if (paragraph === undefined) return undefined;
@@ -61,8 +68,7 @@ function markFor(doc: HwpxDocument, anchor: AnchorDraft, target: Target): MarkRa
   // 안내문 상태 누름틀: 안내문 글은 글자 칸이 없으므로 안내문이 그려진 사각형을 덮는다
   const guide = target.guideOf === true ? table.guides.find((g) => g.logicalStart === target.from && g.logicalEnd === target.until) : undefined;
   if (guide !== undefined) return { position, endOffset: position.charOffset, guide: guide.text };
-  // 글자 구간(낱말·누름틀 값)은 덮어야 할 글을 함께 준다(화면이 쪽 글자 배치와 맞는지 확인하는 데 쓴다). 문단 전체 강조는 순번이 필요 없다
-  if (anchor.kind === "word" || anchor.kind === "field") {
+  if (withText) {
     const k1 = position.charOffset;
     return { position, endOffset, text: table.slots.slice(k1, endOffset).map((s) => s.shown).join("") };
   }
@@ -78,7 +84,7 @@ export function markOf(doc: HwpxDocument, anchor: AnchorDraft, resolved: Resolve
 /** 앵커가 가리키는 자리 전부의 강조 구간. 이름이 같은 누름틀 전부를 가리키는 앵커는 여러 곳이다. 옮길 수 없는 자리는 뺀다. */
 export function markRanges(doc: HwpxDocument, anchor: AnchorDraft, resolved: ResolvedAnchor | undefined): MarkRange[] {
   if (resolved === undefined) return [];
-  const targets: (Target | undefined)[] = resolved.kind === "field" ? resolved.targets.map((_, i) => fieldTarget(resolved, i)) : [targetOf(anchor, resolved)];
+  const targets: (MarkTarget | undefined)[] = resolved.kind === "field" ? resolved.targets.map((_, i) => fieldTarget(resolved, i)) : [targetOf(anchor, resolved)];
   const out: MarkRange[] = [];
   for (const t of targets) {
     const mark = t === undefined ? undefined : markFor(doc, anchor, t);

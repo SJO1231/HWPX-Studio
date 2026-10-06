@@ -472,8 +472,9 @@ test("5.3 listFields: HYPERLINK는 빼고 알 수 없는 type은 넣는다", () 
   assert.deepEqual(fieldDoc((t) => t.replace('type="CLICK_HERE"', 'type="HYPERLINK"')), []);
   const other = fieldDoc((t) => t.replace('type="CLICK_HERE"', 'type="SOMETHING_NEW"'));
   assert.deepEqual(other.map((f) => [f.name, f.type, f.shape]), [["성명", "SOMETHING_NEW", "simple"]]);
+  // type 속성이 없으면 종류 UNKNOWN이다(이슈 #12 결정 2026-10-04. 이전에는 빈 문자열)
   const noType = fieldDoc((t) => t.replace(' type="CLICK_HERE"', ""));
-  assert.deepEqual(noType.map((f) => [f.name, f.type]), [["성명", ""]]);
+  assert.deepEqual(noType.map((f) => [f.name, f.type]), [["성명", "UNKNOWN"]]);
 });
 
 test("5.3 listFields: 같은 이름은 문서 순서로 occurrence 0부터, 이름이 다르면 따로 센다", () => {

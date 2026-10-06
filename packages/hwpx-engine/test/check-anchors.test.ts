@@ -255,6 +255,9 @@ function expected(M: Item[], s: Spec): Want {
       if (tables[a.ordinal] === s.lib) return { state: "exact", found: own };
       return pick(tables.flatMap((k, o): AnchorAddress[] => (k === s.lib ? [{ kind: "object", objectType: "tbl", sectionIndex: 0, ordinal: o }] : [])));
     }
+    case "headingRange":
+      // 이 무작위 모형은 headingRange를 만들지 않는다(제목 범위의 판정은 heading-range.test.ts가 본다)
+      return assert.fail("이 모형에는 headingRange 앵커가 없다");
   }
 }
 

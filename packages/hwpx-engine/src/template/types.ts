@@ -1,6 +1,6 @@
 import type { Issue } from "../errors.ts";
 // 앵커 지문의 형은 `fill/anchor-types.ts`가 정의한다(문서 모델을 가져오지 않는 순수 형이다).
-import type { CellPrint, ObjectPrint, RangeAnchor } from "../fill/anchor-types.ts";
+import type { CellPrint, HeadingRangeAnchor, ObjectPrint, RangeAnchor } from "../fill/anchor-types.ts";
 
 // 이 폴더는 문서 형식을 모른다(8.5). HWPX 모델을 import하지 않는다.
 
@@ -37,7 +37,7 @@ export type CellAnchor = {
   print?: CellPrint;
 };
 export type ObjectAnchor = { id: string; kind: "object"; objectType: string; sectionIndex: number; ordinal: number; print?: ObjectPrint };
-export type Anchor = FieldAnchor | WordAnchor | LineAnchor | CellAnchor | ObjectAnchor | RangeAnchor;
+export type Anchor = FieldAnchor | WordAnchor | LineAnchor | CellAnchor | ObjectAnchor | RangeAnchor | HeadingRangeAnchor;
 export type AnchorKind = Anchor["kind"];
 
 // ── 조건 ────────────────────────────────────────────────────────
@@ -179,7 +179,11 @@ export type ReportAction = {
 };
 
 export type ReportSkip = { ruleId: string; anchor: string; code: string; message: string; where?: string };
-export type ReportDrop = { ruleId: string; anchor: string; reason: string };
+/**
+ * 버린 자리. `kind`: `covered`는 삭제·교체·구간 치환으로 실제로 지워진 자리, `mergeDisplay`는 메일 머지 필드의 표시 글 안이라
+ * 그 필드 자리가 맡는(필드가 값을 넣으므로 잃은 것이 아닌) `{{}}` 자리다.
+ */
+export type ReportDrop = { ruleId: string; anchor: string; reason: string; kind: "covered" | "mergeDisplay" };
 export type ReportKept = { path: string; count: number };
 
 export type FillReport = {

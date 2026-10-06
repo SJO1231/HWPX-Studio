@@ -17,6 +17,7 @@ const TABLE: Readonly<Record<string, string>> = {
   QUICK_NO_DATA: "데이터를 먼저 올려 주세요.",
   QUICK_TOO_LARGE: "결과가 너무 커서 한 번에 만들 수 없습니다. 건수를 줄여 다시 시도해 주세요.",
   QUICK_MULTILINE: "값에 줄바꿈·탭이 있어 문단을 나누지 않고 같은 문단 안의 줄바꿈·탭으로 넣었습니다.",
+  QUICK_DROPPED: "다른 자리(여러 문단에 걸친 누름틀 등)를 값으로 바꾸면서 그 안에 있던 이 자리가 함께 지워져 따로 채우지 않았습니다. 결과에 이 자리가 없어도 되는지 확인해 주세요.",
   QUICK_GENERATE_FAILED: "문서를 만들지 못했습니다.",
   QUICK_RESULT_NOT_FOUND: "그 결과가 없습니다(실패한 건은 파일이 없습니다).",
   QUICK_NO_FOLDER: "저장된 결과 폴더가 없습니다. 먼저 [생성]을 눌러 주세요.",
@@ -53,6 +54,9 @@ const TABLE: Readonly<Record<string, string>> = {
   RES_ITEMCNT: "서식 목록에 적힌 개수와 실제 개수가 다릅니다.",
   RES_NO_ID: "번호가 없는 서식 항목이 있습니다.",
   RES_NO_REFLIST: "문서에 서식 목록이 없습니다.",
+  RES_UNIT_SWITCH_LEGACY: "예전 형식 문서에 새 형식의 여백 표기가 있어 한글에서 들여쓰기·문단 간격이 절반으로 보일 수 있습니다.",
+  SEC_PR_INCOMPLETE: "문서의 구역 설정에 꼭 있어야 할 항목(감추기·시작 번호 설정)이 빠져 있어 한글이 문서를 열지 못합니다.",
+  SEC_PR_PAGE_MISSING: "문서의 구역 설정에 용지 설정이 없어 한글에서 쪽 나눔이 크게 어긋나 보일 수 있습니다.",
   TBL_ATTR_MISSING: "표에 행 수 또는 열 수 정보가 없습니다.",
   TBL_CELL: "표 칸에 칸 주소 정보가 없습니다.",
   TBL_CELL_RANGE: "표 칸이 표의 행·열 범위를 벗어납니다.",
@@ -145,6 +149,8 @@ const TABLE: Readonly<Record<string, string>> = {
   FRAG_SPLITS_FIELD: "선택한 범위가 누름틀의 시작과 끝 사이를 잘라서 조각으로 뽑을 수 없습니다.",
   FRAG_TABLE_PARAGRAPH_TEXT: "표를 담은 문단에 표 말고 글도 있습니다.",
   FRAG_UNKNOWN_REF: "무엇을 가리키는지 알 수 없는 참조가 있어 원래 값 그대로 두었습니다.",
+  FRAG_UNIT_CONVERTED: "가져온 조각의 여백·간격 값을 이 문서의 형식에 맞는 단위로 바꿨습니다.",
+  FRAG_FORMAT_UNKNOWN: "조각이나 이 문서의 형식 버전을 알 수 없어 여백·간격 단위를 바꾸지 않았으니 한글에서 들여쓰기를 확인하세요.",
 
   // ── 표 조정 ──────────────────────────────────────────────────────
   TABLE_ADDR: "표 칸의 주소 정보가 서로 맞지 않습니다.",
@@ -190,6 +196,11 @@ const TABLE: Readonly<Record<string, string>> = {
   PROTO_UNBOUND_KEY: "공용 원형이 쓰는 키 가운데 이 템플릿에 자리나 데이터 연결이 없는 것이 있어 원형을 적용하지 못했습니다.",
   PLACE_COVERED: "자리가 블록으로 바뀌는 범위 안에 있어 채우지 않고 뺐습니다(오류는 아닙니다).",
   PLACE_UNREGISTERED: "템플릿에 자리로 등록하지 않은 {{키}}가 문서에 있습니다. 자리로 등록하거나 문서에서 지워 주세요.",
+  BLOCK_FORMAT_DIFFERS: "넣는 자리의 문단 서식과 블록의 서식이 다릅니다. 자동으로 바꾸지 않았으니 결과를 확인해 주세요.",
+  BLOCK_NAME_CONFLICT: "블록 안 입력 항목과 이름이 같은 자리들이 서로 다른 값에 연결되어 있습니다. 같은 이름은 같은 값이 되도록 연결을 고쳐 주세요.",
+  BLOCK_KEYS_DROPPED: "블록의 새 판에서 {{키}} 입력 항목이 사라졌습니다. 채운 결과 문서에서 다시 뗐다면 이번 건의 값이 공용 블록 글에 들어갔을 수 있으니 확인해 주세요.",
+  BLOCK_NEWER_VERSION: "이 템플릿이 쓰는 공용 블록에 새 판이 있습니다. 자동으로 바꾸지 않으니 필요하면 업데이트를 눌러 주세요.",
+  TPL_SOURCE_CHANGED: "바탕 문서가 템플릿을 만들 때와 달라졌습니다(최신 버전 있음). 자리를 다시 확인해 템플릿을 새로 저장해 주세요.",
 
   // ── 문서 파일(ZIP 패키지)과 XML ──────────────────────────────────
   MODEL_REF_MISSING: "문서가 가리키는 서식이 문서 안에 없습니다.",

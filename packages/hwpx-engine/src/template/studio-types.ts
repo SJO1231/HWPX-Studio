@@ -8,9 +8,9 @@ import type {
   Rule,
   WordAnchor,
 } from "./types.ts";
-import type { CellPrint, ObjectPrint, ParagraphPrint, RangeAnchor } from "../fill/anchor-types.ts";
+import { HEADING_FORMS, type CellPrint, type HeadingRangeAnchor, type ObjectPrint, type ParagraphPrint, type RangeAnchor, type RangePrint } from "../fill/anchor-types.ts";
 // 같은 선언을 다시 내보낸다(`fill/index.ts`와 같은 선언이라 겹치지 않는다).
-export type { CellPrint, ObjectPrint, RangeAnchor, RangePrint } from "../fill/anchor-types.ts";
+export type { CellPrint, HeadingRangeAnchor, ObjectPrint, RangeAnchor, RangePrint } from "../fill/anchor-types.ts";
 
 // 2판 템플릿 계약(엔진 명세 8.8). 이 폴더는 문서 형식을 모른다(8.5).
 
@@ -27,7 +27,7 @@ export type RangeEndPrint = ParagraphPrint;
 /** 메일머지(MAILMERGE) 필드를 FieldValue 인자로 가리킨다(7.10). occurrence는 같은 키 안의 순번 */
 export type MergeFieldAnchor = { id: string; kind: "mergeField"; key: string; occurrence?: number; pattern?: string };
 
-/** 1판 앵커 5종(필드·낱말·줄·셀·개체)에 range·mergeField를 더하고, 모든 앵커에 선택 pattern(패턴 id)을 둔다. headingRange는 #19가 정할 때까지 읽기가 거절한다. */
+/** 1판 앵커 5종(필드·낱말·줄·셀·개체)에 range·headingRange·mergeField를 더하고, 모든 앵커에 선택 pattern(패턴 id)을 둔다. */
 export type StudioAnchor =
   | (FieldAnchor & { pattern?: string })
   | (WordAnchor & { pattern?: string })
@@ -35,11 +35,13 @@ export type StudioAnchor =
   | (CellAnchor & { pattern?: string; print?: CellPrint })
   | (ObjectAnchor & { pattern?: string; print?: ObjectPrint })
   | (RangeAnchor & { pattern?: string })
+  | (HeadingRangeAnchor & { pattern?: string })
   | MergeFieldAnchor;
 
 // ── 패턴(형만. 판정은 #20) ──────────────────────────────────────
 
-export const PATTERN_FORMS = ["digitDot", "hangulDot", "circled", "paren", "box", "article", "none"] as const;
+/** 패턴의 번호 글자 꼴: 제목 범위의 꼴(`HEADING_FORMS`, 7.10)과 같은 11종 */
+export const PATTERN_FORMS = HEADING_FORMS;
 export const PATTERN_PLACES = ["body", "cell", "labelCell", "labelColon"] as const;
 export const PATTERN_MATCH = ["marker", "bold", "height", "print", "paraPrint", "align"] as const;
 
@@ -122,6 +124,20 @@ export type StudioTemplate = {
 
 // ── 원형 ────────────────────────────────────────────────────────
 
+/**
+ * 블록을 떼어 낸 출처(8.8.17): 원본 문서 바이트의 sha256, 떼어 낸 구간(7.2의 조각 선택과 같은 꼴), 그 구간의 범위 지문(7.10 `range`의 `print`),
+ * 떼어 낸 시각(ISO 8601 UTC, 호출자가 준다. 엔진은 시계를 모른다).
+ */
+export type BlockSource = {
+  sha256: string;
+  selection: { sectionIndex: number; parentPath: number[]; from: number; to: number };
+  print: RangePrint;
+  extractedAt: string;
+};
+
+/** 판마다 한 줄: 판 번호, 시각(ISO 8601 UTC), 바뀐 점(사람이 읽는 글. 문서 글·값 원문은 넣지 않는다) */
+export type BlockHistoryEntry = { version: number; at: string; change: string };
+
 export type BlockProto = {
   schema: typeof BLOCK_PROTO_SCHEMA;
   id: string;
@@ -132,6 +148,10 @@ export type BlockProto = {
   keys: string[];
   previous?: { version: number; content: string };
   note?: string;
+  /** 블록 저장소 API(8.8.17)가 채운다. 없는 옛 원형도 그대로 읽는다. */
+  source?: BlockSource;
+  /** 판 기록(판 번호 오름차순, 마지막 줄이 이 판). 없는 옛 원형도 그대로 읽는다. */
+  history?: BlockHistoryEntry[];
 };
 
 // ── 이번 건 ─────────────────────────────────────────────────────
@@ -231,3 +251,10 @@ export type ProtoUpdatePlan = {
   template: StudioTemplate;
   updated: { block: string; from: number; to: number }[];
 };
+
+// ── 최신 버전 알림(8.8.17) ──────────────────────────────────────
+
+/** `checkTemplateUpdates`의 알림 하나. 오류가 아니다(생성은 `TPL_SOURCE_MISMATCH` 등 기존 검사가 막는다). 문서 글·값 원문은 없다. */
+export type TemplateNotice =
+  | { code: "TPL_SOURCE_CHANGED"; template: string; version: number; expected: string; actual: string; message: string }
+  | { code: "BLOCK_NEWER_VERSION"; template: string; block: string; proto: string; pinned: number; latest: number; message: string };

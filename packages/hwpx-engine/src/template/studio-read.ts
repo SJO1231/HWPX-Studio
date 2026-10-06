@@ -8,13 +8,16 @@ import {
   PATTERN_PLACES,
   STUDIO_TEMPLATE_SCHEMA,
   type BlockContent,
+  type BlockHistoryEntry,
   type BlockProto,
+  type BlockSource,
   type CaseSelection,
   type CellPrint,
   type MergeFieldAnchor,
   type ObjectPrint,
   type ProtoRef,
   type RangeAnchor,
+  type RangePrint,
   type StudioAnchor,
   type StudioCase,
   type StudioOptions,
@@ -139,24 +142,30 @@ function readRangeAnchor(a: Obj, where: string): RangeAnchor {
   const from = int(a, "from", where, A);
   const to = int(a, "to", where, A);
   if (to < from) fail(A, "to가 from보다 작습니다.", where);
-  const print = obj(a["print"], `${where}.print`, A);
-  onlyKeys(print, ["first", "last", "count", "sha256"], `${where}.print`, A);
-  const end = (key: "first" | "last"): { text: string; sha256: string } => {
-    const e = obj(print[key], `${where}.print.${key}`, A);
-    onlyKeys(e, ["text", "sha256"], `${where}.print.${key}`, A);
-    return { text: str(e, "text", `${where}.print.${key}`, A, false), sha256: sha(e, "sha256", `${where}.print.${key}`, A) };
-  };
-  const count = int(print, "count", `${where}.print`, A, 1);
-  if (count !== to - from + 1) fail(A, `print.count(${count})가 범위의 문단 수(${to - from + 1})와 다릅니다.`, where);
+  const print = readRangePrint(a["print"], where, A);
+  if (print.count !== to - from + 1) fail(A, `print.count(${print.count})가 범위의 문단 수(${to - from + 1})와 다릅니다.`, where);
   return {
     id: str(a, "id", where, A),
     kind: "range",
     at: { sectionIndex: int(at, "sectionIndex", `${where}.at`, A), parentPath: parentPath as number[] },
     from,
     to,
-    print: { first: end("first"), last: end("last"), count, sha256: sha(print, "sha256", `${where}.print`, A) },
+    print,
     ...(a["pattern"] === undefined ? {} : { pattern: str(a, "pattern", where, A) }),
   };
+}
+
+/** `range` 지문(7.10): 첫·끝 문단의 글 앞 40자와 글 해시, 문단 수(1 이상), 범위 전체 글 해시. `where`는 지문을 가진 객체의 위치다. */
+function readRangePrint(v: unknown, where: string, code: string): RangePrint {
+  const print = obj(v, `${where}.print`, code);
+  onlyKeys(print, ["first", "last", "count", "sha256"], `${where}.print`, code);
+  const end = (key: "first" | "last"): { text: string; sha256: string } => {
+    const e = obj(print[key], `${where}.print.${key}`, code);
+    onlyKeys(e, ["text", "sha256"], `${where}.print.${key}`, code);
+    return { text: str(e, "text", `${where}.print.${key}`, code, false), sha256: sha(e, "sha256", `${where}.print.${key}`, code) };
+  };
+  const count = int(print, "count", `${where}.print`, code, 1);
+  return { first: end("first"), last: end("last"), count, sha256: sha(print, "sha256", `${where}.print`, code) };
 }
 
 function readMergeFieldAnchor(a: Obj, where: string): MergeFieldAnchor {
@@ -187,7 +196,8 @@ function readObjectPrint(v: unknown, where: string): ObjectPrint {
   };
 }
 
-const V1_KINDS: readonly string[] = ["field", "word", "line", "cell", "object"];
+/** 1판 읽기(`readAnchor`)로 검사하는 종류: 1판 5종과 headingRange(1판도 받는다) */
+const V1_KINDS: readonly string[] = ["field", "word", "line", "cell", "object", "headingRange"];
 
 function readStudioAnchor(v: unknown, index: number): StudioAnchor {
   const where = `anchors[${index}]`;
@@ -196,9 +206,8 @@ function readStudioAnchor(v: unknown, index: number): StudioAnchor {
   const kind = a["kind"];
   if (kind === "range") return readRangeAnchor(a, where);
   if (kind === "mergeField") return readMergeFieldAnchor(a, where);
-  if (kind === "headingRange") fail(A, "headingRange는 아직 지원하지 않습니다(이름만 예약).", where);
-  if (typeof kind !== "string" || !V1_KINDS.includes(kind)) fail(A, `알 수 없는 앵커 종류 ${JSON.stringify(kind)}입니다(field·word·line·cell·object·range·mergeField).`, where);
-  // 1판 5종은 1판 읽기로 검사하고, 2판에서만 받는 pattern(모든 앵커)과 print(cell·object)는 따로 읽는다
+  if (typeof kind !== "string" || !V1_KINDS.includes(kind)) fail(A, `알 수 없는 앵커 종류 ${JSON.stringify(kind)}입니다(field·word·line·cell·object·range·headingRange·mergeField).`, where);
+  // 1판 5종과 headingRange는 1판 읽기로 검사하고, 2판에서만 받는 pattern(모든 앵커)과 print(cell·object)는 따로 읽는다
   const rest: Obj = { ...a };
   delete rest["pattern"];
   if (kind === "cell" || kind === "object") delete rest["print"];
@@ -231,7 +240,7 @@ function readPattern(v: unknown, index: number): TemplatePattern {
   const out: TemplatePattern = {
     id,
     name: str(p, "name", where, FIELD),
-    marker: { form: oneOf(markerObj, "form", PATTERN_FORMS, `${where}.marker`), level: int(markerObj, "level", `${where}.marker`, FIELD, 1) },
+    marker: { form: oneOf(markerObj, "form", PATTERN_FORMS, `${where}.marker`), level: int(markerObj, "level", `${where}.marker`, FIELD, 0) },
     place: oneOf(p, "place", PATTERN_PLACES, where),
     match,
   };
@@ -402,6 +411,8 @@ const TOP_KEYS = ["schema", "id", "version", "meta", "source", "anchors", "patte
 /** 슬롯 앵커가 차지하는 문단 구간: 같은 구역·부모 안의 [from, to] */
 function slotSpan(a: StudioAnchor): { parent: string; from: number; to: number } | undefined {
   if (a.kind === "range") return { parent: `${a.at.sectionIndex}|${a.at.parentPath.join(",")}`, from: a.from, to: a.to };
+  // 제목 범위: 템플릿을 만들 때의 범위(제목 문단부터 지문의 문단 수만큼)
+  if (a.kind === "headingRange") return { parent: `${a.at.sectionIndex}|${a.at.parentPath.join(",")}`, from: a.index, to: a.index + a.print.count - 1 };
   if (a.kind === "line") {
     const last = a.at.path[a.at.path.length - 1] ?? 0;
     return { parent: `${a.at.sectionIndex}|${a.at.path.slice(0, -1).join(",")}`, from: last, to: last };
@@ -445,7 +456,7 @@ function checkRefs(t: StudioTemplate): void {
 
   t.anchors.forEach((a, i) => {
     if (a.pattern !== undefined && !patternIds.has(a.pattern)) fail("TPL_REF", `패턴 ${JSON.stringify(a.pattern)}가 patterns에 없습니다.`, `anchors[${i}].pattern`);
-    if (md && (a.kind === "mergeField" || a.kind === "range")) fail(A, `md 템플릿에는 ${a.kind} 앵커를 쓸 수 없습니다(표식 줄 line 등 9절의 앵커를 씁니다).`, `anchors[${i}]`);
+    if (md && (a.kind === "mergeField" || a.kind === "range" || a.kind === "headingRange")) fail(A, `md 템플릿에는 ${a.kind} 앵커를 쓸 수 없습니다(표식 줄 line 등 9절의 앵커를 씁니다).`, `anchors[${i}]`);
   });
   const bound = new Set<string>();
   t.bindings.forEach((b, i) => {
@@ -468,7 +479,7 @@ function checkRefs(t: StudioTemplate): void {
     s.anchors.forEach((id, j) => {
       const a = anchors.get(id);
       if (a === undefined) fail("TPL_REF", `슬롯이 가리키는 앵커 ${JSON.stringify(id)}가 anchors에 없습니다.`, `slots[${i}].anchors[${j}]`);
-      if (a.kind !== "range" && a.kind !== "line") fail(A, `슬롯 앵커는 range나 line이어야 합니다(앵커 ${JSON.stringify(id)}는 ${a.kind}).`, `slots[${i}].anchors[${j}]`);
+      if (a.kind !== "range" && a.kind !== "headingRange" && a.kind !== "line") fail(A, `슬롯 앵커는 range·headingRange·line이어야 합니다(앵커 ${JSON.stringify(id)}는 ${a.kind}).`, `slots[${i}].anchors[${j}]`);
     });
     if (s.parent !== null && !blocks.has(s.parent)) fail("TPL_REF", `슬롯의 부모 블록 ${JSON.stringify(s.parent)}가 blocks에 없습니다.`, `slots[${i}].parent`);
   });
@@ -674,11 +685,63 @@ const lowerHash = (c: BlockContent): BlockContent => ("fragment" in c ? { fragme
 
 // ── 공개: 원형 ──────────────────────────────────────────────────
 
-/** block-proto@1을 읽는다. 형식만 본다(keys는 만드는 쪽이 계산한다). 판 번호가 다르면 TPL_VERSION */
+/** 시각: ISO 8601 UTC(`Date.prototype.toISOString`의 꼴, 밀리초는 선택) */
+const TIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
+
+function time(o: Obj, key: string, where: string): string {
+  const v = str(o, key, where, FIELD);
+  // 달력 검사: Date.parse는 2월 30일·4월 31일·24:00을 다음 날로 넘겨 받으므로 다시 쓴 날짜·시각이 입력과 같아야 한다
+  const ms = TIME_RE.test(v) ? Date.parse(v) : Number.NaN;
+  if (Number.isNaN(ms) || new Date(ms).toISOString().slice(0, 19) !== v.slice(0, 19)) fail(FIELD, `${key}가 ISO 8601 UTC 시각(예: 2026-10-06T09:30:00Z)이 아닙니다.`, where);
+  return v;
+}
+
+/** 블록의 출처(8.8.17): 원본 해시, 조각 선택 꼴의 구간, 범위 지문(문단 수 = 구간의 문단 수), 떼어 낸 시각 */
+function readBlockSource(v: unknown, where: string): BlockSource {
+  const o = obj(v, where, FIELD);
+  onlyKeys(o, ["sha256", "selection", "print", "extractedAt"], where, FIELD);
+  const sw = `${where}.selection`;
+  const sel = obj(o["selection"], sw, FIELD);
+  onlyKeys(sel, ["sectionIndex", "parentPath", "from", "to"], sw, FIELD);
+  const parentPath = sel["parentPath"];
+  if (!Array.isArray(parentPath) || parentPath.length % 2 !== 0 || !parentPath.every((n) => typeof n === "number" && Number.isInteger(n) && n >= 0)) {
+    fail(FIELD, "parentPath는 [문단, 하위목록, ...] 꼴(짝수 길이, 빈 배열 가능)의 0 이상 정수 배열이어야 합니다.", sw);
+  }
+  const from = int(sel, "from", sw, FIELD);
+  const to = int(sel, "to", sw, FIELD);
+  if (to < from) fail(FIELD, "to가 from보다 작습니다.", sw);
+  const print = readRangePrint(o["print"], where, FIELD);
+  if (print.count !== to - from + 1) fail(FIELD, `print.count(${print.count})가 구간의 문단 수(${to - from + 1})와 다릅니다.`, where);
+  return {
+    sha256: sha(o, "sha256", where),
+    selection: { sectionIndex: int(sel, "sectionIndex", sw, FIELD), parentPath: [...(parentPath as number[])], from, to },
+    print,
+    extractedAt: time(o, "extractedAt", where),
+  };
+}
+
+/** 판 기록: 비어 있지 않고, 판 번호가 오름차순이며, 마지막 줄이 원형의 판이다 */
+function readHistory(v: unknown, version: number, where: string): BlockHistoryEntry[] {
+  if (!Array.isArray(v) || v.length === 0) fail(FIELD, "history는 비어 있지 않은 배열이어야 합니다.", where);
+  const out = v.map((x, i): BlockHistoryEntry => {
+    const ew = `${where}[${i}]`;
+    const e = obj(x, ew, FIELD);
+    onlyKeys(e, ["version", "at", "change"], ew, FIELD);
+    return { version: int(e, "version", ew, FIELD, 1), at: time(e, "at", ew), change: str(e, "change", ew, FIELD) };
+  });
+  out.forEach((e, i) => {
+    const prev = out[i - 1];
+    if (prev !== undefined && e.version <= prev.version) fail(FIELD, "history의 판 번호는 오름차순이어야 합니다.", `${where}[${i}]`);
+  });
+  if (out[out.length - 1]?.version !== version) fail(FIELD, `history의 마지막 판(${out[out.length - 1]?.version})이 원형의 판(${version})과 다릅니다.`, where);
+  return out;
+}
+
+/** block-proto@1을 읽는다. 형식만 본다(keys는 만드는 쪽이 계산한다). 판 번호가 다르면 TPL_VERSION. `source`·`history`(8.8.17)는 선택이다. */
 export function readBlockProto(json: string): BlockProto {
   const root = checkSchema(readJson(json, "원형"), "block-proto", "1", "block-proto.", "원형");
   const w = "block-proto";
-  onlyKeys(root, ["schema", "id", "version", "name", "content", "keys", "previous", "note"], w, FIELD);
+  onlyKeys(root, ["schema", "id", "version", "name", "content", "keys", "previous", "note", "source", "history"], w, FIELD);
   const id = root["id"];
   if (typeof id !== "string") fail(FIELD, "id가 문자열이 아닙니다.", `${w}.id`);
   if (!PROTO_ID_RE.test(id)) fail("TPL_ID", "원형 id " + JSON.stringify(id) + "의 형식이 올바르지 않습니다(k + 16진 8자).", `${w}.id`);
@@ -703,6 +766,8 @@ export function readBlockProto(json: string): BlockProto {
     out.previous = { version: pv, content: sha(p, "content", `${w}.previous`) };
   }
   if (root["note"] !== undefined) out.note = str(root, "note", w, FIELD, false);
+  if (root["source"] !== undefined) out.source = readBlockSource(root["source"], `${w}.source`);
+  if (root["history"] !== undefined) out.history = readHistory(root["history"], version, `${w}.history`);
   return out;
 }
 

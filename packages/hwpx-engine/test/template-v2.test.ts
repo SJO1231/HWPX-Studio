@@ -300,6 +300,10 @@ const REJECT: Row[] = [
   { name: "모르는 앵커 종류", code: "TPL_ANCHOR", make: A((t) => (t["anchors"][1].kind = "bookmark")) },
   { name: "headingRange(예약)", code: "TPL_ANCHOR", make: A((t) => t["anchors"].push({ id: "a9", kind: "headingRange" })) },
   { name: "range 지문 count가 범위와 다름", code: "TPL_ANCHOR", make: A((t) => (t["anchors"][0].print.count = 3)) },
+  // 지문 형식 오류와 문단 수 불일치가 겹치면 지문 형식이 먼저다(8.8.10, #99 D8)
+  { name: "range 지문 count 불일치만(앵커 위치)", code: "TPL_ANCHOR", where: "anchors[0]", make: A((t) => (t["anchors"][0].print.count = 3)) },
+  { name: "range 지문 count 불일치 + first 해시 꼴", code: "TPL_ANCHOR", where: "anchors[0].print.first", make: A((t) => ((t["anchors"][0].print.count = 3), (t["anchors"][0].print.first.sha256 = "abc"))) },
+  { name: "range 지문 count 불일치 + 전체 해시 빠짐", code: "TPL_ANCHOR", where: "anchors[0].print", make: A((t) => ((t["anchors"][0].print.count = 3), delete t["anchors"][0].print.sha256)) },
   { name: "range의 to < from", code: "TPL_ANCHOR", make: A((t) => (t["anchors"][0].to = 10)) },
   { name: "앵커의 모르는 키", code: "TPL_ANCHOR", make: A((t) => (t["anchors"][1].extra = 1)) },
   { name: "word 앵커에 print 외 지문 키", code: "TPL_ANCHOR", make: A((t) => (t["anchors"][1].print.sha256 = SHA)) },

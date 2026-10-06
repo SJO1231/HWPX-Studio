@@ -139,7 +139,7 @@ test("암묵 채움: 삭제되는 문단 안의 누름틀은 채우지 않고 dr
   const del = tpl({ anchors: [anchor], rules: [{ id: "d", do: { type: "delete", anchor: "p" } }] });
   const r = done(generate(FIELDS, del, ds({ 성명: "홍" })));
   assert.deepEqual(values(reparse(r.output)), [["성명", "홍", "1"], ["성명", "홍", "1"]]);
-  assert.deepEqual(r.report.plan.dropped.map((d) => [d.ruleId, d.anchor]), [["implicit", "field:소속"]]);
+  assert.deepEqual(r.report.plan.dropped.map((d) => [d.ruleId, d.anchor, d.kind]), [["implicit", "field:소속", "covered"]]);
   assert.deepEqual(r.report.plan.missingPaths, []);
 });
 

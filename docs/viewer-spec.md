@@ -67,6 +67,10 @@ type Shown = { text: string; start: number }        // 포인터 아래 런의 �
 type EngineAddress = { sectionIndex: number; path: number[]; offset?: number }   // offset: 논리 텍스트의 UTF-16 오프셋
 type Located   = { address: EngineAddress; precision: "char" | "paragraph"; reason?: string; trail: string[] }
 type Unlocated = { precision: "none"; reason: string; trail: string[] }
+// 문단 범위 끌기(#53): 두 끝이 같은 부모의 다른 문단이면 precision "paragraph", address는 시작 문단, span { sectionIndex, parentPath, from, to },
+// drafts는 range 초안(makeRangeAnchor와 같은 지문)과, 시작 문단이 제목이면 headingRange 초안(makeHeadingRangeAnchor). mark는 없다(한 문단 구간만 강조한다).
+// defaultDraftIndex는 막히지 않은 range 초안이 있으면 그것을 고른다. 한 끝을 풀지 못하면 그 끝의 사유(PARAGRAPH_NOT_FOUND 등)다.
+// 시작·끝 깃발(#74): { flags: { start, end } }. 두 깃발의 문단으로 위 문단 범위 끌기와 같은 응답을 낸다(4절 "시작·끝 깃발").
 ```
 
 **함수**
@@ -115,7 +119,7 @@ type Unlocated = { precision: "none"; reason: string; trail: string[] }
 | `paragraph` | `NEAREST_LINE` | 빈 곳을 눌러 가장 가까운 줄을 썼다 |
 | `none` | `PARAGRAPH_MISMATCH`, `PARAGRAPH_NOT_FOUND` | 런의 글이 엔진 문단에 없다, 문단을 찾지 못했다 |
 | `none` | `SECTION_NOT_FOUND`, `PARENT_PARAGRAPH_MISSING`, `CONTROL_NOT_FOUND`, `CONTROL_KIND_UNKNOWN`, `CONTROL_NOT_CONTAINER`, `CELL_NOT_FOUND`, `CELL_PARAGRAPH_NOT_FOUND`, `TEXTBOX_AMBIGUOUS`, `PATH_INCONSISTENT` | 경로를 풀 수 없다(묶음 개체, 표 셀 안 도형, 미주 등) |
-| `none` | `RANGE_PARAGRAPHS_DIFFER` | 끌기의 두 끝이 다른 문단이다 |
+| `none` | `RANGE_PARAGRAPHS_DIFFER` | 끌기의 두 끝(또는 시작·끝 깃발, #74)이 다른 부모(최상위 ↔ 표 칸, 다른 칸, 글상자 ↔ 본문)나 다른 구역에 있다. 같은 부모의 다른 문단이면 문단 범위 끌기다(2026-10-04 #53) |
 | `none` | `OVERLAPPING_RUNS`, `UNPOSITIONED_TEXT` | 겹친 글, 문서 좌표 없는 글 |
 | `none` | `NEAREST_UNCONFIRMED` | 빈 곳인데 가장 가까운 줄의 문단을 확인하지 못했다 |
 | `none` | `CELL_MISMATCH` | 셀 안 빈 곳인데 줄 후보의 글이 다른 셀의 것이다 |
@@ -134,6 +138,38 @@ type Unlocated = { precision: "none"; reason: string; trail: string[] }
 - 범위가 글자 묶음을 가르면 묶음 경계로 넓힌다. 경계 조각을 포함하는 `word`는 만들지 않는다.
 - 낱말·문단·셀 초안마다 기본 옵션으로 채우면 건너뛰거나 거절되는 경우 `blocked: 코드`를 붙인다(누름틀은 채울 수 없는 모양이면 초안 자체를 내지 않는다)(글자 모양이 섞인 범위 등. 채움의 판정과 같은 함수로 계산한다). 초안은 빼지 않는다. `blocked`는 템플릿의 키가 아니므로 템플릿에 넣을 때는 뗀다.
 - 잘못된 주소·범위는 `FILL_DRAFT_ADDRESS`, `FILL_DRAFT_RANGE`.
+
+**시작·끝 깃발 (#74, 2026-10-06)**
+
+범위 선택의 두 방식(끌기·깃발, [스튜디오 명세](studio-spec.md) 4c.2) 가운데 깃발의 호스트 계약이다. 결과는 같은 두 문단을 끈 것(#53, 3절)과 같다. 검증은 [검증 기준](validation.md) 29절.
+
+- 요청(`FlagRequest`, `src/host/types.ts`): 위치 요청과 같은 `locate`에 `{ flags: { start, end } }`를 보낸다. `start`·`end`는 각각 눌린 점 하나(`LocatePoint`: 위치와 런의 글·한계·사유, 또는 표 칸의 빈 곳 `cell`)이고 `from`·`to`와 함께 보내지 않는다. 깃발은 그 점의 **문단**까지만 쓴다(글자 순번·`trailing`·안내문은 문단을 찾는 데만 쓰인다).
+- 풀기: 깃발마다 `cell`이면 `locateInCell`, 아니면 `locatePicked`(`start`)로 문단을 찾고, 끌기와 같은 함수로 범위를 낸다.
+- 응답(`LocateResponse`): 같은 구역·같은 부모이면 `precision: "paragraph"`, `address`(앞 문단), `span { sectionIndex, parentPath, from, to }`(문서 순서. 끝 깃발이 시작 깃발보다 앞이면 바꿔 잡는다), `drafts`는 `range` 초안(`makeRangeAnchor`)과, 앞 문단이 제목이면 둘째로 `headingRange` 초안(`makeHeadingRangeAnchor`. 범위는 깃발과 무관하게 그 제목의 범위다). 기본 선택은 `range`(`defaultDraftIndex`). 두 깃발이 같은 문단이면 문단 하나짜리 `range`다(같은 문단 안 끌기는 글자 범위 `word`이므로 이 경우만 끌기와 다르다).
+- 거절: 부모가 다르면(최상위 ↔ 표 칸, 같은 표의 다른 칸, 다른 표, 표를 담은 문단 ↔ 그 칸, 글상자 ↔ 본문·표 칸, 다른 구역) `none`·`RANGE_PARAGRAPHS_DIFFER`이고 초안이 없다. 한 깃발을 풀지 못하면 그 깃발의 사유(3절 표: `PARAGRAPH_NOT_FOUND`·`PARAGRAPH_MISMATCH`·`CELL_NOT_FOUND` 등. 시작 깃발이 먼저)다. 본문이 틀리면 400: `flags`가 객체가 아니거나 깃발이 빠졌거나 `from`·`to`와 함께 오면 `BAD_REQUEST`, 깃발에 위치도 칸도 없으면 `BAD_POSITION`, 그 밖의 위치 항목 오류는 `from`과 같다.
+- 한계(3절 그대로): 머리말·꼬리말·각주·미주·바탕쪽의 글, 좌표 없는 글(쪽 번호·번호 글), 다른 문단의 런이 겹친 곳은 화면의 `pick`이 위치를 주지 않으므로(`limit: "none"`) 깃발이 될 수 없다. 묶음 개체 안 글상자·표 칸 안 도형 등 경로를 풀 수 없는 글을 깃발로 보내면 그 깃발의 사유(`none`)다.
+- 화면이 할 일(Codex 몫. 뷰어·호스트는 상태를 갖지 않는다): 첫 깃발을 누르면 그 점(`LocatePoint`)을 들고 "끝을 찍으세요"를 보이며 기다린다. Esc나 취소면 첫 깃발을 버린다. `pick`이 위치를 주지 않는 점은 깃발로 받지 않고 그 영역·사유를 보인다. 둘째 깃발을 누르면 두 점을 `flags`로 보내고 응답을 끌기와 같은 상세로 보인다(`RANGE_PARAGRAPHS_DIFFER`면 이유와 함께 거절). 두 깃발 사이에 화면의 문서가 바뀌면(다시 열기·결과로 다시 그림) 첫 깃발을 버린다(점이 옛 문서의 위치다).
+
+**블록 단독 미리보기 (#75, 2026-10-06)**
+
+저장소 탭에서 블록을 누르면 그 블록만 그리는 요청이다([스튜디오 명세](studio-spec.md) 4c, #60 댓글 K절). 미리보기 문서를 만드는 규칙은 [엔진 명세](engine-spec.md) 8.8.18이고, 검증은 [검증 기준](validation.md) 30절.
+
+- 함수(`src/host/preview.ts`): `previewBlock(body, loadBlock): BlockPreviewResponse`. 블록 저장소는 앱이 갖는다. `loadBlock(id)`는 `{ proto, blob }`(읽기 검사를 거친 `block-proto@1` 원형과 그 판의 조각 덩어리 바이트)을 주거나, 없으면 undefined를 준다. 호스트는 상태를 갖지 않는다.
+- 요청(`BlockPreviewRequest`, `src/host/types.ts`): `{ block: "<블록 id>" }` 또는 `{ proto: <원형 JSON 객체>, blob: "<덩어리 base64>" }`. 둘을 함께 보내지 않는다. 화면은 저장한 블록을 id로 부른다(본문 방식은 저장 전 블록이나 앱 밖 블록용).
+- 상한: 덩어리 `PREVIEW_MAX_BLOB` = 32 MiB(lite 블록 저장 한도와 같다). 저장소 덩어리는 바이트 길이로, 본문 덩어리는 base64를 푼 뒤의 바이트 길이로 본다(끝 패딩을 뺀 실제 크기. 글자 길이만으로 상한을 넘는 것은 풀지 않고 거절한다). base64 검사는 길이(4의 배수)·끝 패딩(`=` 2개까지)·글자 집합만 본다. 요청 본문 한도(`ShellOptions.maxBody`)는 앱이 정한다(본문 방식은 base64라 약 1.34배다).
+- 응답(`BlockPreviewResponse`):
+
+| 필드 | 뜻 |
+| --- | --- |
+| `hwpx` | 미리보기 HWPX 바이트(base64). 엔진의 저장 게이트를 통과한 것만 온다. 블록 최상위 문단은 구역 0의 최상위 1번부터다(0번은 글 없는 바탕 문단) |
+| `sha256` | `hwpx` 바이트의 sha256(16진). 같은 블록·같은 판이면 같다 |
+| `fields` | 같은 종류·같은 이름 입력 항목의 수 `{ name, kind, count }[]`(처음 나온 순서. `kind`는 `placeholder`·`clickHere`·`mailMerge`) |
+| `places` | 미리보기 문서 안 입력 항목 자리(엔진 주소 `sectionIndex`·`path`, 논리 오프셋 `start`·`end`, 여러 문단 누름틀이면 `endPath`)와 쪽 위 강조 구간 `marks: MarkRange[]` |
+| `warnings` | 경고 `{ code, message }[]`: 조각 가져오기 경고(`FRAG_UNIT_CONVERTED`·`FRAG_FORMAT_UNKNOWN`·`FRAG_DANGLING_SOURCE` 등)와 상속 오류 `GATE_INHERITED` |
+
+- `marks`: 자리 구간을 위치 변환(3절)으로 rhwp 글자 순번 구간으로 옮긴 것(`markSpan`, 앵커 강조와 같은 함수). 한 문단 자리는 하나, 여러 문단 누름틀은 문단마다(시작 문단의 뒷부분, 사이 문단 전체, 끝 문단의 앞부분)다. 값 글에 줄바꿈이 있으면 줄바꿈마다 나눈다(rhwp는 줄바꿈을 글자로 그리지 않아 덮을 글이 어긋난다). 안내문 상태 누름틀은 `guide`(안내문 사각형을 덮는다), 그 밖은 `text`(덮어야 할 글. 화면은 쪽 글자 배치와 견줘 다르면 그리지 않는다)를 준다. 옮길 수 없는 문단은 빠지므로 빈 목록일 수 있다. 한계: 지금 쪽 화면(`dom/page-view.ts`)은 쪽마다 글을 견주므로 한 구간이 쪽을 넘으면 그 구간은 그려지지 않는다(긴 값 시험에서 1,408개 중 93개, 검증 기준 30절). 줄을 넘는 안내문(안내문 상태 누름틀의 안내문이 두 줄 이상으로 나뉘어 그려진 것)도 강조가 그려지지 않는다: 안내문 사각형(`rhwp/layout.ts` `guideRect`)은 안내문 글 전체와 같은 좌표 없는 런 하나를 찾으므로 줄마다 나뉜 런을 찾지 못한다(독립 검증 관측. 합성 누름틀의 한 줄 안내문 6·28자는 그려지고 여러 줄로 나뉘는 127자(첫 줄 런 46자)는 그려지지 않음을 확인했다. 아직 고치지 않았다).
+- 거절(`HostError`, `{ error: { code, message } }`): 400 `BAD_REQUEST`(본문이 객체가 아님, `block`이 문자열이 아니거나 비었거나 200자를 넘음, `block`과 `proto`·`blob`을 함께 보냄, `proto`가 객체가 아니거나 `blob`이 문자열이 아님), 400 `BAD_BLOB`(base64가 아님), 404 `BLOCK_NOT_FOUND`(저장소에 없음), 413 `BLOCK_TOO_LARGE`(상한 초과), 400 엔진 코드(원형 읽기 거절 `TPL_FIELD`·`TPL_ID` 등), 422 엔진 코드(미리보기를 만들 수 없음: `TPL_FRAGMENT_MISSING`·`FRAG_SCHEMA`·`GATE_NEW_ERRORS` 등). 거절이면 바이트를 주지 않는다.
+- 화면이 할 일(Codex 몫. 뷰어·호스트에는 구현하지 않았다): 저장소 목록에서 블록을 누르면 `{ block }`을 보내고 `hwpx`를 다른 문서와 같은 뷰어(rhwp)로 연다. `places[].marks`를 쪽 위에 덧그려 입력 항목 자리를 강조하고, `fields`로 "입력 n"과 이름별 수를 보인다(n을 자리 수로 셀지 이름 수로 셀지는 화면이 정한다). `warnings`는 쉬운 말로 보인다. 거절이면 이유를 보이고 원문 일부 보기로 대신한다. 첫 줄의 빈 바탕 문단은 블록의 일부가 아니다. 미리보기는 표시용이다(저장·편집 결과를 호스트로 돌려보내지 않는다). 쪽 설정은 바탕의 A4이므로 원본과 줄 나뉨이 다를 수 있다(엔진 명세 8.8.18 한계).
 
 ## 5. 시험 구현의 화면
 
