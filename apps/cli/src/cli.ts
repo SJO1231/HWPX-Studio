@@ -1,4 +1,4 @@
-import { candidates, compile, diff, fill, fragmentCommand, headings, inspect, tableCommand, validate } from "./commands.ts";
+import { blockCommand, candidates, compile, diff, fill, fragmentCommand, headings, inspect, tableCommand, validate } from "./commands.ts";
 import { InputError, UsageError, type Out } from "./io.ts";
 
 export const USAGE = `사용법: hwpx <명령> [옵션]
@@ -11,6 +11,11 @@ export const USAGE = `사용법: hwpx <명령> [옵션]
   fragment import <대상> <조각.json> --section N --index I [--parent 주소] [--before] -o 출력.hwpx
   fragment import <대상> <조각.json> --range 구역:시작-끝 [--parent 주소] -o 출력.hwpx   범위의 문단들을 조각으로 교체
        [--mode baseline|strict|repair] [--reissue-internal] [--report r.json] [--overwrite]
+  block extract <파일> (--range 구역:시작-끝 | --heading 구역:문단) [--parent 주소] --name 이름 --store 폴더 [--id k+16진8자] [--note 메모]
+                                                        범위를 블록(원형 1판 + 조각)으로 떼어 <저장소>/blocks/<id>/에 저장
+  block insert <대상> --store 폴더 --block id (--section N --index I [--before] | --range 구역:시작-끝) [--parent 주소] -o 출력.hwpx
+       [--mode baseline|strict|repair] [--report r.json] [--overwrite]   블록을 넣는다(저장 게이트 포함, 서식이 다르면 경고만)
+  block list --store 폴더 [--json]                      저장소의 블록 목록(id, 판, 이름, 출처, 마지막 기록)
   fill <파일> --data d.json [--template t.json] -o 출력 [--missing error|empty|keep]
        [--dry-run] [--report r.json] [--overwrite]               확장자로 형식을 고른다(.hwpx, .md, .txt)
        .hwpx 전용: [--mode baseline|strict|repair] [--reissue-internal]
@@ -45,6 +50,8 @@ export async function run(argv: string[], out: Out): Promise<number> {
         return headings(rest, out);
       case "fragment":
         return await fragmentCommand(rest, out);
+      case "block":
+        return await blockCommand(rest, out);
       case "fill":
         return await fill(rest, out);
       case "table":

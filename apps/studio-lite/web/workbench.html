@@ -23,7 +23,7 @@
   <input id="workspace-file" type="file" accept=".json,.hwpx-work.json" hidden>
   <input id="data-file" type="file" accept=".json,.csv" hidden>
   <main class="workspace">
-    <aside class="document-rail" aria-label="문서 탐색"><div class="rail-tabs" role="tablist" aria-label="왼쪽 목록"><button id="document-tab" role="tab" aria-selected="true" aria-controls="document-list">문서</button><button id="library-tab" role="tab" aria-selected="false" aria-controls="library-list">블록 저장소</button></div>
+    <aside class="document-rail" aria-label="문서 탐색"><div class="rail-tabs" role="tablist" aria-label="왼쪽 목록"><button id="document-tab" role="tab" aria-selected="true" aria-controls="document-list">흐름</button><button id="library-tab" role="tab" aria-selected="false" aria-controls="library-list">블록 저장소</button></div>
       <div id="document-list" class="rail-scroll" role="tabpanel" aria-labelledby="document-tab">      <details id="data-menu" class="menu">
         <summary>데이터<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg></summary>
         <div class="menu-panel data-panel">
@@ -36,7 +36,7 @@
       </details>
 
         <nav id="heading-tree" aria-label="제목 트리"></nav>
-        <div class="recommend-heading"><strong>추천 목록</strong><button id="review-undo" type="button" disabled>되돌리기</button></div><div id="recommendations"></div>
+        <div class="recommend-heading"><strong>추천 목록</strong><button id="review-undo" type="button" disabled>되돌리기</button></div><button id="save-checked-blocks" type="button" hidden>체크한 블록 저장</button><div id="recommendations"></div>
       </div>
       <div id="library-list" class="rail-scroll" role="tabpanel" aria-labelledby="library-tab" hidden><button id="open-block-library" type="button">크게 보기</button><div id="library-items"></div></div>
     </aside>

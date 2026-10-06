@@ -2,6 +2,7 @@ import { deflateRawSync } from "node:zlib";
 import type { EditPlan, SpanEdit } from "../edit/plan.ts";
 import { HwpxError, makeIssue, type Issue } from "../errors.ts";
 import { FONT_LANGS, type HeaderModel, type HwpxDocument } from "../model/types.ts";
+import { readXmlVersion } from "../package/format-version.ts";
 import type { HwpxPackage } from "../package/open.ts";
 import { findEntry, readEntry } from "../package/zip-read.ts";
 import { decodeEntities, escapeAttr } from "../xml/chars.ts";
@@ -11,7 +12,8 @@ import { validateFragment } from "./json.ts";
 import { createFingerprinter, danglingIdsOf, makeLookup } from "./resources.ts";
 import { paragraphsAt, sectionAt } from "./select.ts";
 import type { Fragment, FragmentResource, ImportOptions, ImportPlan, InheritedDuplicate, InsertPoint } from "./types.ts";
-import { applyReps, missingDeclarations, scanInstanceAttrs, sha256Hex, type Rep } from "./util.ts";
+import { convertFragmentUnits } from "./units.ts";
+import { applyReps, declaresPrefixOrUri, missingDeclarations, scanInstanceAttrs, sha256Hex, type Rep } from "./util.ts";
 
 // 자원 종류 → header의 목록 요소(local 이름)
 const LIST_NAME: Record<string, string> = {
@@ -506,19 +508,23 @@ function renameBookmarks(target: HwpxDocument, fragment: Fragment, reps: Rep[]):
  * 참조 id·인스턴스 id·책갈피 이름의 속성값 구간만 바꾸고 줄 배치 캐시는 지운다. 대상에 없는 목록(글머리표 목록 등)은 만든다.
  * 소스에서부터 조각이 갖고 있던 문제(조각 안에서 겹치는 id, 없는 대상을 가리키던 참조)는 계획의 `inherited`에 기록한다.
  * `options.reissueInternalDuplicates`를 켜면 조각 안에서 겹치는 id도 첫 등장만 두고 새 값으로 바꾼다(기본은 끔: 소스 원문 그대로).
+ * 원본과 대상의 형식 버전이 1.5 이상·미만으로 갈리면 자원 대응 전에 자원을 대상 단위로 바꾼다(`convertFragmentUnits`, 명세 7.66).
  */
-export function planImport(target: HwpxDocument, fragment: Fragment, at: InsertPoint, options: ImportOptions = {}): ImportPlan {
-  validateFragment(fragment);
+export function planImport(target: HwpxDocument, given: Fragment, at: InsertPoint, options: ImportOptions = {}): ImportPlan {
+  validateFragment(given);
   const section = sectionAt(target, at.sectionIndex, "FRAG_INSERT_POINT");
   const siblings = paragraphsAt(section, at.parentPath, "FRAG_INSERT_POINT");
   const anchor = Number.isInteger(at.index) ? siblings[at.index] : undefined;
   if (anchor === undefined || (at.position !== "before" && at.position !== "after")) {
     throw new HwpxError("FRAG_INSERT_POINT", `삽입 지점 ${at.index}(${at.position})이 올바르지 않습니다(목록의 문단 ${siblings.length}개).`);
   }
-  const issues: Issue[] = [...fragment.issues];
+  const headerEntry = target.pkg.headerEntry;
+  // 2(앞부분). 단위 변환: 원본과 대상의 형식 버전이 1.5 이상·미만으로 갈리면 자원을 대상 단위로 바꾼다(자원 대응 전이라 같은 모양이면 대상 자원을 재사용한다)
+  const units = convertFragmentUnits(given, readXmlVersion(target.pkg), headerEntry);
+  const fragment = units.fragment;
+  const issues: Issue[] = [...fragment.issues, ...units.issues];
   const edits: SpanEdit[] = [];
   const additions: EditPlan["additions"] = [];
-  const headerEntry = target.pkg.headerEntry;
 
   // 1. 접두사: 같은 역할로 선언돼 있으면 통과, 다른 역할이면 거절, 선언이 없으면 루트에 선언을 더한다
   edits.push(
@@ -550,6 +556,11 @@ export function planImport(target: HwpxDocument, fragment: Fragment, at: InsertP
         throw new HwpxError("FRAG_NS_MISMATCH", `${what}: 접두사 '${prefix}'가 자원마다 다른 역할입니다.`, headerEntry);
       }
       if (known === undefined) headerDeclarations.set(prefix, uri);
+    }
+    // 스위치가 요구하는 네임스페이스(속성값의 URI) 선언은 정리 차원이다: 두 형식 버전을 알 때만, 접두사도 URI도 선언돼 있지 않으면 원본 접두사로 더한다(명세 7.66)
+    for (const [prefix, uri] of units.versionsKnown ? Object.entries(entry.res.valueNamespaces ?? {}) : []) {
+      if (declaresPrefixOrUri(scope, prefix, uri) || [...headerDeclarations].some(([p, u]) => p === prefix || u === uri)) continue;
+      headerDeclarations.set(prefix, uri);
     }
     const group = byList.get(entry.list) ?? {
       items: [],
@@ -618,6 +629,7 @@ export function planImport(target: HwpxDocument, fragment: Fragment, at: InsertP
     summary: {
       reusedResources: fragment.resources.length - resources.added.length,
       addedResources: resources.added.length,
+      convertedResources: units.converted,
       createdLists: created.length,
       reusedBinaries: binaries.reused,
       addedBinaries: binaries.added,
