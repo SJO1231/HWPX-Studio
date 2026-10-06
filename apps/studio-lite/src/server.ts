@@ -5,7 +5,7 @@ import { createQuick } from './quick-api.ts';
 import { createWorkbench } from './workbench.ts';
 import { createBlockLibrary } from './block-library.ts';
 import { plainOf } from './quick-messages.ts';
-import { plainOf as blockMessage } from '../../studio/src/messages.ts';
+import { plainOf as blockMessage, KNOWN_CODES } from '../../studio/src/messages.ts';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +16,8 @@ import { demo, demoSources } from './demo.ts';
 import { createG2B, G2BRequestError } from './g2b.ts';
 import { parseDocument, openPackage } from '@hwpx-studio/engine';
 
+// Preview rejections: engine codes use the shared plain table; app/host codes already carry a plain sentence.
+const previewPlain=(e:unknown)=>{const code=(e as {code?:unknown}|null)?.code;return typeof code==='string'&&KNOWN_CODES.includes(code)?blockMessage(code):e instanceof HostError?e.message:'블록 미리보기를 만들지 못했습니다.';};
 const pathCode=(e:unknown)=>e instanceof Error && 'code' in e && typeof e.code==='string'?{code:e.code,plain:plainOf(e.code)}:{};
 const ROOT=fileURLToPath(new URL('../',import.meta.url));
 export function createApp(database=':memory:') {
@@ -110,7 +112,7 @@ export function createApp(database=':memory:') {
         return send(200,{id:Number(result.lastInsertRowid),saved:true});
       }
       send(404,{error:'없는 API입니다.'});
-    } catch(e) {send(e instanceof G2BRequestError || e instanceof HostError?e.status:400,{error:e instanceof Error?e.message:'요청 처리에 실패했습니다.',...(req.url?.split('?')[0]==='/api/block/preview'?{plain:blockMessage((e as {code?:string}).code)}:{}),...(e instanceof G2BRequestError?{status:'error',code:e.code}:pathCode(e))});}
+    } catch(e) {send(e instanceof G2BRequestError || e instanceof HostError?e.status:400,{error:e instanceof Error?e.message:'요청 처리에 실패했습니다.',...(e instanceof G2BRequestError?{status:'error',code:e.code}:pathCode(e)),...(req.url?.split('?')[0]==='/api/block/preview'?{plain:previewPlain(e)}:{})});}
   });
   server.on('close',()=>db.close());
   return server;

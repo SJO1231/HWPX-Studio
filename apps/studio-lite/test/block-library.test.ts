@@ -159,10 +159,28 @@ test('stored block preview HTTP uses viewer host bytes/marks, keeps source/proto
  const doc=parseDocument(openPackage(Buffer.from(preview.hwpx,'base64')));assert(doc.sections.some(s=>s.paragraphs.some(p=>p.logicalText.includes('{{성명}}'))));
  const again=await(await fetch(base+'/api/block/preview?id='+stored.id)).json() as any;assert.equal(again.hwpx,preview.hwpx);
  assert.deepEqual(Buffer.from(await(await fetch(base+opened.sourceUrl)).arrayBuffer()),source);
- const missing=await fetch(base+'/api/block/preview?id=missing');assert.equal(missing.status,404);assert.equal((await missing.json() as any).plain,blockMessage('BLOCK_NOT_FOUND'));
+ const missing=await fetch(base+'/api/block/preview?id=missing');assert.equal(missing.status,404);assert.equal((await missing.json() as any).plain,'저장한 블록을 찾지 못했습니다.');
  }finally{await new Promise<void>(r=>server.close(()=>r()));}
 });
 
+test('block preview rejection gives a plain sentence without codes or ids; input count becomes unknown, not invented',async()=>{
+ const dir=mkdtempSync(join(tmpdir(),'lite-block-reject-')),path=join(dir,'blocks.sqlite');
+ const server=createApp(path);await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
+ const base='http://127.0.0.1:'+(server.address() as any).port;
+ try {
+ const post=async(route:string,input:unknown)=>{const r=await fetch(base+'/api/workbench/'+route,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)});assert.equal(r.status,200);return r.json() as Promise<any>;};
+ const source=readFileSync(new URL('../../../examples/quick/template-braces.hwpx',import.meta.url)),opened=await post('open',{name:'example.hwpx',content:content(source)});
+ const selected=opened.paragraphs.find((p:any)=>p.text.includes('신청인:'));
+ const draft=await post('block-preview',{session:opened.session,from:selected.id,to:selected.id}),stored=await post('block-save',{session:opened.session,previewId:draft.id,name:'거절 예시'});
+ const db=new DatabaseSync(path);try{const row=db.prepare('SELECT proto FROM lite_block WHERE id=?').get(stored.id) as {proto:string},proto=JSON.parse(row.proto);proto.content.fragment='0'.repeat(64);db.prepare('UPDATE lite_block SET proto=? WHERE id=?').run(JSON.stringify(proto),stored.id);}finally{db.close();}
+ const response=await fetch(base+'/api/block/preview?id='+stored.id),body=await response.json() as any;
+ assert(response.status>=400);assert.equal(body.code,'TPL_FRAGMENT_MISSING');assert.equal(body.plain,blockMessage('TPL_FRAGMENT_MISSING'));
+ assert.doesNotMatch(body.plain,/[A-Z]{2,}_[A-Z_]+|block:|k[0-9a-f]{8}/);
+ const restarted=createApp(path);await new Promise<void>(r=>restarted.listen(0,'127.0.0.1',r));
+ try{const list=await(await fetch('http://127.0.0.1:'+(restarted.address() as any).port+'/api/blocks')).json() as any;assert.equal(list.blocks[0].inputCount,null);}
+ finally{await new Promise<void>(r=>restarted.close(()=>r()));}
+ }finally{await new Promise<void>(r=>server.close(()=>r()));rmSync(dir,{recursive:true,force:true});}
+});
 
 test('library input counts match preview and exclude placeholders inside mailmerge display text, including old rows',()=>{
   const db=new DatabaseSync(':memory:');try{
