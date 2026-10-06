@@ -798,6 +798,9 @@ type InsertPoint = { sectionIndex: number; parentPath: number[]; index: number; 
   - `PKG_NO_PREVIEW_TEXT`: 미리보기 텍스트 항목이 없다(경고).
   - `TBL_ATTR_MISSING`: 표의 `rowCnt`·`colCnt` 속성이 없다(오류).
   - `RES_UNIT_SWITCH_LEGACY`: `version.xml`의 `xmlVersion`이 1.5 미만인데 header에 HwpUnitChar 스위치가 있다(경고, 개수를 메시지에 적는다. 한컴은 case 값을 옛 단위로 읽어 여백·간격이 절반으로 보인다. 7.66, 2026-10-06 추가).
+  - `SEC_PR_INCOMPLETE`: 구역 설정(`secPr`)에 시작 번호(`startNum`)나 감추기(`visibility`)가 없다(오류. 한글 2024가 문서를 열지 못한다. 빠진 것을 한컴 저장 순서로 메시지에 적고 `where`는 구역 파일. 이슈 #103, 2026-10-06 추가).
+  - `SEC_PR_PAGE_MISSING`: 구역 설정에 용지(`pagePr`)가 없다(경고. 한글은 열지만 용지 크기 없이 배치해 쪽 수가 크게 달라진다).
+  - 구역 설정의 나머지 자식(격자 `grid`, 줄 번호 `lineNumberShape`, 각주·미주 모양 `footNotePr`·`endNotePr`, 쪽 테두리 `pageBorderFill`)은 한컴 저장본에는 늘 있지만 빠져도 한글이 같은 쪽 수로 열므로 보고하지 않는다(합성 시험 문서 D1~D7에는 줄 번호·쪽 테두리가 없다). 근거는 한글 2024 COM 열기 실측(검증 기준 31절).
 - `census`: 문단·표·그림·필드 짝·책갈피·이진 항목·모르는 컨트롤(종류별)의 수.
 - `compareToBaseline(before, after): { newErrors, preexisting, resolved }` — 오류를 (코드, 메시지, 위치)로 묶어 개수 차이를 낸다.
 - 수용 조건:
@@ -1708,7 +1711,7 @@ buildBlockPreviewDocument(proto: BlockProto, blob: Uint8Array, options?: ImportO
 | `Contents/content.hpf`, `META-INF/container.xml`, `META-INF/manifest.xml` | header·section0 등록. 미리보기 글(`Preview/`)·settings는 없다 |
 
 - ZIP은 `createHwpxArchive`(3.2). 검사기 결과는 오류 0, 경고 `PKG_NO_PREVIEW_TEXT` 1이다.
-- 한글 2024(13.0.0.711)에서 미리보기 문서 5건(합성 2, 실제 공고서 블록 3)이 모두 열리고 쪽 수가 rhwp와 같다(검증 기준 30절). 구역 설정에 감추기·줄 번호·각주·미주·쪽 테두리가 없던 첫 구현은 같은 5건 모두 열리지 않았다(독립 검증 관측: `hp:visibility`만 더해도 열린다).
+- 한글 2024(13.0.0.711)에서 미리보기 문서 5건(합성 2, 실제 공고서 블록 3)이 모두 열리고 쪽 수가 rhwp와 같다(검증 기준 30절). 구역 설정에 감추기·줄 번호·각주·미주·쪽 테두리가 없던 첫 구현은 같은 5건 모두 열리지 않았다(독립 검증 관측: `hp:visibility`만 더해도 열린다). 검사기는 이 누락을 `SEC_PR_INCOMPLETE`로 잡는다(8.1).
 - **형식 버전 1.5를 고른 이유**: 실제 공고서 16건이 모두 1.5이고(검증 기준 27절) 블록은 대개 그런 문서에서 뗀다. 같은 형식이면 7.66 변환이 없어 블록 자원 원문이 그대로 들어가므로, 미리보기의 서식이 그 블록을 다른 1.5 문서에 넣은 결과와 같다. 1.5 미만 원본의 블록은 1.5 문서에 넣을 때와 같은 올림 변환을 거친다. 원본 형식에 따라 바탕 버전을 바꾸지 않는다(같은 블록이라도 원본마다 바탕이 달라지고, 넣을 곳이 1.5인 실제 쓰임과 어긋난다).
 
 **입력 항목 자리** (8.8.17 "블록 안 입력 항목 이름"과 같은 범위)
