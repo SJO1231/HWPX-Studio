@@ -1,3 +1,4 @@
+import {viewerLines, lineAt} from '/viewer-lines.js';
 import { installBlockLibrary } from '/block-library.js';
 import {editorLayout, editorSelection, unitAt, replaceEditorText, groupEditorSelection, editorChange} from '/editor-model.js';
 import { createPageView, createLatest, toPagePoint } from '/packages/viewer/src/dom/index.ts';
@@ -47,6 +48,8 @@ function controls() {
   for(const button of document.querySelectorAll('[data-action]')) {
     const name=button.dataset.action;
     button.disabled=name==='copyKey'?!available||!$('#key-select').value.trim():name==='importSelection'?!canEdit||!state.comparisonText:name==='copySelection'?!available:!canEdit;
+    button.dataset.actionTitle??=button.title;
+    button.title=button.disabled?(state.busy?'문서 처리가 끝난 뒤 사용하세요.':!state.session?'문서를 먼저 여세요.':!item?'문서에서 부분을 먼저 고르세요.':!item.editable?'표·개체 또는 보호된 서식이 있는 문단은 직접 편집할 수 없습니다.':name==='importSelection'?'비교 문서에서 가져올 글을 선택하세요.':'입력 항목 이름을 먼저 적으세요.'):button.dataset.actionTitle;
   }
   blockLibraryUI.refresh();
   for(const b of document.querySelectorAll('[data-action="branchDetail"]')){b.disabled=true;b.title='분기점 만들기는 다음 구현 단계에서 지원합니다.';}
@@ -646,15 +649,14 @@ function renderViewerNumbers(){
   for(const old of $('#pages').querySelectorAll('.viewer-number'))old.remove();
   if(state.kind==='text'||state.viewMode!=='source'||!state.sourceDoc)return;
   const scale=Number($('#scale').value);if(!Number.isFinite(scale)||scale<=0)return;
+  let offset=0;
   for(const page of $('#pages').querySelectorAll('.page')){
-    const info=state.sourceDoc.pageInfo(Number(page.dataset.page));
-    const runs=state.sourceDoc.pageLayout(Number(page.dataset.page)).runs.filter(r=>
-      [r.x,r.y,r.w,r.h].every(Number.isFinite)&&r.x>=0&&r.y>=0&&r.x<info.width&&r.y<info.height&&r.w>0&&r.h>0&&r.text.replaceAll('\uFFFC','').trim())
-      .map(r=>({...r,row:state.paragraphs.findIndex(p=>{const pos=runPosition(r);return p.position&&pos&&sameParagraph(p.position,pos);})})).filter(r=>r.row>=0);
+    const lines=viewerLines(JSON.parse(state.sourceDoc.native.getPageRenderTree(Number(page.dataset.page))),offset);
+    offset+=lines.length;
     const badge=document.createElement('span');badge.className='viewer-number';badge.hidden=true;badge.setAttribute('aria-hidden','true');page.append(badge);
     page.onpointermove=event=>{const rect=page.getBoundingClientRect(),x=(event.clientX-rect.left)/scale,y=(event.clientY-rect.top)/scale;
-      const run=runs.find(r=>x>=r.x&&x<=r.x+r.w&&y>=r.y&&y<=r.y+r.h);badge.hidden=!run;
-      if(run){badge.textContent=String(run.row+1);badge.style.left='2px';badge.style.top=(run.y*scale)+'px';}
+      const line=lineAt(lines,x,y);badge.hidden=!line;
+      if(line){badge.textContent=String(line.number);badge.style.left='2px';badge.style.top=(line.y*scale)+'px';}
     };
     page.onpointerleave=()=>{badge.hidden=true;};
   }

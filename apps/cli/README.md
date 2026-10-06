@@ -13,6 +13,9 @@ HWPX 문서와 Markdown·텍스트 문서를 검사하고 채우는 명령줄 �
 | `headings` | 제목 목록(번호 글자 꼴·단계·글 앞 40자. 표 칸 안 포함) | `.hwpx` |
 | `fragment extract` | 문단 구간을 조각 JSON으로 뜬다 | `.hwpx` |
 | `fragment import` | 조각 JSON을 다른 문서의 문단 앞·뒤나 표 셀 안에 가져온다(저장 게이트 포함) | `.hwpx` |
+| `block extract` | 범위·제목 범위를 블록(원형 1판 + 조각 덩어리)으로 떼어 저장소 폴더에 저장한다 | `.hwpx` |
+| `block insert` | 저장소의 블록을 다른 문서의 문단 앞·뒤나 범위 자리에 넣는다(저장 게이트 포함, 서식이 다르면 경고만) | `.hwpx` |
+| `block list` | 저장소의 블록 목록(id·판·이름·출처·마지막 기록) | — |
 | `fill` | 데이터로 `{{}}`·누름틀·메일 머지 필드(키 = 데이터 경로)를 채우고 템플릿 규칙(채움·삭제·삽입·조각 주입·표 설정·표 크기·행 반복)을 적용한다. `.hwpx`는 `--batch`로 데이터 배열의 원소마다 결과 파일을 만든다 | `.hwpx` `.md` `.txt` |
 | `table list` | 표마다 위치·행×열·너비·글자처럼 취급·쪽 나눔·제목 행 반복·병합 수를 낸다(글 내용은 없다) | `.hwpx` |
 | `table set` | 최상위 표 하나의 설정(글자처럼 취급·쪽 나눔·제목 행 반복)과 크기(너비·비율·열 너비)를 바꾼다(저장 게이트 포함) | `.hwpx` |
@@ -154,6 +157,24 @@ hwpx validate filled.hwpx --strict --json
 hwpx diff form.hwpx filled.hwpx
 hwpx candidates form.hwpx --json
 ```
+
+### 블록 저장소 (`block`)
+
+문서에서 범위를 정해 블록으로 떼어 저장소 폴더에 모으고, 다른 문서에 넣는다(엔진 명세 8.8.17). 저장소는 이미 있는 폴더를 `--store`로 준다.
+
+```
+hwpx headings notice.hwpx                                                 # 제목 문단 번호 확인
+hwpx block extract notice.hwpx --heading 0:17 --name "참가자격" --store store   # 제목 범위를 블록으로
+hwpx block extract notice.hwpx --range 0:18-21 --name "계약 조건" --store store --id k0a1b2c3d
+hwpx block list --store store
+hwpx block insert other.hwpx --store store --block k0a1b2c3d --section 0 --index 5 -o out.hwpx
+hwpx block insert other.hwpx --store store --block k0a1b2c3d --range 0:7-9 -o out.hwpx --report r.json
+```
+
+- 저장소 폴더: `blocks/<블록 id>/block.json`(최신 판 원형, 정규 JSON)과 `blocks/<블록 id>/<sha256>.json`(조각 덩어리). 블록 폴더는 `fill --blobs`의 덩어리 폴더로도 쓸 수 있다.
+- `extract`: `--range 구역:시작-끝`이나 `--heading 구역:문단`(제목 문단) 하나를 준다. 표 칸 안 범위는 `--parent`. id를 주지 않으면 무작위로 만들고, 같은 id의 블록이 있으면 종료 코드 2다. 원형에는 출처(원본 해시·구간·지문·떼어 낸 시각)와 판 기록(`첫 저장`)이 들어간다. 구역 설정 문단·누름틀을 자르는 범위는 종료 코드 1이다.
+- `insert`: 블록 덩어리의 해시를 대조하고(다르면 2), 넣는 자리 문단과 블록 문단의 문단 모양·스타일이 다르면 `서식 차이:` 줄과 `경고 [BLOCK_FORMAT_DIFFERS]`를 내고 그대로 넣는다(자동으로 바꾸지 않는다. 종료 코드는 바뀌지 않는다). 출력은 `fragment import`와 같은 저장 게이트를 거친다. `--report`에는 `block: { id, version, formatDiffs }`가 더해진다.
+- `list`: 읽을 수 없는 블록이 있으면 종료 코드 1이다. `--json`은 원형 배열을 낸다.
 
 ## 보고서 형식 (`--report`)
 

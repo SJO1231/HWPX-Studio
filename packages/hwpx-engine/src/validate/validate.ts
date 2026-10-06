@@ -1,6 +1,7 @@
 import { HwpxError } from "../errors.ts";
 import { readArchive, type Archive } from "../package/zip-read.ts";
-import { attrValue } from "../xml/tree.ts";
+import { isUnitCharFormat, isUnitSwitch, VERSION_ENTRY } from "../package/format-version.ts";
+import { attrValue, walkElements } from "../xml/tree.ts";
 import { checkPackage, HEADER_ENTRY, parseEntry, PREVIEW_TEXT_ENTRY, type Ctx } from "./package.ts";
 import { checkRefs, collectResources, emptySpaces } from "./resources.ts";
 import { checkInstances, newAcc, scanSectionBody } from "./structure.ts";
@@ -65,6 +66,15 @@ function run(bytes: Uint8Array, strict: boolean, log: IssueLog, stats: Validatio
     if (declared !== undefined && /^\d+$/.test(declared) && Number(declared) !== sections.length) {
       log.warn("PKG_SECCNT", `header secCnt(${declared}) 와 section 파일 수(${sections.length}) 불일치`);
       log.err("PKG_SECCNT_MISMATCH", `header 의 구역 수 선언(secCnt=${declared}) 과 실제 구역 항목 수(${sections.length}) 가 다름`);
+    }
+  }
+  // 형식 버전이 1.5 미만인데 HwpUnitChar 스위치가 있으면 한컴은 case 값을 옛 단위로 읽어 여백·간격이 절반으로 보인다(검증 기준 26절)
+  const version = parseEntry(ctx, VERSION_ENTRY);
+  const xmlVersion = version === null ? undefined : attrValue(version.root, "xmlVersion");
+  if (header !== null && isUnitCharFormat(xmlVersion) === false) {
+    const switches = [...walkElements(header.root)].filter(isUnitSwitch).length;
+    if (switches > 0) {
+      log.warn("RES_UNIT_SWITCH_LEGACY", `형식 버전 ${xmlVersion}(1.5 미만)인데 HwpUnitChar 스위치가 ${switches}개 있음(한컴은 case 값을 옛 단위로 읽어 여백·간격이 절반으로 보임)`, HEADER_ENTRY);
     }
   }
   if (!archive.entries.some((e) => e.name === PREVIEW_TEXT_ENTRY)) {

@@ -49,7 +49,7 @@ export function createApp(database=':memory:') {
         }
         if(path==='/api/demo')return send(200,demo());
         if(path==='/api/demo-sources')return send(200,demoSources);
-        const files:Record<string,string>={'/':'web/workbench.html','/workbench':'web/workbench.html','/block-library.js':'web/block-library.js','/workbench.js':'web/workbench.js','/workbench.css':'web/workbench.css','/editor-model.js':'src/editor-model.ts','/quick':'web/quick.html','/template':'web/index.html','/quick.js':'web/quick.js','/quick.css':'web/quick.css','/app.js':'web/app.js','/style.css':'web/style.css','/rhwp.js':'vendor/rhwp/rhwp.js','/rhwp_bg.wasm':'vendor/rhwp/rhwp_bg.wasm'};
+        const files:Record<string,string>={'/':'web/workbench.html','/workbench':'web/workbench.html','/block-library.js':'web/block-library.js','/workbench.js':'web/workbench.js','/workbench.css':'web/workbench.css','/editor-model.js':'src/editor-model.ts','/viewer-lines.js':'src/viewer-lines.ts','/quick':'web/quick.html','/template':'web/index.html','/quick.js':'web/quick.js','/quick.css':'web/quick.css','/app.js':'web/app.js','/style.css':'web/style.css','/rhwp.js':'vendor/rhwp/rhwp.js','/rhwp_bg.wasm':'vendor/rhwp/rhwp_bg.wasm'};
         const shared=cleanPath(path);
         const sharedFile=shared===undefined?undefined:resolveShared(shared);
         if(sharedFile){

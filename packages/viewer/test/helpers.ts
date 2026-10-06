@@ -1,8 +1,11 @@
 // 뷰어 시험의 공용 도우미: rhwp 초기화, 저장소 시험 문서, 합성 시험 문서(기존 시험 문서의 구역 본문만 바꿔 만든다).
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { openPackage, parseDocument, readEntry, rewriteArchive, type HwpxDocument } from "../../hwpx-engine/src/index.ts";
-import { loadRhwp } from "../src/rhwp/index.ts";
+import { openPackage, parseDocument, readEntry, rewriteArchive, walkParagraphs, type HwpxDocument } from "../../hwpx-engine/src/index.ts";
+import type { LocatePoint } from "../src/host/types.ts";
+import { toEngineAddress, toRhwpPosition } from "../src/map/index.ts";
+import { loadRhwp, openDocument } from "../src/rhwp/index.ts";
+import { codePointLength, runPosition } from "../src/rhwp/layout.ts";
 
 export const FIXTURE_DIR = fileURLToPath(new URL("../../hwpx-engine/test/fixtures/", import.meta.url));
 
@@ -142,4 +145,46 @@ export function withMasterPage(bytes: Uint8Array, paragraphs: string): Uint8Arra
     ]),
     add: [{ name: "Contents/masterpage0.xml", data: enc(master), method: 8 }],
   });
+}
+
+/** 문단 점 목록의 키: 구역 번호와 엔진 주소 `path`(쉼표로 이음) */
+export const paragraphKey = (sectionIndex: number, path: readonly number[]): string => `${sectionIndex}|${path.join(",")}`;
+
+/**
+ * 문단마다 누를 수 있는 점(키: `paragraphKey`). 쪽 글자 배치의 글 있는 런 가운데 엔진 주소로 글자까지 옮겨지는 런의 첫 글자와 가운데 글자를 누른 점이다.
+ * 그런 런이 없는 문단은 문단까지만 옮겨지는 런(번호 글·개체를 그린 런 등)의 같은 점, 그것도 없는 문단(표를 담은 문단·빈 문단 등)은 확인할 런이 없는 문단 처음의 위치다(둘 다 문단 단위로 풀린다).
+ * 머리말·꼬리말·각주처럼 rhwp 위치로 옮길 수 없는 문단은 점이 없다.
+ */
+export function paragraphPoints(bytes: Uint8Array, doc: HwpxDocument): Map<string, LocatePoint[]> {
+  const points = new Map<string, LocatePoint[]>();
+  const weak = new Map<string, LocatePoint[]>();
+  const view = openDocument(bytes);
+  try {
+    for (let page = 0; page < view.pageCount(); page++) {
+      for (const run of view.pageLayout(page).runs) {
+        const position = runPosition(run);
+        if (position === undefined || run.text === "") continue;
+        const shown = { text: run.text, start: position.charOffset };
+        const found = toEngineAddress(doc, position, shown);
+        if (found.precision === "none") continue;
+        const into = found.precision === "char" ? points : weak;
+        const key = paragraphKey(found.address.sectionIndex, found.address.path);
+        const list = into.get(key) ?? [];
+        list.push({ position, shown }, { position: { ...position, charOffset: position.charOffset + (codePointLength(run.text) >> 1) }, shown });
+        into.set(key, list);
+      }
+    }
+  } finally {
+    view.free();
+  }
+  for (const [key, list] of weak) if (!points.has(key)) points.set(key, list);
+  for (const section of doc.sections) {
+    for (const p of walkParagraphs(section.paragraphs)) {
+      const key = paragraphKey(section.index, p.path);
+      if (points.has(key)) continue;
+      const position = toRhwpPosition(doc, { sectionIndex: section.index, path: p.path });
+      if (position !== undefined) points.set(key, [{ position }]);
+    }
+  }
+  return points;
 }
