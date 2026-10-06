@@ -6,6 +6,7 @@ import { loadRhwp, openDocument, runPosition, sameParagraph } from '/packages/vi
 
 const $ = (selector) => document.querySelector(selector);
 const state = {
+  placements: [], placementNames: {}, placementWarnings: {},
   outline: [], recommendations: [], reviewHistory: [], labels: [], detailDrafts: new Map(), detailId: undefined, pointer: undefined,
   session: undefined, kind: 'hwpx', sourceText: '', name: '', paragraphs: [], edits: new Map(), headings: new Map(), blocks: [],
   keys: [], records: 0, index: 0, chosen: undefined, selection: undefined,
@@ -17,7 +18,7 @@ const state = {
 const opens = createLatest(), picks = createLatest(), views = createLatest(), dataLoads = createLatest();
 const keyCopies = createLatest(), bodyCopies = createLatest();
 let resizeFrame, contextRequest = 0;
-const blockLibraryUI = installBlockLibrary({selection: blockSelection, session: () => state.session, api, status, beforeOpen: hideMenu, onSaved:()=>{const r=state.activeRecommendation;if(r?.kind==='block'){r.status='confirmed';renderRecommendations();}void renderLibraryTab();}});
+const blockLibraryUI = installBlockLibrary({selection: blockSelection, session: () => state.session, api, status, beforeOpen: hideMenu, previewPlacement, onSaved:()=>{const r=state.activeRecommendation;if(r?.kind==='block'){r.status='confirmed';renderRecommendations();}void renderLibraryTab();}});
 
 function status(text, kind = '') {
   $('#status').textContent = text; $('#status').className = kind; $('#status').title = text;
@@ -64,6 +65,7 @@ function controls() {
   $('#save-work').title=state.name?'작업 저장 · '+state.name:'문서를 먼저 여세요.';
   renderSelectionDetail();
   $('#dirty-state').hidden=!state.dirty;
+  renderPlacements();
   const download=$('#download'),ready=Boolean(state.output)&&!state.busy;
   download.classList.toggle('disabled',!ready);download.setAttribute('aria-disabled',String(!ready));download.tabIndex=ready?0:-1;
   if(ready)download.href=state.output.outputUrl;else download.removeAttribute('href');
@@ -106,9 +108,9 @@ function invalidateOutput() {
 }
 function changed() { state.dirty = true; invalidateOutput(); }
 function editorWork() { return {edits:[...state.edits].map(([id,text])=>({id,text})),blocks:state.blocks.map(b=>({...b}))}; }
-function historyEntry() { return {...editorWork(),headings:[...state.headings],labels:state.labels.map(l=>({...l})),caret:state.caret?{...state.caret}:undefined}; }
+function historyEntry() { return {...editorWork(),placements:state.placements.map(p=>({...p})),headings:[...state.headings],labels:state.labels.map(l=>({...l})),caret:state.caret?{...state.caret}:undefined}; }
 function remember() { state.history.push(historyEntry()); if(state.history.length>100)state.history.shift();state.future=[]; }
-function setWork(work) {state.edits=new Map(work.edits.map(e=>[e.id,e.text]));state.blocks=work.blocks;}
+function setWork(work) {state.edits=new Map(work.edits.map(e=>[e.id,e.text]));state.blocks=work.blocks;if(work.placements)state.placements=work.placements;}
 function renderEditor() {
   state.layout=editorLayout(state.paragraphs,editorWork());const input=$('#document-editor');
   if(input.value!==state.layout.text)input.value=state.layout.text;
@@ -325,6 +327,7 @@ async function installWorkspace(result, ticket) {
   state.blockPick = undefined;
   state.outline=result.outline??[];state.recommendations=[];state.labels=[];state.detailDrafts.clear();state.detailId=undefined;state.reviewHistory=[];
   state.blocks = (result.blocks ?? []).map((item) => ({...item}));
+  state.placements=(result.placements??[]).map(p=>({...p}));state.placementNames=result.placementNames??{};state.placementWarnings=result.placementWarnings??{};
   state.marks.clear();
   state.output = undefined; state.viewMode = 'source'; state.dirty = false; state.revision++;
   state.history=[];state.future=[];state.comparison=undefined; $('#output-info').textContent = ''; $('#data-text').value = '';
@@ -383,7 +386,7 @@ async function loadData(name, content, expected = {}) {
 }
 function snapshot() {
   return {session: state.session, index: state.index, missing: $('#txt-missing').value, edits: [...state.edits].map(([id, text]) => ({id, text})),
-    headings: [...state.headings].map(([id, level]) => ({id, level})), blocks: state.blocks.map((block) => ({...block}))};
+    headings: [...state.headings].map(([id, level]) => ({id, level})), blocks: state.blocks.map((block) => ({...block})),placements:state.placements.map(p=>({...p}))};
 }
 function saveBlob(content, name) {
   const url = URL.createObjectURL(new Blob([content], {type: 'application/json;charset=utf-8'}));
@@ -596,7 +599,7 @@ document.addEventListener('keydown', (event) => {
     if (event.key.toLowerCase() === 's') { event.preventDefault(); void saveWork(); }
     else if (event.key === 'Enter') { event.preventDefault(); void generate(); }
     else if (event.key.toLowerCase() === 'b' && document.activeElement?.id==='document-editor') { event.preventDefault(); makeBold(); }
-    else if (event.key.toLowerCase()==='z' && document.activeElement?.id==='document-editor') {event.preventDefault();undo(event.shiftKey);}
+    else if (event.key.toLowerCase()==='z' && (document.activeElement?.id==='document-editor'||state.kind==='hwpx'&&!document.activeElement?.matches('input,textarea,[contenteditable=true]'))) {event.preventDefault();undo(event.shiftKey);}
     else if (event.key.toLowerCase()==='g' && document.activeElement?.id==='document-editor') {event.preventDefault();action('group');}
     else if (event.key.toLowerCase() === 'o') { event.preventDefault(); if (!state.busy) $('#document-file').click(); }
   }
@@ -733,6 +736,24 @@ $('#compare-file').addEventListener('change',async event=>{
   catch(error){status(errorMessage(error),'error');}finally{setBusy(false);}
 });
 
+async function previewPlacement(item){
+  const range=blockSelection(),placement={id:item.id,version:item.version,...range},session=state.session,revision=state.revision;
+  const result=await api('block-placement-preview',{...snapshot(),placements:[...state.placements,placement]});
+  return {...result,commit(){
+    if(session!==state.session||revision!==state.revision)throw Error('문서가 바뀌었습니다. 넣을 범위를 다시 확인하세요.');
+    remember();state.placements.push(placement);state.placementNames[item.id]=item.name;state.placementWarnings[item.id+':'+placement.from]=result.warnings;changed();renderEditor();void generate();
+  }};
+}
+function renderPlacements(){
+  const box=$('#block-placements');box.replaceChildren();box.hidden=!state.placements.length;
+  if(!state.placements.length)return;
+  const title=document.createElement('strong');title.textContent='배치한 블록 · 생성 결과에만 반영';box.append(title);
+  for(const [i,p] of state.placements.entries()){
+    const row=document.createElement('div'),label=document.createElement('span'),remove=document.createElement('button');
+    label.textContent=(state.placementNames[p.id]??'저장 블록')+' · 판 '+p.version+' · 문단 '+(state.paragraphs.findIndex(r=>r.id===p.from)+1)+'–'+(state.paragraphs.findIndex(r=>r.id===p.to)+1);
+    remove.type='button';remove.textContent='배치 취소';remove.disabled=state.busy;remove.onclick=()=>{remember();state.placements.splice(i,1);changed();renderEditor();};row.append(label,remove);box.append(row);for(const message of state.placementWarnings[p.id+':'+p.from]??[]){const note=document.createElement('p');note.className='placement-warning';note.textContent=message;box.append(note);}
+  }
+}
 function uiNode(tag,text,className){const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(className)e.className=className;return e;}
 function headingOf(id){const index=state.paragraphs.findIndex(p=>p.id===id);return state.outline.filter(h=>state.paragraphs.findIndex(p=>p.id===h.id)<=index).at(-1);}
 function renderHeadingTree(){

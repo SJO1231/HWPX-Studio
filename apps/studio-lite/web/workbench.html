@@ -42,6 +42,7 @@
     </aside>
     <section class="original-pane" aria-labelledby="original-title">
       <div class="pane-bar"><h1 id="original-title">원본</h1><div class="view-switch" aria-label="표시할 문서"><button id="source-view" type="button" aria-pressed="true" disabled>원문</button><button id="result-view" type="button" aria-pressed="false" disabled>생성 미리 보기</button><button id="comparison-view" type="button" aria-pressed="false" disabled>비교</button></div></div>
+      <section id="block-placements" aria-label="배치한 블록" hidden></section>
       <div id="page-scroll" class="page-scroll"><div id="pages">
         <div id="document-empty" class="document-empty"><svg viewBox="0 0 64 64" aria-hidden="true"><path d="M17 8h21l10 10v38H17zM38 8v11h10M24 30h17M24 38h17M24 46h11"/></svg><h2>작업할 문서를 열어주세요</h2><p>HWPX · TXT</p><button id="empty-open" type="button" class="primary">문서 열기</button></div>
       </div></div>
@@ -61,6 +62,7 @@
           <button id="make-template" type="button" disabled>누름틀 서식 만들기</button>
         </div></details><input id="copy-fallback" type="text" readonly hidden aria-label="복사할 필드">
       </div>
+
       <div id="editor-scroll" class="editor-scroll"><div id="paragraphs" class="continuous-editor"><div id="editor-mirror" aria-hidden="true"></div><textarea id="document-editor" aria-label="문서 편집" spellcheck="false" disabled></textarea></div></div>
     </section>
     <aside id="selection-detail" class="selection-detail" aria-label="선택 상세"><div class="detail-head"><h2 id="detail-title">선택 상세</h2><button id="detail-toggle" type="button" aria-expanded="true" title="선택 상세 접기">접기</button></div><div id="detail-content"><p id="detail-location" class="muted">먼저 부분을 고르세요</p><pre id="detail-excerpt"></pre><div id="detail-form" hidden><label for="detail-name">입력 항목 이름</label><input id="detail-name" list="data-keys" autocomplete="off"><label for="detail-key">연결할 데이터 항목</label><select id="detail-key"></select><p id="detail-value"></p><button id="confirm-input" type="button">입력 항목 확정</button><button id="save-source-block" type="button" disabled>블록으로 저장</button></div></div></aside>
