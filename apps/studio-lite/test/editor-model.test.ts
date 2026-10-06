@@ -136,13 +136,13 @@ test('continuous editor TXT integration: grouping, multiline edits, work-file re
   const a=rowUnit(rows,work,rows[1]!.id),z=rowUnit(rows,work,rows[2]!.id);work=groupEditorSelection(rows,work,a.start,z.end,'b-body');
   work=replaceRow(rows,work,rows[1]!.id,'번호 {{id}}\n확인 {{flag}}');
   const input={session:opened.session,index:0,headings:[],...work};
-  const template=app.post('/api/workbench/generate',input) as any;assert.equal(template.unresolved,3);assert.equal(template.text,'{{title}}\n추가 설명\n번호 {{id}}\n확인 {{flag}}\n고정');
+  const template=app.post('/api/workbench/generate',{...input,missing:'keep'}) as any;assert.equal(template.unresolved,3);assert.equal(template.text,'**{{title}}**\n추가 설명\n번호 {{id}}\n확인 {{flag}}\n고정');
   const saved=app.post('/api/workbench/save',input) as {workspace:string};
   const restored=app.post('/api/workbench/restore',{workspace:saved.workspace}) as {session:string;paragraphs:EditorRow[]} & EditorWork;
   assert.deepEqual(restored.edits,work.edits);assert.deepEqual(restored.blocks,work.blocks);
   app.post('/api/workbench/data',{session:restored.session,name:'values.json',content:JSON.stringify({title:'**literal** {{untouched}}',id:'00007',flag:false})});
   const result=app.post('/api/workbench/generate',{...input,session:restored.session}) as any;
-  assert.equal(result.text,'**literal** {{untouched}}\n추가 설명\n번호 00007\n확인 false\n고정');assert.equal(result.filled,3);
+  assert.equal(result.text,'****literal** {{untouched}}**\n추가 설명\n번호 00007\n확인 false\n고정');assert.equal(result.filled,3);
   assert.deepEqual(Buffer.from(app.get('/api/workbench/source',new URLSearchParams({session:opened.session}))!.body),source);
 });
 

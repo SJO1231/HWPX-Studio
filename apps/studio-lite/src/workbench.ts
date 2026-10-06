@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
-  planBlockInsert, applyPlan, charDelta, checkValueText, compareToBaseline, compileDocument, draftAnchors, emptyTemplate, findPlaceholders, generate,
+  planBlockInsert, applyPlan, detectHeadings, headingRangeOf, charDelta, checkValueText, compareToBaseline, compileDocument, draftAnchors, emptyTemplate, findPlaceholders, generate,
   isValidPath, makeLineAnchor, makeRangeAnchor, makeWordAnchor, openPackage, parseDocument,
   planApplyCharFormat, readDataset, readTemplate, remapAddress, resolvePathValue, sanitizeFileStem, validateDocument,
   verifyPreservation, walkParagraphs, type CompileTarget, type Dataset, type HwpxDocument,
@@ -23,7 +23,7 @@ type Edit = { id: string; text: string };
 type Heading = { id: string; level: 1 | 2 };
 type Block = { id: string; from: string; to: string; text: string; alias: string };
 type Placement = {id:string;version:number;from:string;to:string};
-type Work = { edits: Edit[]; headings: Heading[]; blocks: Block[]; placements: Placement[]; index: number };
+type Work = { edits: Edit[]; headings: Heading[]; blocks: Block[]; placements: Placement[]; index: number; missing: "error" | "keep" };
 type Session = { kind: 'hwpx' | 'text'; name: string; source: Uint8Array; doc?: HwpxDocument; sourceText?: string; rows: Row[]; data?: QuickData; dataContent?: string; output?: Uint8Array; blockPreviews?: Map<string, BlockDraft> };
 const rowId = (section: number, path: number[]) => `p:${section}:${path.join('.')}`;
 const sameParent = (a: Row, b: Row) => a.sectionIndex === b.sectionIndex && a.path.length === b.path.length && a.path.slice(0, -1).every((n, i) => n === b.path[i]);
@@ -118,7 +118,9 @@ function workOf(s: Session, input: Record<string, unknown>): Work {
   for(const b of [...blocks,...placements]){const a=row(b.from),z=row(b.to);const covered=s.rows.filter(r=>r.sectionIndex===a.sectionIndex&&r.path.length>=a.path.length&&a.path.slice(0,-1).every((n,i)=>r.path[i]===n)&&r.path[a.path.length-1]!>=a.path.at(-1)!&&r.path[a.path.length-1]!<=z.path.at(-1)!);
     for(const r of covered){need(!occupied.has(r.id),'WORKBENCH_OVERLAP');occupied.add(r.id);if(placements.includes(b as Placement))need(!edits.some(e=>e.id===r.id),'WORKBENCH_OVERLAP');}
   }
-  return { edits, headings, blocks, placements, index };
+  need(input.missing === undefined || input.missing === "error" || input.missing === "keep");
+  return { edits, headings, blocks, placements, index, missing: input.missing ?? "error" };
+
 }
 
 // ponytail: this projection only supports **bold** and {{path}}, not Markdown round trips.
@@ -266,26 +268,43 @@ function buildText(s: Session, work: Work) {
   const record = s.data?.records[work.index], dataset = record && 'dataset' in record ? record.dataset : undefined;
   const separators = [...s.sourceText!.matchAll(/\r\n|\r|\n/g)].map(m => m[0]);
   const edits = new Map(work.edits.filter(e => e.text !== s.rows.find(r => r.id === e.id)!.text).map(e => [e.id, e]));
-  let text = '', filled = 0;
+  let text = '', filled = 0, unresolved = 0, ranges = 0;
   for (let i = 0; i < s.rows.length; i++) {
     const row = s.rows[i]!, block = work.blocks.find(b => b.from === row.id), edit = edits.get(row.id);
-    const content = projected(block ? block.text : edit ? edit.text : row.text, dataset, !!(block || edit), !dataset && !!(block || edit));
-    filled += content.filled;
+    const content = (block ? block.text : edit ? edit.text : row.text).replace(/\{\{([^{}]*)\}\}/g, (token, key: string) => {
+      const path = key.trim();
+      if (/^[#/]/.test(path)) { ranges++; return token; }
+      const value = dataset && isValidPath(path) ? resolvePathValue(dataset, path, 'error') : undefined;
+      if (value?.kind === 'text') { filled++; return value.text; }
+      unresolved++; return token;
+    });
     if (block) i = s.rows.findIndex(r => r.id === block.to);
-    if (!block || content.text !== '') text += content.text + (separators[i] ?? '');
+    if (!block || content !== '') text += content + (separators[i] ?? '');
     need(Buffer.byteLength(text) <= MAX_SOURCE, 'WORKBENCH_RESULT_LIMIT');
   }
+  if (unresolved && work.missing === 'error') return fail('WORKBENCH_UNLINKED', `연결 안 된 입력 자리 ${unresolved}곳입니다. 데이터를 연결하거나 데이터 메뉴에서 ‘자리 유지’를 선택하세요.`);
   need(checkValueText(text) === undefined, 'WORKBENCH_TEXT');
-  const unresolved = dataset ? 0 : findPlaceholders(text).length;
   return { output: new TextEncoder().encode(text), text, filled, changed: edits.size + work.blocks.length,
     ...(unresolved ? { template: true as const, unresolved } : {}),
-    notes: ['TXT 결과는 서식 없는 본문입니다.', ...(work.headings.length ? ['제목 단계는 작업 화면의 표시 정보입니다.'] : [])] };
+    notes: [...(ranges ? [`구간 표기 ${ranges}곳이 결과에 남아 있습니다. 구간 선택은 아직 적용하지 않았습니다.`] : []), ...(work.headings.length ? ['제목 단계는 작업 화면의 표시 정보입니다.'] : [])] };
 }
 
 export function createWorkbench(library?: BlockLibrary) {
   const sessions = new Map<string, Session>();
   const sessionOf = (id: unknown) => { const s = typeof id === 'string' ? sessions.get(id) : undefined; if (!s) throw new HostError(404, 'WORKBENCH_SESSION', '문서를 다시 올려 주세요.'); return s; };
-  const registered = (s: Session) => { const fields = s.kind === 'hwpx' ? analyzePlaces(s.source).fields : []; if (sessions.size >= 8) sessions.delete(sessions.keys().next().value!); const session = randomUUID(); sessions.set(session, s); return { session, kind: s.kind, name: s.name, sourceUrl: `/api/workbench/source?session=${session}`, ...(s.sourceText === undefined ? {} : { sourceText: s.sourceText }), paragraphs: s.rows, fields }; };
+  const registered = (s: Session) => {
+    const fields = s.kind === 'hwpx' ? analyzePlaces(s.source).fields : [];
+    const headings = s.doc ? detectHeadings(s.doc) : [];
+    const outline = headings.map(h => ({id:rowId(h.at.sectionIndex,[...h.at.parentPath,h.index]),name:h.text,level:h.marker.level}));
+    const blockCandidates = headings.flatMap(h => {
+      const range=headingRangeOf(s.doc!,h.at,h.index);if(!range)return [];
+      const from=rowId(h.at.sectionIndex,[...h.at.parentPath,range.from]),to=rowId(h.at.sectionIndex,[...h.at.parentPath,range.to]);
+      return [{from,to,name:h.text,paragraphCount:range.to-range.from+1}];
+    });
+    if (sessions.size >= 8) sessions.delete(sessions.keys().next().value!);
+    const session = randomUUID(); sessions.set(session, s);
+    return {session,kind:s.kind,name:s.name,sourceUrl:`/api/workbench/source?session=${session}`,...(s.sourceText===undefined?{}:{sourceText:s.sourceText}),paragraphs:s.rows,fields,outline,blockCandidates};
+  };
   return {
     get(path: string, query: URLSearchParams): { body: Uint8Array; name?: string; type?: string } | undefined {
       if (path !== '/api/workbench/source' && path !== '/api/workbench/result') return;
@@ -298,10 +317,14 @@ export function createWorkbench(library?: BlockLibrary) {
     post(path: string, input: Record<string, unknown>): unknown {
       try {
         if (path === '/api/workbench/open') return registered(open(input.name, input.content));
+        if (path === '/api/workbench/compare') {
+          const s = open(input.name, input.content);
+          return { name: s.name, paragraphs: s.rows };
+        }
         if (path === '/api/workbench/restore') {
           need(typeof input.workspace !== 'string' || Buffer.byteLength(input.workspace) <= 20 * 1024 * 1024, 'WORKBENCH_WORKSPACE');
           const raw: unknown = typeof input.workspace === 'string' ? JSON.parse(input.workspace) : input.workspace;
-          need(isObj(raw) && raw.schema === schema && (raw.kind === 'text' || raw.kind === 'hwpx') && Object.keys(raw).every(k => ['schema', 'kind', 'name', 'source', 'sha256', 'data', 'edits', 'headings', 'blocks', 'placements', 'index'].includes(k)), 'WORKBENCH_WORKSPACE');
+          need(isObj(raw) && raw.schema === schema && (raw.kind === 'text' || raw.kind === 'hwpx') && Object.keys(raw).every(k => ['schema', 'kind', 'name', 'source', 'sha256', 'data', 'edits', 'headings', 'blocks', 'placements', 'index', 'missing'].includes(k)), 'WORKBENCH_WORKSPACE');
           const s = open(raw.name, raw.source); need(raw.kind === s.kind, 'WORKBENCH_WORKSPACE'); need(raw.sha256 === hash(s.source), 'WORKBENCH_SOURCE_HASH');
           if (raw.data !== undefined) { const parsed = parseData(raw.data, 'data.json'); s.data = parsed.data; s.dataContent = parsed.content; }
           const work = workOf(s, raw);
