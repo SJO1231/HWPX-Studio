@@ -35,6 +35,7 @@
 | 뷰어 시험 앱 | `node apps/viewer-poc/server.ts` → `http://127.0.0.1:4173` (`.claude/launch.json`의 `viewer-poc`) | 확인 |
 | 뷰어 위치 대조(실제 문서) | `HWPX_CORPUS_DIR=<폴더> node packages/viewer/tools/crosscheck.ts --clicks --after-fill --report tools/stress/out/<이름>.json` | 확인 |
 | 한컴으로 열기·PDF | `python tools/com/open_check.py --out 결과.json [--pdf-dir 폴더] 파일...` | 확인(한컴 13) |
+| 한컴 문단모양 대조(이식본 ↔ 원본) | `python tools/com/read_para_props.py --spec 명세.json --out 결과.json [--timeout 60]` (명세는 `tools/com/README.md`) | 확인(한컴 13) |
 | 한컴 시험 문서 다시 만들기 | `python tools/com/make_fixtures.py` | 확인 |
 | 빠른 생성 예시 서식 다시 만들기 | `python tools/com/make_examples.py` → `examples/quick/*.hwpx` | 확인(한컴 13) |
 | 여러 문단 누름틀 정답 문서 다시 만들기 | `python tools/com/make_span_fixtures.py` → `tools/com/out/field-span*.hwpx`, `inline-breaks-filled.hwpx`(한컴이 직접 채운 정답. 사본은 `packages/hwpx-engine/test/fixtures/span/`) | 확인(한컴 13) |

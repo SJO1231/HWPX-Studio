@@ -93,6 +93,7 @@ export function parseFragment(json: string): Fragment {
       namespaces: strMap(r, "namespaces", p),
     };
     if (r["lang"] !== undefined) out.lang = str(r, "lang", p);
+    if (r["valueNamespaces"] !== undefined) out.valueNamespaces = strMap(r, "valueNamespaces", p);
     if (r["nameSpan"] !== undefined) out.nameSpan = span(obj(r["nameSpan"], `${p}.nameSpan`), `${p}.nameSpan`);
     return out;
   });
@@ -109,6 +110,8 @@ export function parseFragment(json: string): Fragment {
         from: int(sel, "from", "source.selection"),
         to: int(sel, "to", "source.selection"),
       },
+      // 이전 형식 조각에는 없다(없으면 형식 버전을 알 수 없는 조각으로 읽는다)
+      ...(source["xmlVersion"] === undefined ? {} : { xmlVersion: str(source, "xmlVersion", "source") }),
     },
     xml: str(o, "xml", "조각"),
     prefixes: strMap(o, "prefixes", "조각"),

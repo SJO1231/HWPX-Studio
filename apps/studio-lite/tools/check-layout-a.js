@@ -18,5 +18,12 @@ async page=>{
   assert(JSON.stringify(await page.locator('.source-text').allTextContents())===JSON.stringify(source),'source unchanged');assert(await page.locator('.line-number').count()===3,'TXT line numbers');
   await page.locator('#library-tab').click();assert(await page.locator('#library-list').isVisible(),'library tab');await page.locator('#document-tab').click();
   await page.locator('#generate').click();await page.waitForFunction(()=>!document.body.classList.contains('busy'));assert(await page.locator('.original-pane').isVisible(),'TXT result visible');await page.locator('#source-view').click();assert(await page.locator('.editor-pane').isVisible(),'TXT editor restored');
+  for(let i=0;i<12;i++){
+    const response=page.waitForResponse(r=>r.url().endsWith('/api/workbench/compare'));
+    await page.evaluate(i=>{const transfer=new DataTransfer();transfer.items.add(new File(['Comparison '+i],'comparison.txt'));const input=document.querySelector('#compare-file');input.files=transfer.files;input.dispatchEvent(new Event('change',{bubbles:true}));},i);
+    assert((await response).ok(),'comparison route');await page.waitForFunction(()=>!document.body.classList.contains('busy'));
+  }
+  await page.locator('#generate').click();await page.waitForFunction(()=>!document.body.classList.contains('busy'));assert(await page.locator('#download').getAttribute('aria-disabled')==='false','source session survives 12 comparisons');
+  const saved=page.waitForResponse(r=>r.url().endsWith('/api/workbench/save'));await page.locator('#save-work').click();assert((await saved).ok(),'save after comparisons');
   await page.evaluate(()=>document.body.dataset.layoutRegression='pass: two sizes, review exclude/undo/group, remote/context, draft, TXT, source, tabs');
 }

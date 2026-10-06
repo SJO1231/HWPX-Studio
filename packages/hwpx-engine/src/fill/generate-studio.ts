@@ -94,7 +94,7 @@ function blockRegions(resolved: ReadonlyMap<string, ResolvedAnchor>, owners: Rea
 }
 
 /** 누름틀·메일머지 필드의 표시 구간(문단별). 그 안의 `{{ }}`는 필드 자리가 맡는다 */
-function fieldSpans(fields: readonly FieldTarget[]): Map<ParagraphNode, { from: number; until: number }[]> {
+export function fieldSpans(fields: readonly FieldTarget[]): Map<ParagraphNode, { from: number; until: number }[]> {
   const out = new Map<ParagraphNode, { from: number; until: number }[]>();
   for (const f of fields) {
     if (f.info.type !== "CLICK_HERE" && f.info.type !== "MAILMERGE") continue;

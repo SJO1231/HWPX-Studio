@@ -58,6 +58,19 @@ python tools/com/read_text.py --spec 명세.json --out 결과.json [--timeout 60
 - **COM으로 줄바꿈을 넣는 법**: `InsertText`의 `"\n"`은 한컴이 지워 버리고(글자도 줄바꿈도 남지 않는다) `"\r\n"`·`"\r"`은 문단을 나눈다. `PutFieldText`도 같다(`"\n"`은 지워지고 `"\r\n"`·`"\r"`은 값이 두 문단에 걸친다). 줄바꿈 요소는 `BreakLine`으로만 만들어진다.
 - **한컴이 값을 읽는 모양**: `GetFieldText`는 줄바꿈 요소를 글자로 주지 않는다(`첫 줄둘째 줄`). 탭은 `\t`로 준다. 한컴이 직접 만든 줄바꿈·탭 누름틀도 같다. `SaveAs(..., "TEXT")`도 줄바꿈 요소를 글자로 쓰지 않았다. 그래서 줄바꿈이 보존되는지는 읽기 API가 아니라 다시 저장한 HWPX의 요소와 PDF의 줄 위치로 확인한다.
 
+## 문단모양 대조 (`read_para_props.py`, #69)
+
+```
+python tools/com/read_para_props.py --spec 명세.json --out 결과.json [--timeout 60]
+```
+
+조각 이식본의 문단 속성을 한컴이 원본과 같게 읽는지 보는 오라클이다. 문서마다 탐침(`id`)을 주면 그 문단의 `ParaShape`(`read_shape.py`의 `PARA_ITEMS` 16개: 들여쓰기·여백·문단 간격·줄 간격 등)를 읽고, 같은 `id`끼리 기준 문서(`baseline`, 없으면 첫 문서)와 값이 다른 항목을 `compare`에 낸다. 작업자·60초 한도·창 숨김·`Quit`·떠 있던 `Hwp.exe` 불간섭은 `read_shape.py`와 같고(도우미를 가져다 쓴다), 한 번에 하나만 실행한다.
+
+- 탐침: `{ "id", "list": 0, "para": N, "textSha"(선택) }`는 본문 N번째 문단(`textSha`를 주면 글 해시도 확인, 다르면 `TEXT_MISMATCH`). `{ "id", "textSha", "para": k }`는 리스트 1번부터 끝까지 훑어 k번째 문단 글의 해시가 같은 리스트(표 칸 등)를 찾는다(없으면 `LIST_NOT_FOUND`, 둘 이상이면 `AMBIGUOUS`).
+- 글 해시는 한컴이 블록 저장(TEXT)으로 준 문단 글의 UTF-8 SHA-256 앞 10자다. 명세·결과에 글·경로를 넣지 않는다(결과는 `textLen`·`textSha`만).
+- 한컴의 글은 엔진의 논리 텍스트와 다를 수 있다(관측: U+2007 공백 하나가 빠짐). 그런 문단은 한컴 쪽 해시를 쓰거나 `list`+`para`로 준다.
+- 관측(한컴 13.0.0.711): `ParaShape`의 여백·간격 값은 `version.xml`의 `xmlVersion`이 1.5면 XML 값의 2배, 1.2면 XML 값 그대로다(스위치가 없는 `hh:margin`도 같다). `hp:switch`는 형식 버전·선언과 무관하게 `hp:case`(HwpUnitChar) 쪽을 읽는다. 근거는 `docs/validation.md` 26절.
+
 ## 표 속성 읽기 (`read_table.py`)
 
 ```
