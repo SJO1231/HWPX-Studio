@@ -1,20 +1,25 @@
 import { randomUUID, randomBytes, createHash } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
-import { extractBlock, blockFragment, listProtoUsage, readStudioTemplate, type StudioTemplate, makeRangeAnchor, parseFragment, serializeFragment, readBlockProto, findPlaceholders, listFields, type BlockProto, type Fragment, type FragmentSelection, type HwpxDocument } from '@hwpx-studio/engine';
+import { extractBlock, blockFragment, listProtoUsage, readStudioTemplate, type StudioTemplate, makeRangeAnchor, parseFragment, serializeFragment, readBlockProto, findPlaceholders, buildBlockPreviewDocument, type BlockProto, type Fragment, type FragmentSelection, type HwpxDocument } from '@hwpx-studio/engine';
 import { HostError } from '../../../packages/viewer/src/host/index.ts';
 import { plainOf } from './quick-messages.ts';
 
 // SQLite retains the engine proto and its canonical fragment together.
 export type BlockDraft = {
   id: string; sourceName: string; sourceHash: string; location: string;
-  paragraphCount: number; inputCount: number; excerpt: string;
+  paragraphCount: number; inputCount: number | null; excerpt: string;
   fragment: Fragment; proto: BlockProto; warnings: string[];
 };
 type StoredBlock = {
   id: string; protoId: string; name: string; sourceName: string; sourceHash: string; location: string;
-  version: number; change: string; createdAt: string; paragraphCount: number; inputCount: number;
+  version: number; change: string; createdAt: string; paragraphCount: number; inputCount: number | null;
 };
 const fail = (code: string, message: string): never => { throw new HostError(400, code, message); };
+
+function previewInputCount(proto: BlockProto, fragment: Fragment): number | null {
+  try { return buildBlockPreviewDocument(proto,new TextEncoder().encode(serializeFragment(fragment))).fields.reduce((sum,f)=>sum+f.count,0); }
+  catch { return null; } // A rejected preview must not prevent saving the original fragment.
+}
 
 function checkName(name: unknown): asserts name is string {
   if (typeof name !== 'string' || !name.trim() || name.trim().length > 120 || /[\u0000-\u001f\u007f]/.test(name))
@@ -38,7 +43,7 @@ export function extractBlockDraft(doc: HwpxDocument, sourceName: string, selecti
   return {
     id: randomUUID(), sourceName, sourceHash: fragment.source.sha256,
     location: `쪽 미확인 · ${selection.parentPath.length ? '같은 칸 안' : '본문'} · 문단 ${count}개 · ${first}`,
-    paragraphCount: count, inputCount: listFields(doc).filter(f => f.sectionIndex === selection.sectionIndex && ['CLICK_HERE','MAILMERGE'].includes(f.type) && selection.parentPath.every((v,i) => f.path[i] === v) && f.path.length > selection.parentPath.length && f.path[selection.parentPath.length]! >= selection.from && f.path[selection.parentPath.length]! <= selection.to).length + fragment.texts.reduce((n, t) => n + findPlaceholders(t).length, 0),
+    paragraphCount: count, inputCount: previewInputCount(proto,fragment),
     proto, excerpt: fragment.texts.join('\n').slice(0, 12000), fragment,
     warnings: fragment.issues.map(i => plainOf(i.code) ?? '원문에 확인이 필요한 서식 참조가 있습니다.'),
   };
@@ -71,16 +76,24 @@ export function createBlockLibrary(db: DatabaseSync) {
   db.exec("DROP INDEX IF EXISTS lite_block_proto_id; CREATE UNIQUE INDEX IF NOT EXISTS lite_block_proto_version ON lite_block(json_extract(proto,'$.id'), version)");
   const columns = `id, json_extract(proto,'$.id') AS protoId, name, source_name AS sourceName, source_hash AS sourceHash, location,
     version, change, created_at AS createdAt, paragraph_count AS paragraphCount, input_count AS inputCount`;
+  const counts=new Map<string,number|null>();
+  function inputCount(id:string):number|null {
+    if(!counts.has(id)){
+      const row=db.prepare('SELECT proto,fragment FROM lite_block WHERE id=?').get(id) as {proto:string;fragment:string};
+      counts.set(id,previewInputCount(readBlockProto(row.proto),parseFragment(row.fragment)));
+    }
+    return counts.get(id)!;
+  }
   return {
     list(query = ''): StoredBlock[] {
       if (typeof query !== 'string' || query.length > 200) return fail('BLOCK_SEARCH', '검색어는 200자 이내로 입력하세요.');
-      return db.prepare(`SELECT ${columns} FROM lite_block b WHERE version = (SELECT MAX(version) FROM lite_block v WHERE json_extract(v.proto,'$.id')=json_extract(b.proto,'$.id')) AND (instr(lower(name),lower(?))>0 OR instr(source_hash,lower(?))>0) ORDER BY created_at DESC, rowid DESC`).all(query,query) as StoredBlock[];
+      return (db.prepare(`SELECT ${columns} FROM lite_block b WHERE version = (SELECT MAX(version) FROM lite_block v WHERE json_extract(v.proto,'$.id')=json_extract(b.proto,'$.id')) AND (instr(lower(name),lower(?))>0 OR instr(source_hash,lower(?))>0) ORDER BY created_at DESC, rowid DESC`).all(query,query) as StoredBlock[]).map(row=>({...row,inputCount:inputCount(row.id)}));
     },
     get(id: unknown) {
       if (typeof id !== 'string') throw new HostError(404, 'BLOCK_NOT_FOUND', '저장한 블록을 찾지 못했습니다.');
       const row = db.prepare(`SELECT ${columns}, excerpt, warnings FROM lite_block WHERE id = ? OR json_extract(proto,'$.id') = ? ORDER BY version DESC LIMIT 1`).get(id,id) as (StoredBlock & {excerpt: string; warnings: string}) | undefined;
       if (!row) throw new HostError(404, 'BLOCK_NOT_FOUND', '저장한 블록을 찾지 못했습니다.');
-      return { ...row, warnings: JSON.parse(row.warnings) as string[] };
+      return { ...row, inputCount:inputCount(row.id), warnings: JSON.parse(row.warnings) as string[] };
     },
     material(id: unknown, version: unknown) {
       const found=this.get(id);
@@ -138,7 +151,7 @@ export function createBlockLibrary(db: DatabaseSync) {
         (id,name,source_name,source_hash,location,version,change,created_at,paragraph_count,input_count,excerpt,warnings,fragment,proto)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
           draft.id, name.trim(), draft.sourceName, draft.sourceHash, draft.location, draft.proto.version, draft.proto.version===1?'첫 저장':'새 판 저장', new Date().toISOString(),
-          draft.paragraphCount, draft.inputCount, draft.excerpt, JSON.stringify(draft.warnings), serializeFragment(draft.fragment), JSON.stringify(readBlockProto(JSON.stringify({...draft.proto,name:name.trim()}))));
+          draft.paragraphCount, draft.inputCount ?? -1, draft.excerpt, JSON.stringify(draft.warnings), serializeFragment(draft.fragment), JSON.stringify(readBlockProto(JSON.stringify({...draft.proto,name:name.trim()}))));
       return this.get(draft.id);
     },
   };
