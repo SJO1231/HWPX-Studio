@@ -690,7 +690,9 @@ const TIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 
 function time(o: Obj, key: string, where: string): string {
   const v = str(o, key, where, FIELD);
-  if (!TIME_RE.test(v) || Number.isNaN(Date.parse(v))) fail(FIELD, `${key}가 ISO 8601 UTC 시각(예: 2026-10-06T09:30:00Z)이 아닙니다.`, where);
+  // 달력 검사: Date.parse는 2월 30일·4월 31일·24:00을 다음 날로 넘겨 받으므로 다시 쓴 날짜·시각이 입력과 같아야 한다
+  const ms = TIME_RE.test(v) ? Date.parse(v) : Number.NaN;
+  if (Number.isNaN(ms) || new Date(ms).toISOString().slice(0, 19) !== v.slice(0, 19)) fail(FIELD, `${key}가 ISO 8601 UTC 시각(예: 2026-10-06T09:30:00Z)이 아닙니다.`, where);
   return v;
 }
 

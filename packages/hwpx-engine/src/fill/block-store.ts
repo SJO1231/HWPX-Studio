@@ -2,11 +2,13 @@ import { HwpxError, makeIssue, type Issue } from "../errors.ts";
 import { extractFragment } from "../fragment/extract.ts";
 import { planImport } from "../fragment/import.ts";
 import { parseFragment, serializeFragment } from "../fragment/json.ts";
-import { createFingerprinter, makeLookup } from "../fragment/resources.ts";
+import { createFingerprinter, makeLookup, resourceRefs, type FingerprintLookup } from "../fragment/resources.ts";
 import { paragraphsAt, resolveSelection, sectionAt } from "../fragment/select.ts";
 import type { Fragment, FragmentSelection, ImportOptions, ImportPlan, InsertPoint } from "../fragment/types.ts";
+import { parseResource } from "../fragment/units.ts";
+import { refsOf } from "../model/header.ts";
 import { fieldTypeOf, walkParagraphs } from "../model/paragraph.ts";
-import type { HwpxDocument, ParagraphNode } from "../model/types.ts";
+import type { HwpxDocument, ParagraphNode, ResourceItem } from "../model/types.ts";
 import { sha256Hex } from "../template/hash.ts";
 import { planProtoUpdate, unboundKeys } from "../template/studio-proto.ts";
 import { readBlockProto } from "../template/studio-read.ts";
@@ -186,10 +188,39 @@ export function blockFragment(proto: BlockProto, blob: Uint8Array): Fragment {
   return parseFragment(decodeUtf8(blob, `blob:${sha.slice(0, 10)}`));
 }
 
+const CARRIED = "\u0001"; // 조각이 가진 자원·이진 자료를 가리키는 참조 값의 표시(문서의 id와 겹치지 않는다)
+const resKey = (kind: string, lang: string | undefined, id: string): string => JSON.stringify([kind, lang ?? "", id]);
+
+/**
+ * 블록 자원을 넣은 뒤의 모양으로 찾는 표(8.8.17): 조각이 가진 자원·이진 자료를 가리키는 참조는 조각 안에서 찾고, 원본에도 없던 것을 가리키는 참조
+ * (`FRAG_DANGLING_SOURCE`, 자원 안의 참조 포함. 예: 문단 모양 → 탭)는 가져오기가 id를 그대로 옮기므로(7.5) 대상에서 찾는다. 대상 자원의 참조는 대상 안에서 찾는다.
+ * 조각 쪽 참조 값에 표시를 붙여 두 쪽을 가른다. 지문은 참조 값 대신 대상의 지문을 쓰므로 표시는 지문에 남지 않는다.
+ */
+function insertedLookup(fragment: Fragment, target: FingerprintLookup): FingerprintLookup {
+  const carried = new Set(fragment.resources.map((r) => resKey(r.kind, r.lang, r.id)));
+  const binaries = new Map(fragment.binaries.map((b) => [b.itemId, b.sha256]));
+  const items = new Map<string, ResourceItem>();
+  for (const res of fragment.resources) {
+    const { element } = parseResource(res.xml, { ...res.valueNamespaces, ...res.namespaces });
+    const item: ResourceItem = { kind: res.kind, id: res.id, element, refs: refsOf(res.kind, element) };
+    if (res.lang !== undefined) item.lang = res.lang;
+    for (const ref of resourceRefs(item)) {
+      if (ref.kind === "binaryItem" ? binaries.has(ref.id) : carried.has(resKey(ref.kind, ref.lang, ref.id))) ref.attr.value = CARRIED + ref.attr.value;
+    }
+    item.refs = refsOf(res.kind, element);
+    items.set(resKey(res.kind, res.lang, res.id), item);
+  }
+  return {
+    resource: (kind, lang, id) => (id.startsWith(CARRIED) ? items.get(resKey(kind, lang, id.slice(1))) : target.resource(kind, lang, id)),
+    binary: (id) => (id.startsWith(CARRIED) ? binaries.get(id.slice(1)) : target.binary(id)),
+  };
+}
+
 /**
  * 블록의 최상위 문단마다 문단 모양·스타일의 자원 지문(7.4)을 넣는 자리 문단(`at`의 구역·상위 목록·문단 번호)의 것과 견준다(8.8.17).
  * 다른 것만 돌려준다(블록 문단 순서, 한 문단 안에서 `paraPr` 다음 `style`). 지문은 모양으로 견주므로 문서마다 id가 달라도 같은 모양이면 같다.
- * 참조가 없으면 `none`, 대상 자원이 없으면 `missing:<id>`로 본다. 자리 문단이 없으면 `FRAG_INSERT_POINT`. 글자 모양은 보지 않는다.
+ * 참조가 없으면 `none`, 자원이 없으면 `missing:<id>`로 본다. 블록 쪽은 넣은 뒤의 모양으로 본다: 원본에도 없던 자원을 가리키는 참조(`FRAG_DANGLING_SOURCE`,
+ * 문단 안이든 자원 안이든)는 가져오기가 그대로 옮기므로 그 id를 대상에서 풀어 지문을 만든다. 자리 문단이 없으면 `FRAG_INSERT_POINT`. 글자 모양은 보지 않는다.
  */
 export function blockFormatDiffs(target: HwpxDocument, fragment: Fragment, at: { sectionIndex: number; parentPath: number[]; index: number }): BlockFormatDiff[] {
   const list = paragraphsAt(sectionAt(target, at.sectionIndex, "FRAG_INSERT_POINT"), at.parentPath, "FRAG_INSERT_POINT");
@@ -203,8 +234,13 @@ export function blockFormatDiffs(target: HwpxDocument, fragment: Fragment, at: {
     return item === undefined ? `missing:${id}` : fingerprint(item);
   };
   const want = { paraPr: targetPrint("paraPr", spot.attrs.paraPrIDRef), style: targetPrint("style", spot.attrs.styleIDRef) };
-  const own = new Map(fragment.resources.map((r) => [`${r.kind}|${r.id}`, r.fingerprint]));
-  const blockPrint = (kind: string, id: string | null): string => (id === null ? "none" : (own.get(`${kind}|${id}`) ?? `missing:${id}`));
+  const inserted = insertedLookup(fragment, lookup);
+  const insertedFingerprint = createFingerprinter(inserted);
+  const blockPrint = (kind: string, id: string | null): string => {
+    if (id === null) return "none";
+    const item = inserted.resource(kind, undefined, CARRIED + id) ?? inserted.resource(kind, undefined, id);
+    return item === undefined ? `missing:${id}` : insertedFingerprint(item);
+  };
   const diffs: BlockFormatDiff[] = [];
   parseFragmentXml(fragment).paragraphs.forEach((p, paragraph) => {
     for (const property of ["paraPr", "style"] as const) {

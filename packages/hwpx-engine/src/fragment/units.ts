@@ -64,7 +64,7 @@ function defaultFromCase(kase: XElement, fallback: XElement, offset: number): Re
 }
 
 /** 자원 원문을 바깥 접두사 선언으로 감싸 읽는다. `element`는 자원 요소, `offset`은 감싼 글에서 자원 원문이 시작하는 위치다. */
-function parseResource(xml: string, namespaces: Record<string, string>): { element: XElement; offset: number } {
+export function parseResource(xml: string, namespaces: Record<string, string>): { element: XElement; offset: number } {
   const decls = Object.entries(namespaces)
     .map(([prefix, uri]) => (prefix === "" ? ` xmlns="${escapeAttr(uri)}"` : ` xmlns:${prefix}="${escapeAttr(uri)}"`))
     .join("");
