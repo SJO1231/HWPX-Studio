@@ -47,7 +47,7 @@ export function createApp(database=':memory:') {
           return send(200,{...preview,warnings:preview.warnings.map(w=>({...w,message:blockMessage(w.code)}))});
         }
         if(path==='/api/blocks')return send(200,{blocks:blockLibrary.list(url.searchParams.get('q')??'')});
-        if(path==='/api/block/usage')return send(200,blockLibrary.usage(url.searchParams.get('id')));
+        if(path==='/api/block/usage'){const use=blockLibrary.usage(url.searchParams.get('id'));return send(200,{...use,openPlacement:workbench.inUse(use.proto)});}
         if(path==='/api/block')return send(200,blockLibrary.get(url.searchParams.get('id')));
         if(path==='/api/health')return send(200,{ok:true});
         if(path==='/api/g2b/profiles')return send(200,{profiles:g2b.profiles()});
@@ -79,7 +79,11 @@ export function createApp(database=':memory:') {
       for await(const chunk of req){size+=chunk.length;if(size>32*1024*1024)return send(413,{error:'요청은 32MB 이내여야 합니다.'});chunks.push(chunk);}
       const input=JSON.parse(Buffer.concat(chunks).toString('utf8'));
       if(path==='/api/block/rename')return send(200,blockLibrary.rename(input?.id,input?.name));
-      if(path==='/api/block/delete')return send(200,blockLibrary.remove(input?.id,input?.confirmed));
+      if(path==='/api/block/delete'){
+        // Placements not yet saved to a work file are known only to open workbench sessions.
+        if(input?.confirmed===true&&workbench.inUse(blockLibrary.get(input.id).protoId))throw new HostError(400,'BLOCK_IN_USE','사용 중이라 삭제할 수 없습니다: 열린 작업에서 저장 전 배치 중입니다. 그 작업에서 배치를 취소한 뒤 다시 시도하세요.');
+        return send(200,blockLibrary.remove(input?.id,input?.confirmed));
+      }
       if(path.startsWith('/api/quick/'))return send(200,quick.post(path,input));
       if(path.startsWith('/api/workbench/'))return send(200,workbench.post(path,input));
       if(path==='/api/g2b/profiles') {
