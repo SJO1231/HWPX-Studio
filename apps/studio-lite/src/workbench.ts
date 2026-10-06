@@ -11,13 +11,13 @@ import { extractBlockDraft, type BlockDraft, type BlockLibrary } from './block-l
 import { parseCsv } from './core.ts';
 import { analyzePlaces, listKeys, parseQuickData, type QuickData } from './quick.ts';
 
-const plainBlock=(code:string)=>code==='BLOCK_FORMAT_DIFFERS'?'서식이 다릅니다, 확인하세요. 블록의 서식을 유지합니다.':'블록에 확인할 사항이 있습니다: '+code;
+import { plainOf as plainBlock } from '../../studio/src/messages.ts';
 const MAX_SOURCE = 10 * 1024 * 1024;
 const MAX_TEXT = 1024 * 1024;
 const schema = 'hwpx-studio/lite-workspace@1';
 const hash = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 const fail = (code: string, message: string): never => { throw new HostError(400, code, message); };
-function need(ok: unknown, code = 'WORKBENCH_INPUT'): asserts ok { if (!ok) fail(code, '입력과 원본 위치를 다시 확인하세요.'); }
+function need(ok: unknown, code = 'WORKBENCH_INPUT'): asserts ok { if (!ok) fail(code, code === 'WORKBENCH_OVERLAP' ? '이미 배치한 범위와 겹칩니다. 겹치지 않는 부분을 선택하세요.' : '입력과 원본 위치를 다시 확인하세요.'); }
 type Row = { id: string; sectionIndex: number; path: number[]; text: string; editable: boolean; rangeEditable: boolean; reason?: string; position?: RhwpPosition };
 type Edit = { id: string; text: string };
 type Heading = { id: string; level: 1 | 2 };
@@ -259,7 +259,7 @@ function build(s: Session, work: Work, makeTemplate = false, library?: BlockLibr
   need(compareToBaseline(validateDocument(s.source), validateDocument(output)).newErrors.length === 0, 'WORKBENCH_VALIDATION');
   const paragraphs = outputDoc.sections.flatMap(section => [...walkParagraphs(section.paragraphs)]);
   return { output, text: paragraphs.map(p => p.logicalText.replaceAll('\uFFFC', '')).join('\n'), filled: makeTemplate ? 0 : filled, changed: edits.length + work.blocks.length + work.placements.length, ...(makeTemplate ? { template: true as const, promoted: targets.length } : {}),
-    notes: [...new Set(result.report.issues.filter(i => i.severity === 'warning').map(i => i.code)), ...(work.headings.length ? ['제목 단계는 작업 화면의 표시 정보입니다.'] : []), ...(work.blocks.length ? ['일반 글 블록은 첫 문단의 서식을 상속합니다.'] : []), ...(paragraphs.some(p => p.logicalText.includes('\uFFFC')) ? ['복사용 본문에는 개체 자리 표시를 생략했습니다.'] : [])] };
+    notes: [...new Set(result.report.issues.filter(i => i.severity === 'warning').map(i => plainBlock(i.code))), ...(work.headings.length ? ['제목 단계는 작업 화면의 표시 정보입니다.'] : []), ...(work.blocks.length ? ['일반 글 블록은 첫 문단의 서식을 상속합니다.'] : []), ...(paragraphs.some(p => p.logicalText.includes('\uFFFC')) ? ['복사용 본문에는 개체 자리 표시를 생략했습니다.'] : [])] };
 }
 
 function buildText(s: Session, work: Work) {

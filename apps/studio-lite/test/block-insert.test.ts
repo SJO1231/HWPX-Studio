@@ -1,8 +1,10 @@
+import {readFileSync} from 'node:fs';
+import {plainOf} from '../../studio/src/messages.ts';
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {DatabaseSync} from 'node:sqlite';
 import {openPackage,parseDocument,validateDocument,compareToBaseline,walkParagraphs} from '@hwpx-studio/engine';
-import {buildHwpx,MINIMAL_HEADER} from '../../../packages/hwpx-engine/test/helpers.ts';
+import {buildHwpx,MINIMAL_HEADER,mutateEntryText} from '../../../packages/hwpx-engine/test/helpers.ts';
 import {textPara,gridTable,tableParagraph} from '../../../packages/hwpx-engine/test/table-helpers.ts';
 import {createBlockLibrary,extractBlockDraft} from '../src/block-library.ts';
 import {createWorkbench} from '../src/workbench.ts';
@@ -46,5 +48,19 @@ test('legacy fragment migration keeps UUID and payload; proto ID is stable after
  library=createBlockLibrary(db);const first=library.material(saved.id,1);assert.match(first.proto.id,/^k[0-9a-f]{8}$/);assert.equal(first.proto.source,undefined);
  library=createBlockLibrary(db);assert.equal(library.material(saved.id,1).proto.id,first.proto.id);assert.equal(db.prepare('SELECT fragment FROM lite_block WHERE id=?').get(saved.id)!.fragment,before);
  const corrupt={...first.proto,content:{fragment:'0'.repeat(64)}};db.prepare('UPDATE lite_block SET proto=? WHERE id=?').run(JSON.stringify(corrupt),saved.id);assert.throws(()=>library.material(saved.id,1),(e:any)=>e.code==='TPL_FRAGMENT_MISSING');
+ }finally{db.close();}
+});
+
+test('block placement and generated warnings reuse the shared easy-language table',()=>{
+ const db=new DatabaseSync(':memory:');try{
+ const source=readFileSync(new URL('../../../examples/quick/template-braces.hwpx',import.meta.url));
+ const target=mutateEntryText(source,'version.xml',xml=>xml.replace('xmlVersion="1.5"','xmlVersion="1.4"'));
+ const doc=parseDocument(openPackage(source)),index=doc.sections[0]!.paragraphs.findIndex(p=>p.logicalText.includes('위와 같이'));
+ assert(index>=0);const library=createBlockLibrary(db),stored=library.save(extractBlockDraft(doc,'example.hwpx',{sectionIndex:0,parentPath:[],from:index,to:index}),'예시 블록'),app=createWorkbench(library);
+ const opened=app.post('/api/workbench/open',{name:'example-14.hwpx',content:Buffer.from(target).toString('base64')}) as any;
+ const work={session:opened.session,index:0,edits:[],headings:[],blocks:[],placements:[{id:stored.id,version:1,from:opened.paragraphs[index].id,to:opened.paragraphs[index].id}]};
+ const preview=app.post('/api/workbench/block-placement-preview',work) as any;
+ assert(preview.warnings.includes(plainOf('FRAG_UNIT_CONVERTED')));
+ const result=app.post('/api/workbench/generate',work) as any;assert(result.notes.includes(plainOf('FRAG_UNIT_CONVERTED')));assert(!result.notes.join().includes('FRAG_UNIT_CONVERTED'));
  }finally{db.close();}
 });
