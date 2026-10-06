@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { extractFragment, openPackage, parseDocument } from '@hwpx-studio/engine';
+import { reextractBlock, makeRangeAnchor, extractFragment, openPackage, parseDocument } from '@hwpx-studio/engine';
 import { buildHwpx, readFixture } from '../../../packages/hwpx-engine/test/helpers.ts';
 import { gridTable, tableParagraph, textPara } from '../../../packages/hwpx-engine/test/table-helpers.ts';
 import { createBlockLibrary, extractBlockDraft } from '../src/block-library.ts';
@@ -107,4 +107,39 @@ test('block library HTTP: list/detail persist after server restart; no insertion
     assert.equal('fragment' in item,false);assert.equal((await fetch(base+'/api/block?id=missing')).status,404);
     assert.equal((await fetch(base+'/api/blocks/insert')).status,404);
   } finally { await close();rmSync(dir,{recursive:true,force:true}); }
+});
+
+
+test('library management: immutable old versions, search/rename, latest template pins and workspace deletion protection survive restart',()=>{
+ const db=new DatabaseSync(':memory:');try{
+ let lib=createBlockLibrary(db);const doc=parseDocument(openPackage(buildHwpx([textPara('source')+textPara('body')])));
+ const draft=extractBlockDraft(doc,'synthetic.hwpx',{sectionIndex:0,parentPath:[],from:1,to:1}),first=lib.save(draft,'첫 이름');
+ const oldBlob=lib.material(first.id,1).blob.slice(),oldProto=JSON.stringify(lib.material(first.id,1).proto);
+ const next=reextractBlock(doc,makeRangeAnchor(doc,0,[],1,1)!,draft.proto,{at:'2026-10-06T01:00:00Z',change:'두번째 판'});
+ lib.save({...draft,id:'second-row',proto:next.proto,fragment:next.fragment},'둘째 이름');
+ assert.equal(lib.list().length,1);assert.equal(lib.list()[0]!.version,2);assert.equal(lib.material(draft.proto.id,1).proto.version,1);
+ lib.rename(first.id,'새 이름');assert.equal(lib.list('새 이름').length,1);assert.equal(lib.list('없는 이름').length,0);assert.equal(lib.list(first.sourceHash.slice(0,8)).length,1);
+ assert.deepEqual(lib.material(first.id,1).blob,oldBlob);assert.equal(JSON.stringify(lib.material(first.id,1).proto),oldProto);
+ assert.throws(()=>lib.remove(first.id,false),(e:any)=>e.code==='BLOCK_CONFIRM');
+ db.exec('CREATE TABLE project_revision(id INTEGER PRIMARY KEY,name TEXT,document TEXT)');
+ const t=JSON.parse(readFileSync(new URL('../../../packages/hwpx-engine/test/fixtures/template-v2/form.template.json',import.meta.url),'utf8'));t.meta={name:'예시 템플릿'};
+ for(const b of t.blocks){if(b.proto)b.proto={id:draft.proto.id,version:2};if(b.forkedFrom)b.forkedFrom={id:draft.proto.id,version:1};}
+ const insert=db.prepare('INSERT INTO project_revision(name,document) VALUES (?,?)');insert.run('예시 템플릿',JSON.stringify(t));
+ assert.deepEqual(lib.usage(first.id).usages.map(u=>u.state),['current','forked']);assert.throws(()=>lib.remove(first.id,true),/예시 템플릿/);
+ t.version++;for(const b of t.blocks){delete b.proto;delete b.forkedFrom;}insert.run('예시 템플릿',JSON.stringify(t));assert.equal(lib.usage(first.id).usages.length,0);
+ lib.saveWorkspace('example-work','예시 저장 작업',[{id:first.id,version:1}]);lib=createBlockLibrary(db);
+ assert.equal(lib.usage(first.id).usages[0]!.state,'behind');assert.throws(()=>lib.remove(first.id,true),/예시 저장 작업/);
+ lib.saveWorkspace('example-work','예시 저장 작업',[]);lib.remove(first.id,true);assert.equal(lib.list().length,0);assert.equal(db.prepare('SELECT COUNT(*) AS n FROM lite_block').get()!.n,0);
+ }finally{db.close();}
+});
+
+test('saved workspaces normalize legacy UUID pins to proto IDs and only their own later save releases usage',()=>{
+ const db=new DatabaseSync(':memory:');try{
+ const lib=createBlockLibrary(db),src=buildHwpx([textPara('source')+textPara('body')]),doc=parseDocument(openPackage(src));
+ const stored=lib.save(extractBlockDraft(doc,'synthetic.hwpx',{sectionIndex:0,parentPath:[],from:1,to:1}),'예시 블록'),app=createWorkbench(lib),opened=open(app,src);
+ const work={session:opened.session,index:0,edits:[],headings:[],blocks:[],placements:[{id:stored.id,version:1,from:opened.paragraphs[1].id,to:opened.paragraphs[1].id}]};
+ const saved=app.post('/api/workbench/save',work) as any,raw=JSON.parse(saved.workspace);assert.match(raw.placements[0].id,/^k[0-9a-f]{8}$/);assert.equal(lib.usage(stored.id).usages.length,1);
+ const other=open(app,src);app.post('/api/workbench/save',{...work,session:other.session});assert.equal(lib.usage(stored.id).usages.length,2);
+ const restored=app.post('/api/workbench/restore',{workspace:saved.workspace}) as any;app.post('/api/workbench/save',{...work,session:restored.session,placements:[]});assert.equal(lib.usage(stored.id).usages.length,1);assert.throws(()=>lib.remove(stored.id,true),/사용 중/);
+ }finally{db.close();}
 });

@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
-  applyPlan, detectHeadings, headingRangeOf, charDelta, checkValueText, compareToBaseline, compileDocument, draftAnchors, emptyTemplate, findPlaceholders, generate,
+  planBlockInsert, applyPlan, detectHeadings, headingRangeOf, charDelta, checkValueText, compareToBaseline, compileDocument, draftAnchors, emptyTemplate, findPlaceholders, generate,
   isValidPath, makeLineAnchor, makeRangeAnchor, makeWordAnchor, openPackage, parseDocument,
   planApplyCharFormat, readDataset, readTemplate, remapAddress, resolvePathValue, sanitizeFileStem, validateDocument,
   verifyPreservation, walkParagraphs, type CompileTarget, type Dataset, type HwpxDocument,
@@ -11,22 +11,31 @@ import { extractBlockDraft, type BlockDraft, type BlockLibrary } from './block-l
 import { parseCsv } from './core.ts';
 import { analyzePlaces, listKeys, parseQuickData, type QuickData } from './quick.ts';
 
+import { plainOf as plainBlock } from '../../studio/src/messages.ts';
 const MAX_SOURCE = 10 * 1024 * 1024;
 const MAX_TEXT = 1024 * 1024;
 const schema = 'hwpx-studio/lite-workspace@1';
 const hash = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 const fail = (code: string, message: string): never => { throw new HostError(400, code, message); };
-function need(ok: unknown, code = 'WORKBENCH_INPUT'): asserts ok { if (!ok) fail(code, '입력과 원본 위치를 다시 확인하세요.'); }
+function need(ok: unknown, code = 'WORKBENCH_INPUT'): asserts ok { if (!ok) fail(code, code === 'WORKBENCH_OVERLAP' ? '이미 배치한 범위와 겹칩니다. 겹치지 않는 부분을 선택하세요.' : '입력과 원본 위치를 다시 확인하세요.'); }
 type Row = { id: string; sectionIndex: number; path: number[]; text: string; editable: boolean; rangeEditable: boolean; reason?: string; position?: RhwpPosition };
 type Edit = { id: string; text: string };
 type Heading = { id: string; level: 1 | 2 };
 type Block = { id: string; from: string; to: string; text: string; alias: string };
-type Work = { edits: Edit[]; headings: Heading[]; blocks: Block[]; index: number };
-type Session = { kind: 'hwpx' | 'text'; name: string; source: Uint8Array; doc?: HwpxDocument; sourceText?: string; rows: Row[]; data?: QuickData; dataContent?: string; output?: Uint8Array; blockPreviews?: Map<string, BlockDraft> };
+type Placement = {id:string;version:number;from:string;to:string};
+type Work = { edits: Edit[]; headings: Heading[]; blocks: Block[]; placements: Placement[]; index: number; missing: "error" | "keep" };
+type Session = { workspaceId?: string; kind: 'hwpx' | 'text'; name: string; source: Uint8Array; doc?: HwpxDocument; sourceText?: string; rows: Row[]; data?: QuickData; dataContent?: string; output?: Uint8Array; blockPreviews?: Map<string, BlockDraft> };
 const rowId = (section: number, path: number[]) => `p:${section}:${path.join('.')}`;
 const sameParent = (a: Row, b: Row) => a.sectionIndex === b.sectionIndex && a.path.length === b.path.length && a.path.slice(0, -1).every((n, i) => n === b.path[i]);
 const contains = (a: Row, b: Row, row: Row) => sameParent(a, row) && row.path.at(-1)! >= a.path.at(-1)! && row.path.at(-1)! <= b.path.at(-1)!;
 const paragraph = (doc: HwpxDocument, row: Pick<Row, 'sectionIndex' | 'path'>) => [...walkParagraphs(doc.sections[row.sectionIndex]!.paragraphs)].find(p => p.path.length === row.path.length && p.path.every((n, i) => n === row.path[i]));
+
+function placementInfo(s:Session,selected:Placement,library:BlockLibrary){
+  need(s.doc,'BLOCK_HWPX');
+  const stored=library.material(selected.id,selected.version),a=s.rows.find(r=>r.id===selected.from)!;
+  const plan=planBlockInsert(s.doc,stored.proto,stored.blob,{sectionIndex:a.sectionIndex,parentPath:a.path.slice(0,-1),index:a.path.at(-1)!,position:'before'});
+  return {name:stored.item.name,version:stored.proto.version,paragraphs:s.rows.filter(r=>contains(a,s.rows.find(r=>r.id===selected.to)!,r)).length,warnings:plan.issues.filter(i=>i.severity==='warning').map(i=>plainBlock(i.code)),formatDiffs:plan.formatDiffs.map(d=>({paragraph:d.paragraph+1,property:d.property==='paraPr'?'문단 모양':'스타일'}))};
+}
 
 function rowsOf(doc: HwpxDocument): Row[] {
   const rows: Row[] = [];
@@ -99,7 +108,19 @@ function workOf(s: Session, input: Record<string, unknown>): Work {
     need(!edits.some(e => contains(a, z, row(e.id))), 'WORKBENCH_OVERLAP');
     need(!blocks.slice(i + 1).some(other => contains(a, z, row(other.from)) || contains(row(other.from), row(other.to), a)), 'WORKBENCH_OVERLAP');
   });
-  return { edits, headings, blocks, index };
+  need(input.placements===undefined||Array.isArray(input.placements)&&input.placements.length<=100);
+  const placements: Placement[] = (input.placements as unknown[]??[]).map(b=>{
+    need(isObj(b)&&Object.keys(b).every(k=>['id','version','from','to'].includes(k))&&typeof b.id==='string'&&b.id.length<=80&&Number.isInteger(b.version)&&(b.version as number)>0);
+    const a=row(b.from),z=row(b.to);need(s.kind==='hwpx'&&sameParent(a,z)&&a.path.at(-1)!<=z.path.at(-1)!,'BLOCK_BOUNDARY');
+    return {id:b.id,version:b.version as number,from:a.id,to:z.id};
+  });
+  const occupied=new Set<string>();
+  for(const b of [...blocks,...placements]){const a=row(b.from),z=row(b.to);const covered=s.rows.filter(r=>r.sectionIndex===a.sectionIndex&&r.path.length>=a.path.length&&a.path.slice(0,-1).every((n,i)=>r.path[i]===n)&&r.path[a.path.length-1]!>=a.path.at(-1)!&&r.path[a.path.length-1]!<=z.path.at(-1)!);
+    for(const r of covered){need(!occupied.has(r.id),'WORKBENCH_OVERLAP');occupied.add(r.id);if(placements.includes(b as Placement))need(!edits.some(e=>e.id===r.id),'WORKBENCH_OVERLAP');}
+  }
+  need(input.missing === undefined || input.missing === "error" || input.missing === "keep");
+  return { edits, headings, blocks, placements, index, missing: input.missing ?? "error" };
+
 }
 
 // ponytail: this projection only supports **bold** and {{path}}, not Markdown round trips.
@@ -154,16 +175,17 @@ function changedRange(doc: HwpxDocument, row: Row, text: string) {
   return { start: draft.start, end: draft.end, text: row.text.slice(draft.start, start) + text.slice(start, nextEnd) + row.text.slice(end, draft.end) };
 }
 
-function build(s: Session, work: Work, makeTemplate = false) {
+function build(s: Session, work: Work, makeTemplate = false, library?: BlockLibrary) {
   need(s.doc, 'WORKBENCH_SOURCE');
   const record = s.data?.records[work.index];
   const dataset = !makeTemplate && record && 'dataset' in record ? record.dataset : undefined;
+  const compositionData=work.placements.length?undefined:dataset;
   const template = emptyTemplate();
   const formats: { row: Row; text: string; spans: { start: number; end: number }[]; block: boolean; keys: ReturnType<typeof findPlaceholders> }[] = [];
   const row = (id: string) => s.rows.find(r => r.id === id)!;
   const edits = work.edits.filter(e => e.text !== row(e.id).text);
   for (const [i, edit] of edits.entries()) {
-    const r = row(edit.id), content = projected(edit.text, dataset, true, makeTemplate), id = `edit${i}`;
+    const r = row(edit.id), content = projected(edit.text, compositionData, true, makeTemplate||work.placements.length>0), id = `edit${i}`;
     const partial = r.rangeEditable ? undefined : changedRange(s.doc, r, content.text);
     if (r.rangeEditable || partial) {
       const a = r.text.length ? makeWordAnchor(s.doc, id, r.sectionIndex, r.path, partial?.start ?? 0, partial?.end ?? r.text.length) : makeLineAnchor(s.doc, id, r.sectionIndex, r.path);
@@ -176,17 +198,23 @@ function build(s: Session, work: Work, makeTemplate = false) {
     formats.push({ row: r, ...content, block: false, keys: makeTemplate ? findPlaceholders(content.text).filter(k => !originalKeys.has(k.path)) : [] });
   }
   for (const [i, block] of work.blocks.entries()) {
-    const a = row(block.from), z = row(block.to), id = `block${i}`, content = projected(block.text, dataset, true, makeTemplate);
+    const a = row(block.from), z = row(block.to), id = `block${i}`, content = projected(block.text, compositionData, true, makeTemplate||work.placements.length>0);
     need(checkValueText(content.text, 'paragraphs') === undefined, 'WORKBENCH_TEXT');
     const anchor = makeRangeAnchor(s.doc, a.sectionIndex, a.path.slice(0, -1), a.path.at(-1)!, z.path.at(-1)!);
     need(anchor, 'WORKBENCH_RANGE'); template.anchors.push({ ...anchor, id });
     template.rules.push({ id, do: content.text === '' ? { type: 'delete', anchor: id } : { type: 'insertText', anchor: id, position: 'replace', value: { text: content.text }, style: 'inherit' } });
     formats.push({ row: a, ...content, block: true, keys: makeTemplate ? findPlaceholders(content.text) : [] });
   }
-  const result = generate(s.source, readTemplate(template), dataset ?? readDataset({}), { missing: dataset ? 'error' : 'keep', mode: 'baseline', allowNothingApplied: !template.rules.length && (!dataset || formats.some(f => f.spans.length)) });
+  for(const [i,placement] of work.placements.entries()){
+    need(library,'BLOCK_STORE');const stored=library.material(placement.id,placement.version),a=row(placement.from),z=row(placement.to),id='stored'+i;
+    const anchor=makeRangeAnchor(s.doc,a.sectionIndex,a.path.slice(0,-1),a.path.at(-1)!,z.path.at(-1)!);need(anchor,'WORKBENCH_RANGE');
+    template.anchors.push({...anchor,id});template.rules.push({id,do:{type:'inject',anchor:id,position:'replace',fragment:stored.fragment as unknown as Record<string,unknown>}});
+  }
+  const result = generate(s.source, readTemplate(template), compositionData ?? readDataset({}), { missing: compositionData ? 'error' : 'keep', mode: 'baseline', allowNothingApplied: !template.rules.length && (!dataset || formats.some(f => f.spans.length)) });
   if (!result.ok || !('output' in result)) return fail(result.report.issues.find(i => i.severity === 'error')?.code ?? 'WORKBENCH_GENERATE', '문서 생성 검사를 통과하지 못했습니다.');
   need(!result.report.plan.skipped.some(x => x.ruleId !== 'implicit'), 'WORKBENCH_SKIPPED');
   let output = result.output;
+  let filled=result.report.plan.actions.filter(a=>a.type==='fill').reduce((n,a)=>n+a.targets,0);
   let formattedDoc = parseDocument(openPackage(output));
   const targets: CompileTarget[] = [];
   const hasBold = formats.some(f => f.spans.length);
@@ -224,37 +252,48 @@ function build(s: Session, work: Work, makeTemplate = false) {
       return fail('WORKBENCH_TEMPLATE_INCOMPLETE', '누름틀로 만들지 못한 키가 있습니다. 키 전체가 같은 서식 안에 있도록 수정하세요. 일부만 만든 파일은 저장하지 않았습니다.');
     output = compiled.output;
   }
+  if(work.placements.length&&dataset){
+    const values=generate(output,emptyTemplate(),dataset,{missing:'error',mode:'baseline',allowNothingApplied:true});
+    if(!values.ok||!('output' in values))return fail(values.report.issues.find(i=>i.severity==='error')?.code??'WORKBENCH_GENERATE','블록의 입력 값을 채우지 못했습니다. 데이터 항목을 확인하세요.');
+    output=values.output;filled+=values.report.plan.actions.filter(a=>a.type==='fill').reduce((n,a)=>n+a.targets,0);
+  }
   const outputDoc = parseDocument(openPackage(output));
   need(compareToBaseline(validateDocument(s.source), validateDocument(output)).newErrors.length === 0, 'WORKBENCH_VALIDATION');
   const paragraphs = outputDoc.sections.flatMap(section => [...walkParagraphs(section.paragraphs)]);
-  return { output, text: paragraphs.map(p => p.logicalText.replaceAll('\uFFFC', '')).join('\n'), filled: makeTemplate ? 0 : result.report.plan.actions.filter(a => a.type === 'fill').reduce((n, a) => n + a.targets, 0), changed: edits.length + work.blocks.length, ...(makeTemplate ? { template: true as const, promoted: targets.length } : {}),
-    notes: [...new Set(result.report.issues.filter(i => i.severity === 'warning').map(i => i.code)), ...(work.headings.length ? ['제목 단계는 작업 화면의 표시 정보입니다.'] : []), ...(work.blocks.length ? ['일반 글 블록은 첫 문단의 서식을 상속합니다.'] : []), ...(paragraphs.some(p => p.logicalText.includes('\uFFFC')) ? ['복사용 본문에는 개체 자리 표시를 생략했습니다.'] : [])] };
+  return { output, text: paragraphs.map(p => p.logicalText.replaceAll('\uFFFC', '')).join('\n'), filled: makeTemplate ? 0 : filled, changed: edits.length + work.blocks.length + work.placements.length, ...(makeTemplate ? { template: true as const, promoted: targets.length } : {}),
+    notes: [...new Set(result.report.issues.filter(i => i.severity === 'warning').map(i => plainBlock(i.code))), ...(work.headings.length ? ['제목 단계는 작업 화면의 표시 정보입니다.'] : []), ...(work.blocks.length ? ['일반 글 블록은 첫 문단의 서식을 상속합니다.'] : []), ...(paragraphs.some(p => p.logicalText.includes('\uFFFC')) ? ['복사용 본문에는 개체 자리 표시를 생략했습니다.'] : [])] };
 }
 
 function buildText(s: Session, work: Work) {
   const record = s.data?.records[work.index], dataset = record && 'dataset' in record ? record.dataset : undefined;
   const separators = [...s.sourceText!.matchAll(/\r\n|\r|\n/g)].map(m => m[0]);
   const edits = new Map(work.edits.filter(e => e.text !== s.rows.find(r => r.id === e.id)!.text).map(e => [e.id, e]));
-  let text = '', filled = 0;
+  let text = '', filled = 0, unresolved = 0, ranges = 0;
   for (let i = 0; i < s.rows.length; i++) {
     const row = s.rows[i]!, block = work.blocks.find(b => b.from === row.id), edit = edits.get(row.id);
-    const content = projected(block ? block.text : edit ? edit.text : row.text, dataset, !!(block || edit), !dataset && !!(block || edit));
-    filled += content.filled;
+    const content = (block ? block.text : edit ? edit.text : row.text).replace(/\{\{([^{}]*)\}\}/g, (token, key: string) => {
+      const path = key.trim();
+      if (/^[#/]/.test(path)) { ranges++; return token; }
+      const value = dataset && isValidPath(path) ? resolvePathValue(dataset, path, 'error') : undefined;
+      if (value?.kind === 'text') { filled++; return value.text; }
+      unresolved++; return token;
+    });
     if (block) i = s.rows.findIndex(r => r.id === block.to);
-    if (!block || content.text !== '') text += content.text + (separators[i] ?? '');
+    if (!block || content !== '') text += content + (separators[i] ?? '');
     need(Buffer.byteLength(text) <= MAX_SOURCE, 'WORKBENCH_RESULT_LIMIT');
   }
+  if (unresolved && work.missing === 'error') return fail('WORKBENCH_UNLINKED', `연결 안 된 입력 자리 ${unresolved}곳입니다. 데이터를 연결하거나 데이터 메뉴에서 ‘자리 유지’를 선택하세요.`);
   need(checkValueText(text) === undefined, 'WORKBENCH_TEXT');
-  const unresolved = dataset ? 0 : findPlaceholders(text).length;
   return { output: new TextEncoder().encode(text), text, filled, changed: edits.size + work.blocks.length,
     ...(unresolved ? { template: true as const, unresolved } : {}),
-    notes: ['TXT 결과는 서식 없는 본문입니다.', ...(work.headings.length ? ['제목 단계는 작업 화면의 표시 정보입니다.'] : [])] };
+    notes: [...(ranges ? [`구간 표기 ${ranges}곳이 결과에 남아 있습니다. 구간 선택은 아직 적용하지 않았습니다.`] : []), ...(work.headings.length ? ['제목 단계는 작업 화면의 표시 정보입니다.'] : [])] };
 }
 
 export function createWorkbench(library?: BlockLibrary) {
   const sessions = new Map<string, Session>();
   const sessionOf = (id: unknown) => { const s = typeof id === 'string' ? sessions.get(id) : undefined; if (!s) throw new HostError(404, 'WORKBENCH_SESSION', '문서를 다시 올려 주세요.'); return s; };
   const registered = (s: Session) => {
+    s.workspaceId ??= randomUUID();
     const fields = s.kind === 'hwpx' ? analyzePlaces(s.source).fields : [];
     const headings = s.doc ? detectHeadings(s.doc) : [];
     const outline = headings.map(h => ({id:rowId(h.at.sectionIndex,[...h.at.parentPath,h.index]),name:h.text,level:h.marker.level}));
@@ -279,14 +318,21 @@ export function createWorkbench(library?: BlockLibrary) {
     post(path: string, input: Record<string, unknown>): unknown {
       try {
         if (path === '/api/workbench/open') return registered(open(input.name, input.content));
+        if (path === '/api/workbench/compare') {
+          const s = open(input.name, input.content);
+          return { name: s.name, paragraphs: s.rows };
+        }
         if (path === '/api/workbench/restore') {
           need(typeof input.workspace !== 'string' || Buffer.byteLength(input.workspace) <= 20 * 1024 * 1024, 'WORKBENCH_WORKSPACE');
           const raw: unknown = typeof input.workspace === 'string' ? JSON.parse(input.workspace) : input.workspace;
-          need(isObj(raw) && raw.schema === schema && (raw.kind === 'text' || raw.kind === 'hwpx') && Object.keys(raw).every(k => ['schema', 'kind', 'name', 'source', 'sha256', 'data', 'edits', 'headings', 'blocks', 'index'].includes(k)), 'WORKBENCH_WORKSPACE');
+          need(isObj(raw) && raw.schema === schema && (raw.kind === 'text' || raw.kind === 'hwpx') && Object.keys(raw).every(k => ['schema', 'kind', 'name', 'source', 'sha256', 'data', 'edits', 'headings', 'blocks', 'placements', 'index', 'missing', 'workspaceId'].includes(k)), 'WORKBENCH_WORKSPACE');
           const s = open(raw.name, raw.source); need(raw.kind === s.kind, 'WORKBENCH_WORKSPACE'); need(raw.sha256 === hash(s.source), 'WORKBENCH_SOURCE_HASH');
           if (raw.data !== undefined) { const parsed = parseData(raw.data, 'data.json'); s.data = parsed.data; s.dataContent = parsed.content; }
+          need(raw.workspaceId===undefined||typeof raw.workspaceId==='string'&&/^[0-9a-f-]{36}$/.test(raw.workspaceId),'WORKBENCH_WORKSPACE');
+          s.workspaceId=raw.workspaceId as string|undefined;
           const work = workOf(s, raw);
-          return { ...registered(s), ...work, dataInfo: dataInfo(s) };
+          for(const p of work.placements){need(library,'BLOCK_STORE');p.id=library.material(p.id,p.version).proto.id;}
+          return { ...registered(s), ...work, placementNames:Object.fromEntries(work.placements.map(p=>{need(library,'BLOCK_STORE');return [p.id,library.material(p.id,p.version).item.name];})), placementWarnings:Object.fromEntries(work.placements.map(p=>{need(library,'BLOCK_STORE');return [p.id+':'+p.from,placementInfo(s,p,library).warnings];})), dataInfo: dataInfo(s) };
         }
         const s = sessionOf(input.session);
         if (path === '/api/workbench/block-preview') {
@@ -303,6 +349,12 @@ export function createWorkbench(library?: BlockLibrary) {
           s.blockPreviews.clear(); s.blockPreviews.set(draft.id, draft);
           const { fragment: _fragment, ...preview } = draft;
           return { ...preview, version: 1 };
+        }
+        if (path === '/api/workbench/block-placement-preview') {
+          need(library&&s.doc,'BLOCK_HWPX');const work=workOf(s,input);need(work.placements.length,'WORKBENCH_POSITION');
+          const info=placementInfo(s,work.placements.at(-1)!,library);
+          build(s,work,false,library);
+          return info;
         }
         if (path === '/api/workbench/block-save') {
           if (!library) return fail('BLOCK_STORE', '블록 저장소를 사용할 수 없습니다.');
@@ -336,8 +388,12 @@ export function createWorkbench(library?: BlockLibrary) {
           const makeTemplate = path.endsWith('/template');
           if (makeTemplate && s.kind !== 'hwpx') return fail('WORKBENCH_TEMPLATE_HWPX', '실제 누름틀은 HWPX 문서에서 만들 수 있습니다. TXT에서는 {{키}}를 그대로 사용하세요.');
           const work = workOf(s, input);
-          if (path.endsWith('/save')) return { name: `${sanitizeFileStem(s.name.replace(/\.txt$/i, ''))}.workspace.json`, workspace: JSON.stringify({ schema, kind: s.kind, name: s.name, source: Buffer.from(s.source).toString('base64'), sha256: hash(s.source), ...(s.dataContent === undefined ? {} : { data: s.dataContent }), ...work }) };
-          const result = s.kind === 'text' ? buildText(s, work) : build(s, work, makeTemplate); s.output = result.output;
+          for(const p of work.placements){need(library,'BLOCK_STORE');p.id=library.material(p.id,p.version).proto.id;}
+          if (path.endsWith('/save')) {
+            library?.saveWorkspace(s.workspaceId!,s.name,work.placements);
+            return { name: `${sanitizeFileStem(s.name.replace(/\.txt$/i, ''))}.workspace.json`, workspace: JSON.stringify({ schema, workspaceId:s.workspaceId, kind: s.kind, name: s.name, source: Buffer.from(s.source).toString('base64'), sha256: hash(s.source), ...(s.dataContent === undefined ? {} : { data: s.dataContent }), ...work }) };
+          }
+          const result = s.kind === 'text' ? buildText(s, work) : build(s, work, makeTemplate, library); s.output = result.output;
           return { ok: true, kind: s.kind, text: result.text, outputUrl: `/api/workbench/result?session=${input.session}`, filled: result.filled, changed: result.changed, bytes: result.output.length, notes: result.notes, ...('template' in result && result.template ? { template: true } : {}), ...('promoted' in result ? { promoted: result.promoted } : {}), ...('unresolved' in result ? { unresolved: result.unresolved } : {}) };
         }
         throw new HostError(404, 'WORKBENCH_ROUTE', '없는 작업 요청입니다.');
