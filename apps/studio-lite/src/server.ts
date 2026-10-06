@@ -110,7 +110,7 @@ export function createApp(database=':memory:') {
         return send(200,{id:Number(result.lastInsertRowid),saved:true});
       }
       send(404,{error:'없는 API입니다.'});
-    } catch(e) {send(e instanceof G2BRequestError || e instanceof HostError?e.status:400,{error:e instanceof Error?e.message:'요청 처리에 실패했습니다.',...(e instanceof G2BRequestError?{status:'error',code:e.code}:pathCode(e))});}
+    } catch(e) {send(e instanceof G2BRequestError || e instanceof HostError?e.status:400,{error:e instanceof Error?e.message:'요청 처리에 실패했습니다.',...(req.url?.split('?')[0]==='/api/block/preview'?{plain:blockMessage((e as {code?:string}).code)}:{}),...(e instanceof G2BRequestError?{status:'error',code:e.code}:pathCode(e))});}
   });
   server.on('close',()=>db.close());
   return server;

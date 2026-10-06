@@ -1,10 +1,11 @@
+import {plainOf as blockMessage} from '../../studio/src/messages.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { reextractBlock, makeRangeAnchor, extractFragment, openPackage, parseDocument } from '@hwpx-studio/engine';
+import { buildBlockPreviewDocument, serializeFragment, reextractBlock, makeRangeAnchor, extractFragment, openPackage, parseDocument } from '@hwpx-studio/engine';
 import { buildHwpx, readFixture } from '../../../packages/hwpx-engine/test/helpers.ts';
 import { gridTable, tableParagraph, textPara } from '../../../packages/hwpx-engine/test/table-helpers.ts';
 import { createBlockLibrary, extractBlockDraft } from '../src/block-library.ts';
@@ -158,6 +159,22 @@ test('stored block preview HTTP uses viewer host bytes/marks, keeps source/proto
  const doc=parseDocument(openPackage(Buffer.from(preview.hwpx,'base64')));assert(doc.sections.some(s=>s.paragraphs.some(p=>p.logicalText.includes('{{성명}}'))));
  const again=await(await fetch(base+'/api/block/preview?id='+stored.id)).json() as any;assert.equal(again.hwpx,preview.hwpx);
  assert.deepEqual(Buffer.from(await(await fetch(base+opened.sourceUrl)).arrayBuffer()),source);
- assert.equal((await fetch(base+'/api/block/preview?id=missing')).status,404);
+ const missing=await fetch(base+'/api/block/preview?id=missing');assert.equal(missing.status,404);assert.equal((await missing.json() as any).plain,blockMessage('BLOCK_NOT_FOUND'));
  }finally{await new Promise<void>(r=>server.close(()=>r()));}
+});
+
+
+test('library input counts match preview and exclude placeholders inside mailmerge display text, including old rows',()=>{
+  const db=new DatabaseSync(':memory:');try{
+    const doc=parseDocument(openPackage(readFixture('merge/merge-fields')));
+    const draft=extractBlockDraft(doc,'example.hwpx',{sectionIndex:0,parentPath:[],from:1,to:doc.sections[0]!.paragraphs.length-1});
+    const preview=buildBlockPreviewDocument(draft.proto,new TextEncoder().encode(serializeFragment(draft.fragment)));
+    const expected=preview.fields.reduce((sum,f)=>sum+f.count,0);
+    assert(preview.fields.some(f=>f.kind==='mailMerge'));
+    assert.equal(draft.inputCount,expected);
+    const library=createBlockLibrary(db),stored=library.save(draft,'메일머지 예시');
+    db.prepare('UPDATE lite_block SET input_count=999 WHERE id=?').run(stored.id);
+    const reopened=createBlockLibrary(db);
+    assert.equal(reopened.list()[0]!.inputCount,expected);assert.equal(reopened.get(stored.id).inputCount,expected);
+  }finally{db.close();}
 });

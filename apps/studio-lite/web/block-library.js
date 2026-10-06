@@ -20,22 +20,23 @@ export function installBlockLibrary({selection, session, api, status, beforeOpen
   function close() { if (busy) return; dispose(body);dialog.close(); draft = undefined; savedFocus?.focus({preventScroll: true}); refresh(); }
   $('#block-library-close').addEventListener('click', close);
   dialog.addEventListener('cancel', e => { e.preventDefault(); close(); });
-  function details(item) {
+  function details(item, saved=false) {
     const source = element('p', `출처: ${item.sourceName} · 문서 식별 ${item.sourceHash.slice(0, 10)}`);
-    body.append(source, element('p', item.location), element('p', `판 ${item.version} · 입력 표시 ${item.inputCount}`));
+    body.append(source, element('p', item.location), element('p', `판 ${item.version} · 입력 표시 ${item.inputCount??'미확인'}`));
     for (const warning of item.warnings ?? []) body.append(element('p', warning, 'block-warning'));
-    if(item.version)void preview(item,body);
+    if(saved)void preview(item,body);
     else body.append(element('h3','원문 일부'),element('pre',item.excerpt,'block-excerpt'));
   }
   async function get(path, data) {
     const response = await fetch(path,data===undefined?undefined:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)}), result = await response.json();
-    if (!response.ok) throw Error(result.error || '블록을 불러오지 못했습니다.');
+    if (!response.ok) throw Object.assign(Error(result.error || '블록을 불러오지 못했습니다.'),{plain:result.plain});
     return result;
   }
   async function preview(item, container) {
     dispose(container);
     const box=element('section',undefined,'block-preview'),note=element('p','블록 미리보기 여는 중입니다.','muted');note.setAttribute('role','status');box.append(note);container.append(box);
     let active=true,view,doc,resize;
+    const fallback=message=>{note.textContent='미리보기를 표시하지 못했습니다. '+message;if(!box.querySelector('.block-excerpt'))box.append(element('h3','원문 일부'),element('pre',item.excerpt,'block-excerpt'));};
     const cleanup=()=>{active=false;resize?.disconnect();view?.destroy();doc?.free();};previews.set(box,cleanup);
     try {
       const result=await get('/api/block/preview?id='+encodeURIComponent(item.id));
@@ -48,11 +49,11 @@ export function installBlockLibrary({selection, session, api, status, beforeOpen
       for(const warning of result.warnings)box.append(element('p',warning.message,'block-warning'));
       const pages=element('div',undefined,'page-view block-preview-pages');box.append(pages);
       const width=Math.max(...Array.from({length:doc.pageCount()},(_,i)=>doc.pageInfo(i).width));
-      const scale=()=>Math.min(1,Math.max(.25,(pages.clientWidth-20)/width));
-      view=createPageView({container:pages,doc,scale:scale(),onPick:()=>{},onError:e=>{note.textContent='미리보기를 표시하지 못했습니다. '+e.message;}});
+      const scale=()=>{const wanted=Math.min(1,(box.clientWidth-20)/width);pages.style.zoom=String(Math.min(1,wanted/.5));return Math.max(.5,wanted);};
+      view=createPageView({container:pages,doc,scale:scale(),onPick:()=>{},onError:()=>fallback('문서를 화면에 그리지 못했습니다. 원문 일부를 확인하세요.')});
       view.setMarks(result.places.flatMap((p,i)=>p.marks.map((m,j)=>({...m,id:'block-input-'+i+'-'+j,kind:'input'}))));
       resize=new ResizeObserver(()=>{if(active)view.setScale(scale());});resize.observe(pages);
-    }catch(e){cleanup();note.textContent='미리보기를 표시하지 못했습니다. '+e.message;}
+    }catch(e){cleanup();fallback(e.plain??'문서를 화면에 표시하지 못했습니다. 원문 일부를 확인하세요.');}
   }
   async function manage(item, container) {
     const group=element('section',undefined,'block-management');container.append(group);
@@ -84,7 +85,7 @@ export function installBlockLibrary({selection, session, api, status, beforeOpen
     busy = true;
     try {
       const item = await get('/api/block?id=' + encodeURIComponent(id));
-      open(item.name); details(item);await manage(item,body);
+      open(item.name); details(item,true);await manage(item,body);
       body.append(element('p', `${item.change} · ${new Date(item.createdAt).toLocaleString('ko-KR')}`), button('저장소 목록', showList));
       if(previewPlacement){
         const place=button('선택한 범위에 넣기',async()=>{
@@ -115,7 +116,7 @@ export function installBlockLibrary({selection, session, api, status, beforeOpen
       for (const item of blocks) {
         const tr = element('tr'), name = element('td'); name.append(button(item.name, () => showItem(item.id)));
         tr.append(name, element('td', `문서 ${item.sourceHash.slice(0,10)} · ${item.location}`),
-          element('td', `${item.version} · 입력 ${item.inputCount}`), element('td', item.change),
+          element('td', `${item.version} · 입력 ${item.inputCount??'미확인'}`), element('td', item.change),
           element('td', new Date(item.createdAt).toLocaleString('ko-KR'))); table.append(tr);
       }
       const search=element('input');search.type='search';search.maxLength=200;search.placeholder='이름 또는 출처 검색';search.setAttribute('aria-label','블록 검색');search.oninput=()=>{const q=search.value.toLocaleLowerCase();for(const row of [...table.rows].slice(1))row.hidden=!row.textContent.toLocaleLowerCase().includes(q);};const scroll = element('div', undefined, 'block-list-scroll'); scroll.append(table); body.append(search,scroll);
