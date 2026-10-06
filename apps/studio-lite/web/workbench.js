@@ -311,6 +311,7 @@ function updateData(info) {
   controls();
 }
 async function installWorkspace(result, ticket) {
+  $('#txt-missing').value=result.missing??'error';
   if (!opens.current(ticket)) return;
   picks.cancel(); dataLoads.cancel(); clearSelection(); hideMenu();
   state.view?.destroy(); state.view = undefined;
@@ -380,7 +381,7 @@ async function loadData(name, content, expected = {}) {
   finally { if (dataLoads.current(ticket) && session === state.session) setBusy(false); }
 }
 function snapshot() {
-  return {session: state.session, index: state.index, edits: [...state.edits].map(([id, text]) => ({id, text})),
+  return {session: state.session, index: state.index, missing: $('#txt-missing').value, edits: [...state.edits].map(([id, text]) => ({id, text})),
     headings: [...state.headings].map(([id, level]) => ({id, level})), blocks: state.blocks.map((block) => ({...block}))};
 }
 function saveBlob(content, name) {
@@ -421,7 +422,7 @@ async function generate(asTemplate = false) {
       status('생성은 완료됐지만 화면 표시가 어렵습니다. 내려받기로 확인해주세요. ' + errorMessage(error), 'error'); return;
     }
     const notes = Array.isArray(result.notes) && result.notes.length ? ' · ' + result.notes.join(' · ') : '';
-    status(asTemplate ? '누름틀 ' + result.promoted + '개를 만들었습니다. 서식 HWPX 저장을 누르세요.' : textTemplate ? '글을 반영했습니다. 미연결 ' + result.unresolved + '곳은 {{키}}로 남겼습니다. 데이터를 연결하면 값을 채울 수 있습니다.' : '생성 완료 · ' + result.changed + '개 편집, ' + result.filled + '곳 채움' + notes, 'success');
+    status(asTemplate ? '누름틀 ' + result.promoted + '개를 만들었습니다. 서식 HWPX 저장을 누르세요.' : textTemplate ? '글을 반영했습니다. 미연결 ' + result.unresolved + '곳은 {{키}}로 남겼습니다. 데이터를 연결하면 값을 채울 수 있습니다.' + notes : '생성 완료 · ' + result.changed + '개 편집, ' + result.filled + '곳 채움' + notes, 'success');
   } catch (error) {
     state.output = undefined; disposeResult(); $('#output-info').textContent = ''; status(errorMessage(error), 'error');
   } finally { setBusy(false); }
@@ -495,7 +496,7 @@ function action(name) {
     if(name==='saveBlock'){void blockLibraryUI.begin();return;}
     if(name==='copyKey'){void copyKey();return;}
     if(name==='copySelection'){const c=state.caret;void navigator.clipboard.writeText(state.comparisonText||(c?state.layout.text.slice(c.start,c.end):'')).then(()=>status('복사했습니다.')).catch(()=>status('브라우저가 복사를 허용하지 않았습니다. Ctrl+C를 사용하세요.','error'));return;}
-    if(name==='importSelection'){replaceSelected(state.comparisonText);return;}
+    if(name==='importSelection'){replaceSelected(state.comparisonText);if(state.kind==='text')renderTextDocument('source');return;}
     if(name==='menuKey'){$('#key-select').value=$('#menu-key').value;insertKey();return;}
     if(name==='group')groupSelection();else if(name==='reset')resetSelection();else if(name==='bold')makeBold();else if(name==='key')insertKey();
     else if(name==='heading1'||name==='heading2')useHeading(state.chosen,name==='heading1'?1:2);
@@ -561,6 +562,7 @@ $('#undo').addEventListener('click',()=>undo());
 $('#redo').addEventListener('click',()=>undo(true));
 $('#key-select').addEventListener('input', () => { $('#copy-fallback').hidden = true; controls(); });
 $('#key-select').addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); insertKey(); } });
+$('#txt-missing').addEventListener('change',()=>{if(!state.busy)changed();});
 $('#record-select').addEventListener('change', () => {
   if (state.busy) return; state.index = Number($('#record-select').value); changed();
   status((state.index + 1) + '행을 선택했습니다. 적용하면 해당 행의 값으로 채웁니다.');
@@ -635,6 +637,7 @@ function applyScale() {
   renderViewerNumbers();renderSourceTags();
 }
 function renderTextDocument(mode) {
+  document.body.classList.toggle('show-comparison',state.kind==='text'&&mode==='comparison');
   if(state.kind==='text'&&mode!=='comparison'){
     state.view?.destroy();state.view=undefined;state.viewMode='source';$('#pages').replaceChildren();document.body.classList.remove('show-text-preview');controls();return;
   }

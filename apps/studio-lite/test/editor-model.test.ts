@@ -136,7 +136,7 @@ test('continuous editor TXT integration: grouping, multiline edits, work-file re
   const a=rowUnit(rows,work,rows[1]!.id),z=rowUnit(rows,work,rows[2]!.id);work=groupEditorSelection(rows,work,a.start,z.end,'b-body');
   work=replaceRow(rows,work,rows[1]!.id,'번호 {{id}}\n확인 {{flag}}');
   const input={session:opened.session,index:0,headings:[],...work};
-  const template=app.post('/api/workbench/generate',input) as any;assert.equal(template.unresolved,3);assert.equal(template.text,'**{{title}}**\n추가 설명\n번호 {{id}}\n확인 {{flag}}\n고정');
+  const template=app.post('/api/workbench/generate',{...input,missing:'keep'}) as any;assert.equal(template.unresolved,3);assert.equal(template.text,'**{{title}}**\n추가 설명\n번호 {{id}}\n확인 {{flag}}\n고정');
   const saved=app.post('/api/workbench/save',input) as {workspace:string};
   const restored=app.post('/api/workbench/restore',{workspace:saved.workspace}) as {session:string;paragraphs:EditorRow[]} & EditorWork;
   assert.deepEqual(restored.edits,work.edits);assert.deepEqual(restored.blocks,work.blocks);

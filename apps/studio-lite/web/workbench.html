@@ -29,7 +29,7 @@
         <div class="menu-panel data-panel">
           <div class="panel-heading"><strong>연결할 데이터</strong><button id="open-data" type="button" disabled>파일 열기</button></div>
           <p id="data-info" class="muted">데이터가 없습니다.</p>
-          <label class="record-label" for="record-select">사용할 행<select id="record-select" disabled><option value="0">데이터 없음</option></select></label>
+          <label class="record-label" for="record-select">사용할 행<select id="record-select" disabled><option value="0">데이터 없음</option></select></label><label class="txt-missing" for="txt-missing">연결 안 된 입력 자리<select id="txt-missing"><option value="error">생성 막기 (기본)</option><option value="keep">자리 유지</option></select></label>
           <div id="data-preview" class="data-preview" hidden></div>
           <details class="advanced-input"><summary>직접 입력</summary><label for="data-text" class="sr-only">JSON 데이터</label><textarea id="data-text" rows="5" spellcheck="false" placeholder='{"사업명": "전산장비 구매"}'></textarea><button id="load-data-text" type="button" disabled>데이터 사용</button></details>
         </div>
@@ -48,7 +48,6 @@
     </section>
     <section class="editor-pane" aria-labelledby="editor-title">
       <div class="pane-bar"><div class="editor-title"><h2 id="editor-title">편집</h2><span id="paragraph-count" class="muted"></span></div><button id="txt-result-view" type="button" disabled>생성 미리 보기</button><details id="outline-menu" class="menu outline-menu" hidden><summary>목차<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg></summary><nav id="outline" class="menu-panel outline-panel" aria-label="문서 목차"></nav></details></div>
-      <p class="txt-hint">바탕 글 + {{항목}} · 생성한 결과는 ‘결과 복사’로 복사하세요. 구간 표기는 그대로 보존합니다.</p>
       <div id="editor-toolbar" class="editor-toolbar" aria-label="편집 도구">
         <button id="undo" type="button" title="실행 취소 (Ctrl+Z)" aria-label="실행 취소" disabled><svg viewBox="0 0 24 24"><path d="m9 5-6 6 6 6M3 11h11a6 6 0 0 1 0 12"/></svg></button>
         <button id="redo" type="button" title="다시 실행 (Ctrl+Shift+Z)" aria-label="다시 실행" disabled><svg viewBox="0 0 24 24"><path d="m15 5 6 6-6 6m6-6H10a6 6 0 0 0 0 12"/></svg></button>
