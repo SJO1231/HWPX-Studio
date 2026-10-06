@@ -1,10 +1,11 @@
 import { createServer } from 'node:http';
 import { stripTypeScriptTypes } from 'node:module';
-import { cleanPath, resolveShared, HostError } from '../../../packages/viewer/src/host/index.ts';
+import { cleanPath, resolveShared, HostError, previewBlock } from '../../../packages/viewer/src/host/index.ts';
 import { createQuick } from './quick-api.ts';
 import { createWorkbench } from './workbench.ts';
 import { createBlockLibrary } from './block-library.ts';
 import { plainOf } from './quick-messages.ts';
+import { plainOf as blockMessage, KNOWN_CODES } from '../../studio/src/messages.ts';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +16,8 @@ import { demo, demoSources } from './demo.ts';
 import { createG2B, G2BRequestError } from './g2b.ts';
 import { parseDocument, openPackage } from '@hwpx-studio/engine';
 
+// Preview rejections: engine codes use the shared plain table; app/host codes already carry a plain sentence.
+const previewPlain=(e:unknown)=>{const code=(e as {code?:unknown}|null)?.code;return typeof code==='string'&&KNOWN_CODES.includes(code)?blockMessage(code):e instanceof HostError?e.message:'블록 미리보기를 만들지 못했습니다.';};
 const pathCode=(e:unknown)=>e instanceof Error && 'code' in e && typeof e.code==='string'?{code:e.code,plain:plainOf(e.code)}:{};
 const ROOT=fileURLToPath(new URL('../',import.meta.url));
 export function createApp(database=':memory:') {
@@ -38,6 +41,11 @@ export function createApp(database=':memory:') {
       if(req.method==='GET') {
         const result=workbench.get(path,url.searchParams)??quick.get(path,url.searchParams);
         if(result)return send(200,result.body,'type' in result && typeof result.type==='string'?result.type:'application/vnd.hancom.hwpx',result.name?{'Content-Disposition':`attachment; filename="document.hwpx"; filename*=UTF-8''${encodeURIComponent(result.name)}`}:{});
+        if(path==='/api/block/preview') {
+          const item=blockLibrary.get(url.searchParams.get('id'));
+          const preview=previewBlock({block:item.id},id=>blockLibrary.material(id,item.version));
+          return send(200,{...preview,warnings:preview.warnings.map(w=>({...w,message:blockMessage(w.code)}))});
+        }
         if(path==='/api/blocks')return send(200,{blocks:blockLibrary.list(url.searchParams.get('q')??'')});
         if(path==='/api/block/usage')return send(200,blockLibrary.usage(url.searchParams.get('id')));
         if(path==='/api/block')return send(200,blockLibrary.get(url.searchParams.get('id')));
@@ -104,7 +112,7 @@ export function createApp(database=':memory:') {
         return send(200,{id:Number(result.lastInsertRowid),saved:true});
       }
       send(404,{error:'없는 API입니다.'});
-    } catch(e) {send(e instanceof G2BRequestError || e instanceof HostError?e.status:400,{error:e instanceof Error?e.message:'요청 처리에 실패했습니다.',...(e instanceof G2BRequestError?{status:'error',code:e.code}:pathCode(e))});}
+    } catch(e) {send(e instanceof G2BRequestError || e instanceof HostError?e.status:400,{error:e instanceof Error?e.message:'요청 처리에 실패했습니다.',...(e instanceof G2BRequestError?{status:'error',code:e.code}:pathCode(e)),...(req.url?.split('?')[0]==='/api/block/preview'?{plain:previewPlain(e)}:{})});}
   });
   server.on('close',()=>db.close());
   return server;
