@@ -52,7 +52,7 @@
 | `apps/studio-lite/` | Markdown·원본 HWPX 생성 MVP. 공통 엔진 사용. 상세 상태는 앱의 `docs/status.md` | 포함 |
 | `apps/viewer-poc/` | 뷰어 시험 앱(로컬 서버와 웹 화면) | 포함 |
 | `apps/studio/` | 빠른 생성 화면과 로컬 서버(`server.ts`, 4174). 사용자 결정(2026-10-04)으로 `apps/studio-lite`에 흡수될 예정 | 포함 |
-| `apps/studio-lite/` | 제품 앱의 바탕(사용자 결정 2026-10-04). 비교 Grid·블록·조건·SQLite 저장·Helper 연결. `npm run start:lite` → 4318. 소유: Claude(2026-10-06부터. 이전 Codex) | 포함 |
+| `apps/studio-lite/` | 제품 앱의 바탕(사용자 결정 2026-10-04). 비교 Grid·블록·조건·SQLite 저장·Helper 연결. `npm run start:lite` → 4318. 소유: Claude(2026-10-07부터(지시 2026-10-06 밤). 이전 Codex) | 포함 |
 | `examples/quick/` | 빠른 생성 예시 서식(한컴 저장본)과 데이터(가짜 값). 사용자가 고쳐 시험하는 용도. 순서는 그 폴더의 `README.md` | 포함 |
 | `tools/oracle/` | 검증 보조 스크립트(선택 실행) | 포함 |
 | `docs/` | 정본 문서 | 포함 |
@@ -93,11 +93,11 @@
 - 이 저장소 한정 설정: 작성자는 GitHub noreply 주소, `core.autocrlf=false`, `.gitattributes`의 `* -text`.
 - **수정 사항은 GitHub 이슈로 등록한 뒤 처리한다**(사용자 지시 2026-10-04). 이슈 하나에 결함·보강 하나. 본문은 현상·재현·수정 범위·검증 방법만 적고 개인 경로·실제 문서 이름·대화 인용은 넣지 않는다. 커밋 메시지에 이슈 번호를 적고 끝나면 닫는다.
 - 이슈·PR 명령은 `gh` CLI를 쓴다(설치·로그인은 사용자가 한다: `winget install GitHub.cli`, `gh auth login`). 없으면 등록할 이슈 목록을 보고에 적어 두었다가 생기는 대로 등록한다.
-- **의존 정책**(사용자 지시 2026-10-04): 런타임 의존은 `@rhwp/core`와 Node 내장만. `apps/studio-lite`의 `kordoc`·`markdown-it`은 제거한다(Markdown→HWPX 생성은 엔진의 문단 삽입·조각으로 대체, Markdown 미리보기는 자체 최소 변환). lite의 `vendor/rhwp` 사본은 공용 뷰어의 `@rhwp/core`로 통일한다. CI에서 런타임 의존 허용 목록을 검사한다(2026-10-06부터 Claude 소유. 이전 Codex).
-- **역할 분담**: **2026-10-06부터(사용자 결정)** Codex 중단. Claude가 엔진(`packages/hwpx-engine`)·뷰어(`packages/viewer`)·템플릿 모델·정본 문서(`docs/`)·검증·합치기에 더해 앱(`apps/studio-lite`)·화면·SQLite 저장·데이터 입력·Helper 연결·CI(`.github/`)까지 전부 맡는다. 요구 문서·스튜디오 명세의 'Codex 몫' 표기는 소유자만 Claude로 읽는다. 합치기 권한은 사용자가 거두기 전까지 계속. 이전 2026-10-04 결정(Claude = 엔진·뷰어·템플릿 모델·정본 문서·검증·합치기, Codex = 앱·화면·SQLite 저장·데이터 입력·Helper 연결·CI)은 역사로만 남긴다.
+- **의존 정책**(사용자 지시 2026-10-04): 런타임 의존은 `@rhwp/core`와 Node 내장만. `apps/studio-lite`의 `kordoc`·`markdown-it`은 제거한다(Markdown→HWPX 생성은 엔진의 문단 삽입·조각으로 대체, Markdown 미리보기는 자체 최소 변환). lite의 `vendor/rhwp` 사본은 공용 뷰어의 `@rhwp/core`로 통일한다. CI에서 런타임 의존 허용 목록을 검사한다(2026-10-07부터(지시 2026-10-06 밤) Claude 소유. 이전 Codex).
+- **역할 분담**: **2026-10-07부터(지시 2026-10-06 밤, 사용자 결정)** Codex 중단. Claude가 엔진(`packages/hwpx-engine`)·뷰어(`packages/viewer`)·템플릿 모델·정본 문서(`docs/`)·검증·합치기에 더해 앱(`apps/studio-lite`)·화면·SQLite 저장·데이터 입력·Helper 연결·CI(`.github/`)까지 전부 맡는다. 요구 문서·스튜디오 명세의 'Codex 몫' 표기는 소유자만 Claude로 읽는다. 합치기 권한은 사용자가 거두기 전까지 계속. 이전 2026-10-04 결정(Claude = 엔진·뷰어·템플릿 모델·정본 문서·검증·합치기, Codex = 앱·화면·SQLite 저장·데이터 입력·Helper 연결·CI)은 역사로만 남긴다.
 - **가지**: `studio-lite` 가지는 2026-10-04 main에 합쳤고(`6394dbb`) 삭제한다. 이후 가지는 이슈별 작업 가지(`issue-N-주제`)뿐이며 PR 대상은 main이다.
 - **단계 운영**(사용자 지시 2026-10-04): 단계마다 마일스톤(목표·범위·제외사항·완료 기준)과 이슈(작업 내용·선행 작업·검사 방법·산출물)를 초안으로 먼저 보이고 기존 것과 중복을 확인한 뒤 등록한다. 첫 화면 검토와 단계 종료 검토는 별도 이슈다. 이슈마다 가지(`issue-N-주제`)와 PR을 만들고, 구현 중 진행 상황과 검사 근거(테스트 수치, 독립 검증 요지)를 이슈·PR에 남긴다. 합치기는 CI 통과와 필요한 독립 검증 뒤에 한다.
-- **화면 PR 규칙**(사용자 결정 2026-10-06): 모든 화면(`apps/studio-lite`) PR 본문에 ① 확인 문장 자체 점검표(이슈의 확인 문장별 보임/일부/안 보임과 근거) ② 검사 명령과 수치(`npm run typecheck`, lite 시험, `npm run verify`) ③ 저장소의 `examples/quick/` 예시 파일로 찍은 캡처(가짜 값만. 실제 공고서 캡처 금지) ④ 미검증 범위를 넣는다. 이슈 하나당 가지(`issue-N-주제`)·PR 하나. 합치기 전 내장 브라우저로 실제 공고서(환경 변수 경로, 읽기 전용)를 열어 확인 문장을 다시 본다(여는 순서는 아래 "브라우저 자동 시험" 절. 그 화면 그림은 이슈·PR에 올리지 않는다).
+- **화면 PR 규칙**(사용자 결정 2026-10-06): 모든 화면(`apps/studio-lite`) PR 본문에 ① 확인 문장 자체 점검표(이슈의 확인 문장별 보임/일부/안 보임과 근거) ② 검사 명령과 수치(`npm run typecheck`, lite 시험, `npm run verify`) ③ 저장소의 `examples/quick/` 예시 파일로 찍은 캡처(가짜 값만. 실제 공고서 캡처 금지) ④ 미검증 범위를 넣는다. 새 기능마다 `docs/user-guide.md` 갱신과 `examples/quick`·`examples/template-v2` 예시(가짜 값)·짧은 사용 순서를 같은 PR에 넣는다. 이슈 하나당 가지(`issue-N-주제`)·PR 하나. 합치기 전 내장 브라우저로 실제 공고서(환경 변수 경로, 읽기 전용)를 열어 확인 문장을 다시 본다(여는 순서는 아래 "브라우저 자동 시험" 절. 그 화면 그림은 이슈·PR에 올리지 않는다).
 
 ## Skill
 
