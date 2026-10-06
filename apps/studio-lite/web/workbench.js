@@ -99,10 +99,10 @@ function invalidateOutput() {
   state.revision++; state.output = undefined; $('#output-info').textContent = '';
   $('#body-result-panel').hidden = true; $('#body-text').value = '';
   disposeResult(); controls();
-  const session = state.session;
+  const session = state.session, placements = state.placements.map((p) => ({...p}));
   if (session) state.invalidations = state.invalidations.catch(() => {}).then(async () => {
     if (state.session !== session) return;
-    try { await api('invalidate', {session}); }
+    try { await api('invalidate', {session, placements}); }
     catch { if (state.session === session) status('이전 결과를 사용할 수 없습니다. 다시 적용해주세요.', 'error'); }
   });
 }
@@ -349,7 +349,7 @@ async function installWorkspace(result, ticket) {
       status('문단은 불러왔지만 원본을 표시하지 못했습니다.', 'error'); return;
     }
   }
-  if (opens.current(ticket)) {buildReview(result);renderHeadingTree();renderRecommendations();status('');}
+  if (opens.current(ticket)) {buildReview(result);renderHeadingTree();renderRecommendations();status(result.notice ?? '', result.notice ? 'error' : '');}
 }
 function base64(bytes) {
   const chunk = 0x8000; let binary = '';
