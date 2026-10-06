@@ -43,6 +43,7 @@ function controls() {
   for(const id of ['scale','zoom-in','zoom-out']) $('#'+id).disabled=!available;
   $('#key-select').disabled=!available; $('#make-template').disabled=!available||state.kind!=='hwpx';
   $('#copy-body').disabled=state.busy||typeof state.output?.text!=='string';
+  $('#copy-body').title=state.busy?'문서 처리가 끝난 뒤 복사하세요.':!state.session?'문서를 먼저 여세요.':!state.output?'현재 업무 건과 편집 내용으로 다시 생성한 뒤 복사하세요.':'';
   $('#document-editor').disabled=!state.session; $('#document-editor').readOnly=state.busy;
   $('#undo').disabled=!available||!state.history.length; $('#redo').disabled=!available||!state.future.length;
   for(const button of document.querySelectorAll('[data-action]')) {
@@ -54,8 +55,12 @@ function controls() {
   for(const check of document.querySelectorAll('.rec-line input'))check.disabled=state.busy||check.dataset.confirmed==='true';
   $('#save-checked-blocks').disabled=state.busy||!state.recommendations.some(r=>r.kind==='block'&&r.status==='recommended');
   blockLibraryUI.refresh();
+  if(state.kind==='text')for(const b of document.querySelectorAll('[data-action=bold],[data-action=group]'))b.disabled=true;
   for(const b of document.querySelectorAll('[data-action="branchDetail"]')){b.disabled=true;b.title='분기점 만들기는 다음 구현 단계에서 지원합니다.';}
   document.body.classList.toggle('has-document',Boolean(state.session));document.body.classList.toggle('text-work',state.kind==='text');document.body.classList.toggle('has-output',Boolean(state.output));
+  $('#editor-title').textContent=state.kind==='text'?'TXT 템플릿':'편집';
+  $('#copy-body').textContent=state.kind==='text'?'결과 복사':'본문 복사';
+  $('#key-select').title=state.kind==='text'?'{{항목}}에 데이터 값을 채웁니다. 구간 표기는 그대로 보존합니다.':'입력 항목 이름';
   $('#save-work').title=state.name?'작업 저장 · '+state.name:'문서를 먼저 여세요.';
   renderSelectionDetail();
   $('#dirty-state').hidden=!state.dirty;
@@ -109,17 +114,20 @@ function renderEditor() {
   if(input.value!==state.layout.text)input.value=state.layout.text;
   input.style.height='0px'; input.style.height=Math.max($('#editor-scroll').clientHeight,input.scrollHeight)+'px';
   const mirror=$('#editor-mirror');mirror.replaceChildren();
-  for(const unit of state.layout.units) {
+  let offset=0;
+  const displayUnits=state.kind==='text'?state.layout.text.split('\n').map((text,i)=>{const id=unitAt(state.layout.units,offset)?.id,start=offset;offset+=text.length+1;return {id,from:i,to:i,text,start,end:offset-1};}):state.layout.units;
+  for(const unit of displayUnits) {
     const row=paragraph(unit.id),line=document.createElement('div');line.className='editor-unit'+(unit.block?' block-unit':'')+(!row.editable?' readonly-unit':'')+(state.headings.has(unit.id)?' heading-unit':'');line.dataset.id=unit.id;
     const number=document.createElement('button');number.type='button';number.className='line-number';number.textContent=unit.from===unit.to?String(unit.from+1):(unit.from+1)+'–'+(unit.to+1);number.title=(unit.block?'블록 · ':'')+(!row.editable?reasonOf(row.reason):'원본 위치');number.setAttribute('aria-label','원본 '+number.textContent);number.tabIndex=-1;
-    number.addEventListener('click',()=>selectRow(unit.id,{focus:true}));line.append(number,document.createTextNode(unit.text+'​'));mirror.append(line);
+    number.addEventListener('click',()=>{if(state.kind==='text'){input.focus();input.setSelectionRange(unit.start,unit.end);captureCaret(false);}else selectRow(unit.id,{focus:true});});line.append(number,document.createTextNode(unit.text+'​'));mirror.append(line);
   }
+  if(state.kind==='text')$('#paragraph-count').textContent=displayUnits.length+'줄';
   markEditorSelection();controls();
 }
 function markEditorSelection() {
   const caret=state.caret??{start:0,end:0},chosen=editorSelection(state.layout,caret.start,caret.end);
   for(const line of $('#editor-mirror').children)line.classList.toggle('selected-unit',chosen.some(u=>u.id===line.dataset.id));
-  const a=chosen[0],z=chosen.at(-1);$('#selection-info').textContent=a?(state.kind==='text'?'줄 ':'문단 ')+(a.from+1)+(a.from!==z.to?'–'+(z.to+1):''):'';
+  const a=chosen[0],z=chosen.at(-1);if(state.kind==='text'){$('#selection-info').textContent=state.caret?'줄 '+state.layout.text.slice(0,caret.start).split('\n').length:'';return;}$('#selection-info').textContent=a?(state.kind==='text'?'줄 ':'문단 ')+(a.from+1)+(a.from!==z.to?'–'+(z.to+1):''):'';
 }
 function captureCaret(sync=true) {
   const input=$('#document-editor');state.caret={start:input.selectionStart,end:input.selectionEnd};
@@ -139,7 +147,7 @@ function renderOutline() {
   }
   $('#outline-menu').hidden = state.headings.size === 0;
 }
-function renderParagraphs() {renderEditor();$('#paragraph-count').textContent=String(state.paragraphs.length||'');renderOutline();}
+function renderParagraphs() {renderEditor();if(state.kind!=='text')$('#paragraph-count').textContent=String(state.paragraphs.length||'');renderOutline();}
 function selectRow(id,options={}) {
   const unit=state.layout.units.find(u=>state.paragraphs.slice(u.from,u.to+1).some(r=>r.id===id));if(!unit)return false;
   state.detailLibrary=undefined;state.activeRecommendation=undefined;state.chosen=id;state.caret={start:unit.start,end:unit.end};const input=$('#document-editor');input.setSelectionRange(unit.start,unit.end);
@@ -266,7 +274,7 @@ async function showResult() {
   if (!state.output || state.busy) return;
   document.body.classList.add('show-text-preview');setBusy(true, '생성 결과를 표시하는 중입니다.');
   try {
-    if (state.kind === 'text') {document.body.classList.add('show-text-preview');renderTextDocument('result');}
+    if (state.kind === 'text') {renderTextDocument('result');}
     else if (state.resultDoc) mountDocument(state.resultDoc, 'result');
     else await openViewer(state.output.outputUrl, 'result', state.openTicket);
     status('생성 결과 · 내려받기로 저장할 수 있습니다.', 'success');
@@ -274,6 +282,7 @@ async function showResult() {
   finally { setBusy(false); }
 }
 function updateData(info) {
+  state.detailId=undefined;
   state.records = info?.records ?? 0; state.keys = info?.keys ?? []; state.index = info?.index ?? 0;
   $('#data-info').textContent = state.records ? state.records + '개 행 연결됨' : '데이터가 없습니다.';
   const records = $('#record-select'); records.replaceChildren();
@@ -303,6 +312,7 @@ function updateData(info) {
   controls();
 }
 async function installWorkspace(result, ticket) {
+  $('#txt-missing').value=result.missing??'error';
   if (!opens.current(ticket)) return;
   picks.cancel(); dataLoads.cancel(); clearSelection(); hideMenu();
   state.view?.destroy(); state.view = undefined;
@@ -372,7 +382,7 @@ async function loadData(name, content, expected = {}) {
   finally { if (dataLoads.current(ticket) && session === state.session) setBusy(false); }
 }
 function snapshot() {
-  return {session: state.session, index: state.index, edits: [...state.edits].map(([id, text]) => ({id, text})),
+  return {session: state.session, index: state.index, missing: $('#txt-missing').value, edits: [...state.edits].map(([id, text]) => ({id, text})),
     headings: [...state.headings].map(([id, level]) => ({id, level})), blocks: state.blocks.map((block) => ({...block}))};
 }
 function saveBlob(content, name) {
@@ -405,7 +415,7 @@ async function generate(asTemplate = false) {
     $('#body-result').open = state.kind === 'text';
     $('#output-info').textContent = asTemplate ? '누름틀 ' + result.promoted + '개 생성' : textTemplate ? '서식 반영 · 미연결 ' + result.unresolved + '곳' : result.changed + '개 편집 · ' + result.filled + '곳 채움';
     try {
-      if (state.kind === 'text') {document.body.classList.add('show-text-preview');renderTextDocument('result');}
+      if (state.kind === 'text') {renderTextDocument('result');}
       else await openViewer(result.outputUrl, 'result', state.openTicket);
     }
     catch (error) {
@@ -413,7 +423,7 @@ async function generate(asTemplate = false) {
       status('생성은 완료됐지만 화면 표시가 어렵습니다. 내려받기로 확인해주세요. ' + errorMessage(error), 'error'); return;
     }
     const notes = Array.isArray(result.notes) && result.notes.length ? ' · ' + result.notes.join(' · ') : '';
-    status(asTemplate ? '누름틀 ' + result.promoted + '개를 만들었습니다. 서식 HWPX 저장을 누르세요.' : textTemplate ? '글을 반영했습니다. 미연결 ' + result.unresolved + '곳은 {{키}}로 남겼습니다. 데이터를 연결하면 값을 채울 수 있습니다.' : '생성 완료 · ' + result.changed + '개 편집, ' + result.filled + '곳 채움' + notes, 'success');
+    status(asTemplate ? '누름틀 ' + result.promoted + '개를 만들었습니다. 서식 HWPX 저장을 누르세요.' : textTemplate ? '글을 반영했습니다. 미연결 ' + result.unresolved + '곳은 {{키}}로 남겼습니다. 데이터를 연결하면 값을 채울 수 있습니다.' + notes : '생성 완료 · ' + result.changed + '개 편집, ' + result.filled + '곳 채움' + notes, 'success');
   } catch (error) {
     state.output = undefined; disposeResult(); $('#output-info').textContent = ''; status(errorMessage(error), 'error');
   } finally { setBusy(false); }
@@ -460,7 +470,7 @@ function undo(redo=false) {
 function useHeading(id,level){remember();state.headings.set(id,level);changed();renderEditor();renderOutline();}
 function replaceSelected(value){const c=state.caret??{start:0,end:0};applyEditorChange(c.start,c.end,value);}
 function insertKey(){const key=$('#key-select').value.trim();if(!key||!/^[\p{L}\p{N}_-]+(?:\.[\p{L}\p{N}_-]+)*$/u.test(key)){ $('#key-select').focus();status('공백 없는 필드 이름을 입력하세요.','error');return;} replaceSelected('{{'+key+'}}');}
-function makeBold(){const c=state.caret;if(!c||c.start===c.end)return;const text=state.layout.text.slice(c.start,c.end);replaceSelected(text.startsWith('**')&&text.endsWith('**')?text.slice(2,-2):'**'+text+'**');}
+function makeBold(){if(state.kind==='text')return;const c=state.caret;if(!c||c.start===c.end)return;const text=state.layout.text.slice(c.start,c.end);replaceSelected(text.startsWith('**')&&text.endsWith('**')?text.slice(2,-2):'**'+text+'**');}
 
 async function copyKey() {
   const key = $('#key-select').value.trim(); if (!key || state.busy) return;
@@ -479,6 +489,7 @@ async function copyKey() {
   }
 }
 function action(name) {
+  if(state.kind==='text'&&['bold','group'].includes(name))return;
   hideMenu();if(state.busy)return;
   try {
     if(name==='inputDetail'||name==='dataDetail'){openInputDetail(name==='dataDetail');return;}
@@ -486,7 +497,7 @@ function action(name) {
     if(name==='saveBlock'){void blockLibraryUI.begin();return;}
     if(name==='copyKey'){void copyKey();return;}
     if(name==='copySelection'){const c=state.caret;void navigator.clipboard.writeText(state.comparisonText||(c?state.layout.text.slice(c.start,c.end):'')).then(()=>status('복사했습니다.')).catch(()=>status('브라우저가 복사를 허용하지 않았습니다. Ctrl+C를 사용하세요.','error'));return;}
-    if(name==='importSelection'){replaceSelected(state.comparisonText);return;}
+    if(name==='importSelection'){replaceSelected(state.comparisonText);if(state.kind==='text')renderTextDocument('source');return;}
     if(name==='menuKey'){$('#key-select').value=$('#menu-key').value;insertKey();return;}
     if(name==='group')groupSelection();else if(name==='reset')resetSelection();else if(name==='bold')makeBold();else if(name==='key')insertKey();
     else if(name==='heading1'||name==='heading2')useHeading(state.chosen,name==='heading1'?1:2);
@@ -552,6 +563,7 @@ $('#undo').addEventListener('click',()=>undo());
 $('#redo').addEventListener('click',()=>undo(true));
 $('#key-select').addEventListener('input', () => { $('#copy-fallback').hidden = true; controls(); });
 $('#key-select').addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); insertKey(); } });
+$('#txt-missing').addEventListener('change',()=>{if(!state.busy)changed();});
 $('#record-select').addEventListener('change', () => {
   if (state.busy) return; state.index = Number($('#record-select').value); changed();
   status((state.index + 1) + '행을 선택했습니다. 적용하면 해당 행의 값으로 채웁니다.');
@@ -626,6 +638,10 @@ function applyScale() {
   renderViewerNumbers();renderSourceTags();
 }
 function renderTextDocument(mode) {
+  document.body.classList.toggle('show-comparison',state.kind==='text'&&mode==='comparison');
+  if(state.kind==='text'&&mode!=='comparison'){
+    state.view?.destroy();state.view=undefined;state.viewMode='source';$('#pages').replaceChildren();document.body.classList.remove('show-text-preview');controls();return;
+  }
   state.view?.destroy();state.view=undefined;state.viewMode=mode;
   const container=$('#pages');container.classList.remove('page-view');container.replaceChildren();
   const sheet=document.createElement('div');sheet.className='text-document';

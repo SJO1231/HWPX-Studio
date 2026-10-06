@@ -179,7 +179,7 @@ test('linked workspace HTTP: editor/static routes, same-origin, stable row selec
   } finally {await new Promise<void>((done,fail)=>server.close(e=>e?fail(e):done()));}
 });
 
-test('linked workspace TXT: no HWPX/COM needed; empty lines, one-pass values, bold, range and source hash restore',()=>{
+test('linked workspace TXT: no HWPX/COM needed; empty lines, one-pass values, literal punctuation, range and source hash restore',()=>{
   const text='사업명: {{title}}\n\n승인: {{flag}} / 금액: {{zero}} / 번호: {{id}}\n교체 시작\n교체 끝\n원본 **문자**';
   const app=api(),source=new TextEncoder().encode(text);
   const opened=app.post('/api/workbench/open',{name:'synthetic.txt',content:Buffer.from(source).toString('base64')}) as Open&{kind:string};
@@ -190,15 +190,15 @@ test('linked workspace TXT: no HWPX/COM needed; empty lines, one-pass values, bo
     headings:[{id:row(opened,'사업명: {{title}}').id,level:1 as const}],
     blocks:[{id:'b-text',from:row(opened,'교체 시작').id,to:row(opened,'교체 끝').id,alias:'승인 본문',text:'추가 **본문**\n줄: {{id}}'}]};
   const made=post(app,opened.session,'generate',state) as any;
-  const expected='문서명: 첫째 **literal** {{nested}}\n\n승인: false / 금액: 0 / 번호: 00123\n추가 본문\n줄: 00123\n원본 **문자**';
+  const expected='문서명: **첫째 **literal** {{nested}}**\n\n승인: false / 금액: 0 / 번호: 00123\n추가 **본문**\n줄: 00123\n원본 **문자**';
   assert.equal(made.kind,'text');assert.equal(made.text,expected);
   assert.equal(new TextDecoder().decode(output(app,opened.session)),expected);
   assert.match(app.get('/api/workbench/result',new URLSearchParams({session:opened.session}))!.name!,/\.txt$/);
-  const saved=post(app,opened.session,'save',state) as any;
+  const saved=post(app,opened.session,'save',{...state,missing:'keep'}) as any;
   const restored=app.post('/api/workbench/restore',{workspace:saved.workspace}) as Open&{kind:string};
   assert.equal(restored.kind,'text');
   const next=post(app,restored.session,'generate',{...state,index:1}) as any;
-  assert.equal(next.text,'문서명: 둘째\n\n승인: true / 금액: 10 / 번호: 00007\n추가 본문\n줄: 00007\n원본 **문자**');
+  assert.equal(next.text,'문서명: **둘째**\n\n승인: true / 금액: 10 / 번호: 00007\n추가 **본문**\n줄: 00007\n원본 **문자**');
   assert.deepEqual(app.get('/api/workbench/source',new URLSearchParams({session:restored.session}))!.body,source);
   wrong(()=>post(app,restored.session,'generate',{...state,edits:[...state.edits,{id:state.blocks[0]!.from,text:'overlap'}]}),'WORKBENCH_OVERLAP');
   wrong(()=>output(app,restored.session),'WORKBENCH_RESULT');
@@ -235,7 +235,7 @@ test('linked workspace: changed range paragraph count remaps bold outside and bo
 test('linked workspace TXT: BOM/CRLF and unchanged markup survive no-op and data-only generation; invalidation removes download',()=>{
   const source=Buffer.from('\ufeff원본 **문자**\r\n\r\n값: {{zero}}\r\n'),app=api();
   const opened=app.post('/api/workbench/open',{name:'synthetic.txt',content:source.toString('base64')}) as Open;
-  post(app,opened.session,'generate',{...blank(),edits:opened.paragraphs.map(r=>({id:r.id,text:r.text}))});
+  post(app,opened.session,'generate',{...blank(),missing:'keep',edits:opened.paragraphs.map(r=>({id:r.id,text:r.text}))});
   assert.deepEqual(Buffer.from(output(app,opened.session)),source);
   post(app,opened.session,'data',{name:'data.json',content:'{"zero":0}'});
   post(app,opened.session,'generate',blank());
@@ -357,7 +357,7 @@ test('linked workspace template: preserves source keys/fields, remaps bold block
   assert.deepEqual(fields.map(f=>f.name),['new','block','new']);assert.equal(fields.at(-1)!.path[0],5);
   assert(texts(result).map(s=>s.replaceAll('\uFFFC','')).includes('바뀐 앞 {{old}} 뒤 {{new}}'));
   assert.equal(compareToBaseline(validateDocument(source),validateDocument(result)).newErrors.length,0);
-  const saved=post(app,opened.session,'save',state) as any;assert.deepEqual(output(app,opened.session),result);
+  const saved=post(app,opened.session,'save',{...state,missing:'keep'}) as any;assert.deepEqual(output(app,opened.session),result);
   wrong(()=>app.post('/api/workbench/restore',{workspace:{...JSON.parse(saved.workspace),edits:[{id:'p:99:99',text:'{{new}}'}]}}),'WORKBENCH_POSITION');
   wrong(()=>post(app,opened.session,'template',{...blank(),edits:[{id:row(opened,'KEEP {{old}}').id,text:'앞 {{old}} 뒤'}]}),'WORKBENCH_NO_NEW_FIELDS');
   wrong(()=>output(app,opened.session),'WORKBENCH_RESULT');
@@ -379,22 +379,22 @@ test('linked workspace TXT: no-data edits and blocks keep keys; later data fills
   const source=Buffer.from('\ufeff원본 **문자**\r\n값: {{value}}\r\n블록 시작\r\n블록 끝\r\n고정 {{flag}}\r\n'),app=api();
   const opened=app.post('/api/workbench/open',{name:'synthetic.txt',content:source.toString('base64')}) as Open;
   const state={...blank(),edits:[{id:row(opened,'값: {{value}}').id,text:'수정 **{{value}}**'}],blocks:[{id:'txt-block',alias:'본문',from:row(opened,'블록 시작').id,to:row(opened,'블록 끝').id,text:'번호 {{id}}\n확인 {{flag}}'}]};
-  const made=post(app,opened.session,'generate',state) as any;
+  wrong(()=>post(app,opened.session,'generate',state),'WORKBENCH_UNLINKED');
+  const made=post(app,opened.session,'generate',{...state,missing:'keep'}) as any;
   assert.equal(made.template,true);assert.equal(made.unresolved,4);assert.equal(made.filled,0);assert.equal(made.changed,2);
-  const expected='\ufeff원본 **문자**\r\n수정 {{value}}\r\n번호 {{id}}\n확인 {{flag}}\r\n고정 {{flag}}\r\n';
+  const expected='\ufeff원본 **문자**\r\n수정 **{{value}}**\r\n번호 {{id}}\n확인 {{flag}}\r\n고정 {{flag}}\r\n';
   assert.equal(made.text,expected);assert.deepEqual(Buffer.from(output(app,opened.session)),Buffer.from(expected));
-  const saved=post(app,opened.session,'save',state) as any;
+  const saved=post(app,opened.session,'save',{...state,missing:'keep'}) as any;
   const restored=app.post('/api/workbench/restore',{workspace:saved.workspace}) as Open;
-  assert.equal((post(app,restored.session,'generate',state) as any).unresolved,4);
+  assert.equal((post(app,restored.session,'generate',{...state,missing:'keep'}) as any).unresolved,4);
   post(app,restored.session,'data',{name:'data.json',content:JSON.stringify({value:'**literal** {{unparsed}}',id:'00001',flag:false})});
   const filled=post(app,restored.session,'generate',state) as any;
   assert.equal(filled.template,undefined);assert.equal(filled.unresolved,undefined);assert.equal(filled.filled,4);
-  assert.equal(filled.text,'\ufeff원본 **문자**\r\n수정 **literal** {{unparsed}}\r\n번호 00001\n확인 false\r\n고정 false\r\n');
+  assert.equal(filled.text,'\ufeff원본 **문자**\r\n수정 ****literal** {{unparsed}}**\r\n번호 00001\n확인 false\r\n고정 false\r\n');
   post(app,restored.session,'data',{name:'missing.json',content:'{"value":0,"flag":false}'});
-  assert.throws(()=>post(app,restored.session,'generate',state),(e:any)=>/id/.test(e.message)&&!e.message.includes('00001'));
+  assert.throws(()=>post(app,restored.session,'generate',state),(e:any)=>/1곳/.test(e.message)&&!e.message.includes('00001'));
   wrong(()=>output(app,restored.session),'WORKBENCH_RESULT');
-  wrong(()=>post(app,opened.session,'generate',{...blank(),edits:[{id:row(opened,'값: {{value}}').id,text:'{{invalid name}}'}]}),'WORKBENCH_FIELD_NAME');
-  wrong(()=>output(app,opened.session),'WORKBENCH_RESULT');
+  assert.match((post(app,opened.session,'generate',{...blank(),missing:'keep',edits:[{id:row(opened,'값: {{value}}').id,text:'{{invalid name}}'}]}) as any).text,/\{\{invalid name\}\}/);
   const plain=app.post('/api/workbench/open',{name:'plain.txt',content:Buffer.from('원본').toString('base64')}) as Open;
   const done=post(app,plain.session,'generate',{...blank(),edits:[{id:plain.paragraphs[0]!.id,text:'수정'}]}) as any;
   assert.equal(done.template,undefined);assert.equal(done.text,'수정');assert.equal(done.filled,0);
