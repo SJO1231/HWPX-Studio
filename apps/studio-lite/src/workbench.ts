@@ -24,7 +24,7 @@ type Heading = { id: string; level: 1 | 2 };
 type Block = { id: string; from: string; to: string; text: string; alias: string };
 type Placement = {id:string;version:number;from:string;to:string};
 type Work = { edits: Edit[]; headings: Heading[]; blocks: Block[]; placements: Placement[]; index: number; missing: "error" | "keep" };
-type Session = { workspaceId?: string; kind: 'hwpx' | 'text'; name: string; source: Uint8Array; doc?: HwpxDocument; sourceText?: string; rows: Row[]; data?: QuickData; dataContent?: string; output?: Uint8Array; blockPreviews?: Map<string, BlockDraft> };
+type Session = { workspaceId?: string; kind: 'hwpx' | 'text'; name: string; source: Uint8Array; doc?: HwpxDocument; sourceText?: string; rows: Row[]; data?: QuickData; dataContent?: string; output?: Uint8Array; blockPreviews?: Map<string, BlockDraft>; pins?: Set<string> };
 const rowId = (section: number, path: number[]) => `p:${section}:${path.join('.')}`;
 const sameParent = (a: Row, b: Row) => a.sectionIndex === b.sectionIndex && a.path.length === b.path.length && a.path.slice(0, -1).every((n, i) => n === b.path[i]);
 const contains = (a: Row, b: Row, row: Row) => sameParent(a, row) && row.path.at(-1)! >= a.path.at(-1)! && row.path.at(-1)! <= b.path.at(-1)!;
@@ -307,6 +307,8 @@ export function createWorkbench(library?: BlockLibrary) {
     return {session,kind:s.kind,name:s.name,sourceUrl:`/api/workbench/source?session=${session}`,...(s.sourceText===undefined?{}:{sourceText:s.sourceText}),paragraphs:s.rows,fields,outline,blockCandidates};
   };
   return {
+    // Unsaved placements exist only here; block deletion must see every open session.
+    inUse(protoId: string): boolean { return [...sessions.values()].some(s => s.pins?.has(protoId)); },
     get(path: string, query: URLSearchParams): { body: Uint8Array; name?: string; type?: string } | undefined {
       if (path !== '/api/workbench/source' && path !== '/api/workbench/result') return;
       const s = sessionOf(query.get('session'));
@@ -331,8 +333,10 @@ export function createWorkbench(library?: BlockLibrary) {
           need(raw.workspaceId===undefined||typeof raw.workspaceId==='string'&&/^[0-9a-f-]{36}$/.test(raw.workspaceId),'WORKBENCH_WORKSPACE');
           s.workspaceId=raw.workspaceId as string|undefined;
           const work = workOf(s, raw);
-          for(const p of work.placements){need(library,'BLOCK_STORE');p.id=library.material(p.id,p.version).proto.id;}
-          return { ...registered(s), ...work, placementNames:Object.fromEntries(work.placements.map(p=>{need(library,'BLOCK_STORE');return [p.id,library.material(p.id,p.version).item.name];})), placementWarnings:Object.fromEntries(work.placements.map(p=>{need(library,'BLOCK_STORE');return [p.id+':'+p.from,placementInfo(s,p,library).warnings];})), dataInfo: dataInfo(s) };
+          // A saved work may outlive a deleted block: open it without that placement and say so.
+          const missing=work.placements.filter(p=>{need(library,'BLOCK_STORE');try{p.id=library.material(p.id,p.version).proto.id;return false;}catch(e){if(e instanceof HostError&&e.code==='BLOCK_NOT_FOUND')return true;throw e;}});
+          work.placements=work.placements.filter(p=>!missing.includes(p));s.pins=new Set(work.placements.map(p=>p.id));
+          return { ...registered(s), ...work, ...(missing.length?{notice:`저장소에서 지워진 블록 ${missing.length}개의 배치를 빼고 열었습니다. 그 범위는 원문 그대로입니다.`}:{}), placementNames:Object.fromEntries(work.placements.map(p=>{need(library,'BLOCK_STORE');return [p.id,library.material(p.id,p.version).item.name];})), placementWarnings:Object.fromEntries(work.placements.map(p=>{need(library,'BLOCK_STORE');return [p.id+':'+p.from,placementInfo(s,p,library).warnings];})), dataInfo: dataInfo(s) };
         }
         const s = sessionOf(input.session);
         if (path === '/api/workbench/block-preview') {
@@ -362,7 +366,15 @@ export function createWorkbench(library?: BlockLibrary) {
           if (!draft) return fail('BLOCK_PREVIEW', '선택 범위를 다시 확인한 뒤 저장하세요.');
           return library.save(draft, input.name);
         }
-        if (path === '/api/workbench/invalidate') { delete s.output; return { invalidated: true }; }
+        if (path === '/api/workbench/invalidate') {
+          delete s.output;
+          if (input.placements !== undefined) {
+            const list = input.placements as { id: string }[];
+            need(Array.isArray(list) && list.length <= 100 && list.every(p => isObj(p) && typeof p.id === 'string'));
+            s.pins = new Set(list.map(p => { need(library, 'BLOCK_STORE'); return library.get(p.id).protoId; }));
+          }
+          return { invalidated: true };
+        }
         if (path === '/api/workbench/select') {
           if (input.id !== undefined) {
             const row = s.rows.find(r => r.id === input.id); need(row, 'WORKBENCH_POSITION');
@@ -389,6 +401,7 @@ export function createWorkbench(library?: BlockLibrary) {
           if (makeTemplate && s.kind !== 'hwpx') return fail('WORKBENCH_TEMPLATE_HWPX', '실제 누름틀은 HWPX 문서에서 만들 수 있습니다. TXT에서는 {{키}}를 그대로 사용하세요.');
           const work = workOf(s, input);
           for(const p of work.placements){need(library,'BLOCK_STORE');p.id=library.material(p.id,p.version).proto.id;}
+          s.pins=new Set(work.placements.map(p=>p.id));
           if (path.endsWith('/save')) {
             library?.saveWorkspace(s.workspaceId!,s.name,work.placements);
             return { name: `${sanitizeFileStem(s.name.replace(/\.txt$/i, ''))}.workspace.json`, workspace: JSON.stringify({ schema, workspaceId:s.workspaceId, kind: s.kind, name: s.name, source: Buffer.from(s.source).toString('base64'), sha256: hash(s.source), ...(s.dataContent === undefined ? {} : { data: s.dataContent }), ...work }) };

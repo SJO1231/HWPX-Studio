@@ -71,6 +71,7 @@ export function installBlockLibrary({selection, session, api, status, beforeOpen
       if(usage.usages.some(u=>u.kind==='workspace'))group.append(element('p','저장한 작업을 다시 열어 배치를 취소한 뒤 다시 저장하면 사용 연결이 해제됩니다.','muted'));
       const current=currentUsage?.(item);
       if(current)group.append(element('p',current));
+      else if(usage.openPlacement)group.append(element('p','열린 작업에서 저장 전 배치 중입니다. 그 작업에서 배치를 취소한 뒤 다시 확인하세요. 그 창을 이미 닫았다면 앱을 다시 시작하면 풀립니다.'));
       const remove=button('삭제',async()=>{
         if(busy)return;
         if(currentUsage?.(item)){note.textContent=currentUsage(item);return;}
@@ -79,7 +80,7 @@ export function installBlockLibrary({selection, session, api, status, beforeOpen
         busy=true;remove.disabled=true;
         try{await get('/api/block/delete',{id:item.id,confirmed:true});dispose(container);for(const box of container.querySelectorAll('.block-preview'))box.remove();group.replaceChildren(element('p','블록을 삭제했습니다.'));document.dispatchEvent(new Event('block-library-change'));if(container===body)await showList();else container.closest('#detail-content')?.querySelector('#detail-excerpt')?.replaceChildren();}
         catch(e){note.textContent=e.message;}finally{busy=false;refresh();}
-      });remove.disabled=Boolean(usage.usages.length||current);remove.title=remove.disabled?'사용 중인 블록입니다. 표시된 사용처에서 연결을 먼저 해제하세요.':'';group.append(remove);
+      });remove.disabled=Boolean(usage.usages.length||current||usage.openPlacement);remove.title=remove.disabled?'사용 중인 블록입니다. 표시된 사용처에서 연결을 먼저 해제하세요.':'';group.append(remove);
     }catch(e){note.textContent='사용처 확인에 실패해 삭제를 막았습니다. '+e.message;}
   }
   async function showItem(id) {
