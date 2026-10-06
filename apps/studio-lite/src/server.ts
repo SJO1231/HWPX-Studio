@@ -1,10 +1,11 @@
 import { createServer } from 'node:http';
 import { stripTypeScriptTypes } from 'node:module';
-import { cleanPath, resolveShared, HostError } from '../../../packages/viewer/src/host/index.ts';
+import { cleanPath, resolveShared, HostError, previewBlock } from '../../../packages/viewer/src/host/index.ts';
 import { createQuick } from './quick-api.ts';
 import { createWorkbench } from './workbench.ts';
 import { createBlockLibrary } from './block-library.ts';
 import { plainOf } from './quick-messages.ts';
+import { plainOf as blockMessage } from '../../studio/src/messages.ts';
 import { DatabaseSync } from 'node:sqlite';
 import { readFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -38,6 +39,11 @@ export function createApp(database=':memory:') {
       if(req.method==='GET') {
         const result=workbench.get(path,url.searchParams)??quick.get(path,url.searchParams);
         if(result)return send(200,result.body,'type' in result && typeof result.type==='string'?result.type:'application/vnd.hancom.hwpx',result.name?{'Content-Disposition':`attachment; filename="document.hwpx"; filename*=UTF-8''${encodeURIComponent(result.name)}`}:{});
+        if(path==='/api/block/preview') {
+          const item=blockLibrary.get(url.searchParams.get('id'));
+          const preview=previewBlock({block:item.id},id=>blockLibrary.material(id,item.version));
+          return send(200,{...preview,warnings:preview.warnings.map(w=>({...w,message:blockMessage(w.code)}))});
+        }
         if(path==='/api/blocks')return send(200,{blocks:blockLibrary.list(url.searchParams.get('q')??'')});
         if(path==='/api/block/usage')return send(200,blockLibrary.usage(url.searchParams.get('id')));
         if(path==='/api/block')return send(200,blockLibrary.get(url.searchParams.get('id')));

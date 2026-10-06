@@ -30,3 +30,5 @@ body.text-work.show-text-preview .original-pane{display:none}body.text-work.show
 .txt-missing{display:none}body.text-work .txt-missing{display:block}body.text-work [data-action=anchor],body.text-work #make-template{display:none}body.text-work.show-comparison .original-pane{display:flex}body.text-work.show-comparison .editor-pane{display:none}
 
 #library-search{width:100%;margin:8px 0}.block-management{border-top:1px solid var(--line);padding-top:12px;margin-top:12px}.block-management input{width:100%;max-width:450px;margin:8px 0}.block-management button{margin:4px 8px 4px 0}.block-management p{font-size:12px;overflow-wrap:anywhere}
+
+.block-preview{min-width:0}.block-preview-pages{max-height:430px;overflow:auto;background:var(--wash);padding:10px 0;margin:8px 0}.block-preview-pages .page{margin-bottom:10px}.block-preview-pages .mark-input{background:#e6b80035;border:1px solid #9e7c18}#detail-library-tools .block-preview-pages{max-height:280px}.block-preview>p{font-size:12px}

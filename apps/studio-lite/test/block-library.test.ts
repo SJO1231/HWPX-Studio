@@ -143,3 +143,21 @@ test('saved workspaces normalize legacy UUID pins to proto IDs and only their ow
  const restored=app.post('/api/workbench/restore',{workspace:saved.workspace}) as any;app.post('/api/workbench/save',{...work,session:restored.session,placements:[]});assert.equal(lib.usage(stored.id).usages.length,1);assert.throws(()=>lib.remove(stored.id,true),/사용 중/);
  }finally{db.close();}
 });
+
+
+test('stored block preview HTTP uses viewer host bytes/marks, keeps source/proto intact and rejects unknown blocks',async()=>{
+ const server=createApp();await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
+ const base='http://127.0.0.1:'+(server.address() as any).port;
+ try {
+ const post=async(path:string,input:unknown)=>{const r=await fetch(base+'/api/workbench/'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)});assert.equal(r.status,200);return r.json() as Promise<any>;};
+ const source=readFileSync(new URL('../../../examples/quick/template-braces.hwpx',import.meta.url)),opened=await post('open',{name:'example.hwpx',content:content(source)});
+ const selected=opened.paragraphs.find((p:any)=>p.text.includes('신청인:'));
+ const draft=await post('block-preview',{session:opened.session,from:selected.id,to:selected.id}),stored=await post('block-save',{session:opened.session,previewId:draft.id,name:'예시 입력 블록'});
+ const response=await fetch(base+'/api/block/preview?id='+stored.id);assert.equal(response.status,200);const preview=await response.json() as any;
+ assert(preview.fields.some((f:any)=>f.name==='성명'));assert(preview.places.some((p:any)=>p.marks.length));
+ const doc=parseDocument(openPackage(Buffer.from(preview.hwpx,'base64')));assert(doc.sections.some(s=>s.paragraphs.some(p=>p.logicalText.includes('{{성명}}'))));
+ const again=await(await fetch(base+'/api/block/preview?id='+stored.id)).json() as any;assert.equal(again.hwpx,preview.hwpx);
+ assert.deepEqual(Buffer.from(await(await fetch(base+opened.sourceUrl)).arrayBuffer()),source);
+ assert.equal((await fetch(base+'/api/block/preview?id=missing')).status,404);
+ }finally{await new Promise<void>(r=>server.close(()=>r()));}
+});
