@@ -21,7 +21,7 @@ function siblingPaths(a: number[], b: number[]): boolean {
  * `type`은 `fieldTypeOf`로 정한 종류다(`CLICK_HERE`·`MAILMERGE`·`HYPERLINK`는 대소문자 무시, type 속성이 없거나 비면 `UNKNOWN`).
  * 메일 머지 필드(`MAILMERGE`)는 `name`이 비어 있어 `mergeKey`(키)를 함께 돌려주고, 순번은 같은 키 안에서 센다.
  */
-export function listFields(doc: HwpxDocument): FieldInfo[] {
+export function listFields(doc: Pick<HwpxDocument, "sections">): FieldInfo[] {
   // 표식을 문서 순서로 훑으며 end를 그것이 가리키는 열린 begin과 짝짓는다.
   // 같은 id의 begin이 이미 열려 있으면 앞의 것은 짝 없음으로 남는다.
   const open = new Map<string, Pair>();

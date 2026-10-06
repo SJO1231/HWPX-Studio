@@ -36,7 +36,7 @@ export function fieldAnchorMatches(anchor: FieldAnchor, info: FieldInfo): boolea
 }
 
 /** 문서의 필드를 `listFields`의 순서와 이름·순번 그대로, 표식과 함께 모은다. */
-export function collectFields(doc: HwpxDocument): FieldTarget[] {
+export function collectFields(doc: Pick<HwpxDocument, "sections">): FieldTarget[] {
   const perParagraph = new Map<string, number>();
   const out: FieldTarget[] = [];
   for (const info of listFields(doc)) {
