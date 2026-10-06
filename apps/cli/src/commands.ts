@@ -1,15 +1,18 @@
-import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, rmSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { flag, intValue, need, parse, parseAddress, str, type Parsed } from "./args.ts";
 import {
   HwpxError,
+  blockFragment,
   censusOfDoc,
   compareToBaseline,
   compileDocument,
   detectHeadings,
   emptyTemplate,
   exportModel,
+  extractBlock,
   extractFragment,
   findCandidates,
   findPlaceholders,
@@ -20,14 +23,17 @@ import {
   generateText,
   listFields,
   listTables,
+  makeHeadingRangeAnchor,
   makeLineAnchor,
   makeRangeAnchor,
   openPackage,
   parseDocument,
   parseText,
   planBatchNames,
+  planBlockInsert,
   readArchive,
   readBatchRecords,
+  readBlockProto,
   readCase,
   readDataset,
   readEntry,
@@ -36,8 +42,11 @@ import {
   serializeFragment,
   validateDocument,
   walkParagraphs,
+  writeBlockProto,
   type BatchItem,
   type BatchRecord,
+  type BlockFormatDiff,
+  type BlockProto,
   type FillReport,
   type GateMode,
   type GenerateResult,
@@ -407,6 +416,220 @@ export function fragmentCommand(args: string[], out: Out): Promise<number> | num
   throw new UsageError("사용법: hwpx fragment extract|import ... (hwpx --help 참고)");
 }
 
+// ── block ───────────────────────────────────────────────────────
+// 파일 저장소(엔진 명세 8.8.17): <저장소>/blocks/<블록 id>/block.json(그 블록의 최신 판 block-proto@1, 정규 JSON)과
+// <저장소>/blocks/<블록 id>/<sha256>.json(조각 덩어리, 이름 = 바이트의 sha256). 이 폴더는 fill --blobs 폴더로도 쓸 수 있다. SQLite 저장은 앱(Codex) 몫이다.
+
+const BLOCK_ID = /^k[0-9a-f]{8}$/;
+
+/** `--store` 폴더(이미 있어야 한다) */
+function storeOf(p: Parsed, usage: string): string {
+  const store = need(p, "store", usage);
+  if (!(existsSync(resolve(store)) && statSync(resolve(store)).isDirectory())) throw new UsageError(`--store 폴더가 없습니다: ${store}`);
+  return store;
+}
+
+/** `--heading 구역:문단` → 구역 번호와 제목 문단 번호 */
+function headingArg(text: string): { sectionIndex: number; index: number } {
+  const m = /^(\d+):(\d+)$/.exec(text);
+  if (m === null) throw new UsageError(`--heading은 구역:문단 꼴(0부터 세는 번호)이어야 합니다(예: 0:17): ${text}`);
+  return { sectionIndex: Number(m[1]), index: Number(m[2]) };
+}
+
+function blockExtract(args: string[], out: Out): number {
+  const usage = "hwpx block extract <파일> (--range 구역:시작-끝 | --heading 구역:문단) [--parent 주소] --name 이름 --store 폴더 [--id k+16진8자] [--note 메모]";
+  const p = parse(
+    args,
+    { range: { type: "string" }, heading: { type: "string" }, parent: { type: "string" }, name: { type: "string" }, store: { type: "string" }, id: { type: "string" }, note: { type: "string" } },
+    { min: 1, max: 1 },
+    usage,
+  );
+  const file = p.positionals[0] ?? "";
+  rejectText(file, "block extract");
+  const store = storeOf(p, usage);
+  const name = need(p, "name", usage);
+  const rangeText = str(p, "range");
+  const headingText = str(p, "heading");
+  if ((rangeText === undefined) === (headingText === undefined)) throw new UsageError(`--range와 --heading 가운데 하나를 주어야 합니다.\n사용법: ${usage}`);
+  const parent = str(p, "parent") === undefined ? [] : parseAddress(str(p, "parent") ?? "");
+  const id = str(p, "id") ?? `k${randomBytes(4).toString("hex")}`;
+  if (!BLOCK_ID.test(id)) throw new UsageError(`--id는 k와 16진 8자여야 합니다(예: k0a1b2c3d): ${id}`);
+  const dir = join(store, "blocks", id);
+  if (existsSync(dir)) throw new UsageError(`같은 id의 블록이 이미 있습니다: ${id}`);
+  const { doc } = openDocument(file);
+  let range;
+  if (rangeText !== undefined) {
+    const r = rangeArg(rangeText);
+    range = makeRangeAnchor(doc, r.sectionIndex, parent, r.from, r.to);
+    if (range === undefined) throw new UsageError(`구역 ${r.sectionIndex}의 [${parent.join(", ")}] 목록에 문단 ${r.from}~${r.to}이 없습니다.`);
+  } else {
+    const h = headingArg(headingText ?? "");
+    range = makeHeadingRangeAnchor(doc, h.sectionIndex, parent, h.index);
+    if (range === undefined) throw new UsageError(`구역 ${h.sectionIndex}의 [${parent.join(", ")}] 목록의 문단 ${h.index}이 없거나 제목이 아닙니다(hwpx headings로 확인).`);
+  }
+  let block;
+  try {
+    const note = str(p, "note");
+    block = extractBlock(doc, range, { id, name, at: new Date().toISOString(), ...(note === undefined ? {} : { note }) });
+  } catch (e) {
+    if (!(e instanceof HwpxError)) throw e;
+    if (e.code.startsWith("TPL_")) throw new UsageError(`블록 정보가 올바르지 않습니다(${e.code}: ${e.message})`);
+    out.err(`오류 [${e.code}] ${e.message}`);
+    return 1;
+  }
+  const sha = "fragment" in block.proto.content ? block.proto.content.fragment : "";
+  const blobPath = join(dir, `${sha}.json`);
+  mkdirSync(join(store, "blocks"), { recursive: true });
+  mkdirSync(dir);
+  try {
+    writeSafely(blobPath, block.blob, [file], false);
+    writeSafely(join(dir, "block.json"), writeBlockProto(block.proto), [file], false);
+  } catch (e) {
+    // 이번에 만든 것만 지운다(새로 만든 블록 폴더와 그 안에 쓴 덩어리)
+    rmSync(blobPath, { force: true });
+    rmdirSync(dir);
+    throw e;
+  }
+  out.log(`블록을 저장했습니다: ${id} (1판, 문단 ${block.fragment.census.paragraphs}개, 자원 ${block.fragment.resources.length}개, {{ }} 키 ${block.proto.keys.length}개)`);
+  printIssues(out, block.issues);
+  return 0;
+}
+
+/** 저장소의 블록 하나: 원형과 조각 덩어리(`blockFragment`로 해시를 대조한다) */
+function loadBlock(store: string, id: string): { proto: BlockProto; protoPath: string; blobPath: string; blob: Uint8Array } {
+  const protoPath = join(store, "blocks", id, "block.json");
+  if (!existsSync(protoPath)) throw new UsageError(`저장소에 블록 ${id}이(가) 없습니다.`);
+  const proto = guard(() => readBlockProto(readText(protoPath, "블록 파일")), protoPath);
+  if (!("fragment" in proto.content)) throw new InputError(`${protoPath}: 글 블록은 넣을 수 없습니다(조각 블록만).`);
+  const blobPath = join(store, "blocks", id, `${proto.content.fragment}.json`);
+  const blob = readBytes(blobPath, "조각 덩어리");
+  guard(() => blockFragment(proto, blob), blobPath);
+  return { proto, protoPath, blobPath, blob };
+}
+
+const PROPERTY_LABEL: Record<BlockFormatDiff["property"], string> = { paraPr: "문단 모양", style: "스타일" };
+
+async function blockInsert(args: string[], out: Out): Promise<number> {
+  const usage =
+    "hwpx block insert <대상> --store 폴더 --block 블록id (--section N --index I [--before] | --range 구역:시작-끝) [--parent 주소] -o 출력.hwpx [--mode baseline|strict|repair] [--report r.json] [--overwrite]";
+  const p = parse(
+    args,
+    {
+      store: { type: "string" },
+      block: { type: "string" },
+      section: { type: "string" },
+      index: { type: "string" },
+      range: { type: "string" },
+      parent: { type: "string" },
+      before: { type: "boolean" },
+      output: { type: "string", short: "o" },
+      mode: { type: "string" },
+      report: { type: "string" },
+      overwrite: { type: "boolean" },
+    },
+    { min: 1, max: 1 },
+    usage,
+  );
+  const target = p.positionals[0] ?? "";
+  rejectText(target, "block insert");
+  const store = storeOf(p, usage);
+  const id = need(p, "block", usage);
+  if (!BLOCK_ID.test(id)) throw new UsageError(`--block은 k와 16진 8자여야 합니다: ${id}`);
+  const output = need(p, "output", usage);
+  const rangeText = str(p, "range");
+  if (rangeText !== undefined && (str(p, "section") !== undefined || str(p, "index") !== undefined || flag(p, "before"))) {
+    throw new UsageError(`--range는 --section·--index·--before와 함께 쓸 수 없습니다.\n사용법: ${usage}`);
+  }
+  const range = rangeText === undefined ? undefined : rangeArg(rangeText);
+  const sectionIndex = range === undefined ? intValue(need(p, "section", usage), "section") : range.sectionIndex;
+  const index = range === undefined ? intValue(need(p, "index", usage), "index") : range.from;
+  const parent = str(p, "parent") === undefined ? [] : parseAddress(str(p, "parent") ?? "");
+  const mode = modeOf(p, usage);
+  const overwrite = flag(p, "overwrite");
+  const reportPath = str(p, "report");
+  const { proto, protoPath, blobPath, blob } = loadBlock(store, id);
+  const inputs = [target, protoPath, blobPath];
+  checkOutputPath(output, inputs, overwrite);
+  if (reportPath !== undefined) checkOutputPath(reportPath, [...inputs, output], overwrite);
+
+  const { bytes, doc } = openDocument(target);
+  let anchor;
+  if (range !== undefined) {
+    const draft = makeRangeAnchor(doc, sectionIndex, parent, range.from, range.to);
+    if (draft === undefined) throw new UsageError(`구역 ${sectionIndex}의 [${parent.join(", ")}] 목록에 문단 ${range.from}~${range.to}이 없습니다.`);
+    anchor = { id: "target", ...draft };
+  } else {
+    anchor = makeLineAnchor(doc, "target", sectionIndex, [...parent, index]);
+    if (anchor === undefined) throw new UsageError(`구역 ${sectionIndex}에 삽입 지점 문단 [${[...parent, index].join(", ")}]이 없습니다.`);
+  }
+  const position = range !== undefined ? "replace" : flag(p, "before") ? "before" : "after";
+  // 서식 비교와 계획 검사: 넣는 자리 문단(범위 교체는 범위 첫 문단)의 문단 모양·스타일을 블록 문단의 것과 견준다(자동 변경 없음)
+  let plan;
+  try {
+    plan = planBlockInsert(doc, proto, blob, { sectionIndex, parentPath: parent, index, position: position === "after" ? "after" : "before" });
+  } catch (e) {
+    if (!(e instanceof HwpxError)) throw e;
+    out.err(`오류 [${e.code}] ${e.message}`);
+    return 1;
+  }
+  for (const d of plan.formatDiffs) out.log(`서식 차이: 블록 문단 ${d.paragraph}의 ${PROPERTY_LABEL[d.property]}`);
+  printIssues(
+    out,
+    plan.issues.filter((i) => i.code === "BLOCK_FORMAT_DIFFERS"),
+  );
+  // 출력은 조각 가져오기와 같은 저장 게이트를 거친다(fragment import와 같은 경로)
+  const fragment = JSON.parse(new TextDecoder().decode(blob)) as Record<string, unknown>;
+  const template = readTemplate({
+    schema: "hwpx-studio/template@1",
+    anchors: [anchor],
+    rules: [{ id: "block", do: { type: "inject", anchor: "target", position, fragment } }],
+  });
+  const result = await runGenerate(target, bytes, template, readDataset({}), { mode, missing: "keep", dryRun: false, fragments: {}, reissueInternal: false });
+  const extra = { block: { id: proto.id, version: proto.version, formatDiffs: plan.formatDiffs } };
+  return finishGenerate(out, result, output, inputs, overwrite, reportPath, extra);
+}
+
+/** 저장소의 블록 목록(블록 id 순서). 읽을 수 없는 블록이 있으면 종료 코드 1 */
+function blockList(args: string[], out: Out): number {
+  const usage = "hwpx block list --store 폴더 [--json]";
+  const p = parse(args, { store: { type: "string" }, json: { type: "boolean" } }, { min: 0, max: 0 }, usage);
+  const store = storeOf(p, usage);
+  const root = join(store, "blocks");
+  const ids = existsSync(root) ? readdirSync(root, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort() : [];
+  const protos: BlockProto[] = [];
+  let unreadable = 0;
+  for (const id of ids) {
+    try {
+      const proto = readBlockProto(readFileSync(join(root, id, "block.json"), "utf8"));
+      if (proto.id !== id) throw new HwpxError("TPL_ID", `폴더 이름(${id})과 원형 id(${proto.id})가 다릅니다.`);
+      protos.push(proto);
+    } catch (e) {
+      unreadable++;
+      out.err(`읽을 수 없는 블록 ${id}: ${e instanceof HwpxError ? `${e.code}: ${e.message}` : e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  if (flag(p, "json")) {
+    out.log(json(protos));
+  } else {
+    for (const b of protos) {
+      const s = b.source;
+      const from = s === undefined ? "출처 없음" : `출처 ${s.sha256.slice(0, 10)} ${s.selection.sectionIndex}:${s.selection.parentPath.length === 0 ? "-" : s.selection.parentPath.join(".")}:${s.selection.from}-${s.selection.to}`;
+      const last = b.history?.[b.history.length - 1];
+      out.log(`${b.id}  ${b.version}판  ${b.name}  ${from}  ${last === undefined ? "-" : `${last.at}  ${last.change}`}`);
+    }
+    out.log(`블록 ${protos.length}개${unreadable > 0 ? `, 읽을 수 없음 ${unreadable}` : ""}`);
+  }
+  return unreadable > 0 ? 1 : 0;
+}
+
+export function blockCommand(args: string[], out: Out): Promise<number> | number {
+  const [sub, ...rest] = args;
+  if (sub === "extract") return blockExtract(rest, out);
+  if (sub === "insert") return blockInsert(rest, out);
+  if (sub === "list") return blockList(rest, out);
+  throw new UsageError("사용법: hwpx block extract|insert|list ... (hwpx --help 참고)");
+}
+
 // ── fill ────────────────────────────────────────────────────────
 
 function finishGenerate(
@@ -416,9 +639,10 @@ function finishGenerate(
   inputs: string[],
   overwrite: boolean,
   reportPath: string | undefined,
+  extra: Record<string, unknown> = {},
 ): number {
   if (reportPath !== undefined) {
-    const body = { ok: result.ok, dryRun: result.ok ? result.dryRun : false, report: result.report, ...("ledger" in result ? { ledger: result.ledger } : {}) };
+    const body = { ok: result.ok, dryRun: result.ok ? result.dryRun : false, report: result.report, ...("ledger" in result ? { ledger: result.ledger } : {}), ...extra };
     writeSafely(reportPath, json(body), inputs, overwrite);
   }
   printResult(out, result);

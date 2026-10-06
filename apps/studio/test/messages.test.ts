@@ -11,7 +11,8 @@ const ENGINE_SRC = fileURLToPath(new URL("../../../packages/hwpx-engine/src/", i
 /** 코드가 아니라 HWPX 속성 값(선 모양·줄 간격 등)이 문자열로 나오는 상수. 새 상수가 생기면 코드인지 아닌지 가려 여기나 messages.ts에 넣는다. */
 const NOT_CODES = new Set([
   "ACUTE_ACCENT", "AT_LEAST", "BETWEEN_LINES", "BREAK_WORD", "CLICK_HERE", "DASH_DOT", "DASH_DOT_DOT", "DISTRIBUTE_SPACE", "DOT_ABOVE", "DOT_BELOW",
-  "DOUBLE_SLIM", "GRAVE_ACCENT", "HOOK_ABOVE", "KEEP_WORD", "LONG_DASH", "RING_ABOVE", "SLIM_THICK", "SLIM_THICK_SLIM", "THICK_SLIM",
+  "DOUBLE_SLIM", "EACH_COLUMN", "END_OF_DOCUMENT", "GRAVE_ACCENT", "HOOK_ABOVE", "KEEP_WORD", "LEFT_ONLY", "LONG_DASH", "RING_ABOVE", "SHOW_ALL", "SLIM_THICK",
+  "SLIM_THICK_SLIM", "THICK_SLIM",
 ]);
 
 function sources(dir: string): string[] {

@@ -2,12 +2,13 @@ import { HwpxError, makeIssue, type Issue } from "../errors.ts";
 import { collectBodyRefs } from "../model/refs.ts";
 import { walkParagraphs } from "../model/paragraph.ts";
 import type { HwpxDocument, ResourceItem } from "../model/types.ts";
+import { readXmlVersion } from "../package/format-version.ts";
 import { findEntry, readEntry } from "../package/zip-read.ts";
 import { attrNode, attrValue, elIs, walkElements, type XElement } from "../xml/tree.ts";
 import { createFingerprinter, makeLookup, resourceRefs } from "./resources.ts";
 import { resolveSelection } from "./select.ts";
 import type { Fragment, FragmentBinary, FragmentDangling, FragmentRef, FragmentResource, FragmentSelection } from "./types.ts";
-import { collectPrefixes, isNoRefOf, scanInstanceAttrs, sha256Hex } from "./util.ts";
+import { collectPrefixes, collectValueNamespaces, isNoRefOf, scanInstanceAttrs, sha256Hex } from "./util.ts";
 
 const SCHEMA = "hwpx-studio/fragment@1";
 
@@ -164,6 +165,7 @@ export function extractFragment(doc: HwpxDocument, selection: FragmentSelection)
   const headerText = doc.header.text;
   const resources: FragmentResource[] = order.map((item) => {
     const resourcePrefixes = collectPrefixes(walkElements(item.element), item.element.start);
+    const valueNamespaces = collectValueNamespaces(walkElements(item.element), item.element.start);
     const el = item.element;
     const idAttr = attrNode(el, "id");
     if (idAttr === undefined) throw new HwpxError("FRAG_SCHEMA", `자원 ${item.kind} ${item.id}에 id 속성이 없습니다.`, headerEntry);
@@ -186,6 +188,7 @@ export function extractFragment(doc: HwpxDocument, selection: FragmentSelection)
       ...resourcePrefixes,
     };
     if (item.lang !== undefined) res.lang = item.lang;
+    if (Object.keys(valueNamespaces).length > 0) res.valueNamespaces = valueNamespaces;
     const nameAttr = item.kind === "style" ? attrNode(el, "name") : undefined;
     if (nameAttr !== undefined) res.nameSpan = { start: rel(nameAttr.valueStart), end: rel(nameAttr.valueEnd) };
     return res;
@@ -210,11 +213,13 @@ export function extractFragment(doc: HwpxDocument, selection: FragmentSelection)
   );
 
   const bodyPrefixes = collectPrefixes(elements, base);
+  const xmlVersion = readXmlVersion(doc.pkg);
   return {
     schema: SCHEMA,
     source: {
       sha256: sha256Hex(doc.pkg.bytes),
       selection: { ...selection, parentPath: [...selection.parentPath] },
+      ...(xmlVersion === undefined ? {} : { xmlVersion }),
     },
     xml,
     ...bodyPrefixes,
