@@ -1,5 +1,5 @@
 // Store engine fragments and confirm placement before changing the generated result.
-export function installBlockLibrary({selection, session, api, status, beforeOpen, previewPlacement}) {
+export function installBlockLibrary({selection, session, api, status, beforeOpen, previewPlacement, onSaved}) {
   const $ = s => document.querySelector(s), dialog = $('#block-library-dialog');
   const body = $('#block-library-body'), title = $('#block-library-title');
   let busy = false, draft, savedFocus;
@@ -13,7 +13,7 @@ export function installBlockLibrary({selection, session, api, status, beforeOpen
     if (!dialog.open) { savedFocus = document.activeElement; dialog.showModal(); }
     body.replaceChildren();
   }
-  function close() { if (busy) return; dialog.close(); draft = undefined; savedFocus?.focus({preventScroll: true}); }
+  function close() { if (busy) return; dialog.close(); draft = undefined; savedFocus?.focus({preventScroll: true}); refresh(); }
   $('#block-library-close').addEventListener('click', close);
   dialog.addEventListener('cancel', e => { e.preventDefault(); close(); });
   function details(item) {
@@ -50,7 +50,7 @@ export function installBlockLibrary({selection, session, api, status, beforeOpen
       }
 
     } catch (e) { status(e.message, 'error'); }
-    finally { busy = false; }
+    finally { busy = false; refresh(); }
   }
   async function showList() {
     busy = true;
@@ -68,7 +68,7 @@ export function installBlockLibrary({selection, session, api, status, beforeOpen
       }
       const scroll = element('div', undefined, 'block-list-scroll'); scroll.append(table); body.append(scroll);
     } catch (e) { status(e.message, 'error'); }
-    finally { busy = false; }
+    finally { busy = false; refresh(); }
   }
   async function begin() {
     if (busy) return;
@@ -91,20 +91,21 @@ export function installBlockLibrary({selection, session, api, status, beforeOpen
         try {
           if (draft.session !== session()) throw Error('문서가 바뀌었습니다. 범위를 다시 선택하세요.');
           await api('block-save', {session: draft.session, previewId: draft.id, name: input.value});
-          draft = undefined; await showList(); status('블록을 저장했습니다. 저장소 목록에서 확인하세요.', 'success');
+          draft = undefined; onSaved?.(); await showList(); status('블록을 저장했습니다. 저장소 목록에서 확인하세요.', 'success');
         } catch (e) { error.textContent = e.message; }
-        finally { busy = false; save.disabled = false; $('#block-library-close').disabled = false; }
+        finally { busy = false; save.disabled = false; $('#block-library-close').disabled = false; refresh(); }
       });
       save.className = 'primary'; body.append(save); input.focus(); input.select();
     } catch (e) { status(e.message, 'error'); }
-    finally { busy = false; }
+    finally { busy = false; refresh(); }
   }
   $('#open-block-library').addEventListener('click', showList);
   $('#save-source-block').addEventListener('click', begin);
-  return {begin, refresh() {
+  function refresh() {
     let reason = ''; try { selection(); } catch (e) { reason = e.message; }
     for (const el of document.querySelectorAll('#save-source-block,[data-action="saveBlock"]')) {
       el.disabled = Boolean(reason) || busy; el.title = reason || '선택한 문단 전체를 확인한 뒤 저장합니다.';
     }
-  }};
+  }
+  return {begin, refresh};
 }
