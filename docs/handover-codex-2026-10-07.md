@@ -1,16 +1,88 @@
 # Codex 인수 상태 보고 (2026-10-07)
 
-> 읽기 전용 조사, 과거 자료 기준, 승인된 사양 아님.
+> 재개할 때는 **0절의 최신 인계**부터 읽는다. 1~4절은 최초 조사 당시의 기록이며 승인된 사양이 아니다. 상태·우선순위가 다르면 최신 사용자 결정과 원격 이슈·PR을 다시 대조한다.
 
 - 이 문서가 소유하는 주제: Codex 인수인계 자료(인수인계 폴더·task-10)를 2026-10-07 main과 대조한 결과. 사용자 결정은 [요구 문서](../apps/studio-lite/docs/user-requirements.md) 8절, 계약은 [엔진 명세](engine-spec.md)·[스튜디오 명세](studio-spec.md), 검증 결과는 [검증 기준](validation.md)이 정본이다. 이 문서는 그 정본을 대신하지 않는다.
 - task-10 기준표(`comparison-baseline.md`)는 독립 검토가 끝나지 않았다. 3절은 현재 main과 대조한 **재판정**일 뿐이며 기준표 검토의 완료가 아니다.
-- 작성 뒤 변화: PR #114(#99 D3·D5·D8)가 합쳐졌다(`363a090`). 아래 본문은 조사 시점(`a4f43e6`)의 내용 그대로다.
+- 최초 조사 뒤 첫 보충: PR #114(#99 D3·D5·D8)가 합쳐졌다(`363a090`). 이후 변화는 0절에 모았고 1~4절 본문은 조사 시점(`a4f43e6`) 그대로다.
 
-기준: 로컬 main = origin/main = `a4f43e6`(깨끗함). 조사 중에는 파일을 쓰지 않았다(task-10 사본은 `git -c safe.directory=… --no-optional-locks`로만 읽었고 설정은 바꾸지 않았다). 실제 문서 이름·본문·개인 경로는 적지 않는다.
+최초 조사 기준: 로컬 main = origin/main = `a4f43e6`(깨끗함). 조사 중에는 파일을 쓰지 않았다(task-10 사본은 `git -c safe.directory=… --no-optional-locks`로만 읽었고 설정은 바꾸지 않았다). 실제 문서 이름·본문·개인 경로는 적지 않는다.
 기준표 시점(`06a2795`) 이후 합쳐진 것: #105(lite 블록 미리보기 화면 연결), #110(Claude 전담 기록), #113(#103 secPr 검사), #108(기록). 조사 시점에 열려 있던 것: **PR #114**(#99 D3·D5·D8). 새로 생긴 이슈: #111·#112·#115.
-정리할 것:
+최초 조사 당시 정리할 것(아래 항목은 현재 처리됨):
 - 합쳐졌는데도 이슈 #69·#73·#103이 열려 있다.
 - 검증 기준 32절은 조사 시점 main에 없고 PR #114 안에만 있었다.
+
+## 0. Claude에게 넘기는 최신 상태와 Codex 재개점 (2026-10-07, #141)
+
+사용자 요청으로 기존 인수 기록의 빠진 운영 상태를 보완했다. 이번 작업은 문서 인계만이며 제품 개발 재개·예약 재가동·PR 병합 승인이 아니다. Claude 전담 결정([AGENTS.md](../AGENTS.md), #109·PR #110)은 유지한다. 나중에 Codex가 맡게 되면 당시 사용자 지정 범위부터 확인한다.
+
+### 기준과 이미 끝난 일
+
+- 확인한 원격 `main`: `f6115c8a5b5456d98caea6ac877fa75be01a72bc`. 이 커밋의 [CI verify](https://github.com/SJO1231/HWPX-Studio/actions/runs/37498053470/job/112387583183)는 SUCCESS. 이번 인계에서 새로 실행한 제품 시험 수치는 아니다.
+- Codex의 마지막 작업 가지는 `issue-94-block-library-management` / `dae44a8`. 추적 파일 수정은 없고 미추적 `.playwright-cli/`, `tools/com/__pycache__/`만 있었다. 이는 현재 main이 아니다. 이 가지를 이어서 개발하거나 main 위에 다시 덮지 않는다.
+- 이번 문서는 위 main에서 별도 `issue-141-handoff-refresh` 가지로 작성한다. 기존 작업창·다른 담당자의 가지·DB·시험 파일은 그대로 두었다. 개인 절대 경로 대신 `git worktree list`로 위치를 찾는다. 복구용 Lite 사본과 삭제된 `studio-lite` 가지 안내는 개발 기준으로 쓰지 않는다.
+- Codex 예약 `hwpx-7`은 PAUSED, 2026-10-06 정오 종료 상태를 확인했다. 그 프롬프트의 “#104·#105 OPEN, main 합치기 대기”는 **만료된 기록**이다. 이번에 다시 켜지 않았다. 인계 확인 때 4318·4345에는 리스너가 없었으며 서버를 시작·종료하지 않았다.
+
+| 작업 | 원격 확인 상태 | 이어받을 때의 의미 |
+| --- | --- | --- |
+| 배치 A #60 / PR #90, 후보 #78 / PR #95, 세션 #59 / PR #97, TXT #93 / PR #98 | 모두 MERGED | 재구현하지 않는다. 이슈가 OPEN이어도 이 PR의 구현이 안 됐다는 뜻은 아니다 |
+| 다른 문서 배치 #71 / PR #102 | MERGED (`1ab1630`) | #73·#74를 기다리던 넣기는 이미 구현됨. 분기점/경우까지 완성됐다는 뜻은 아님 |
+| 저장소 관리 #94 / PR #104 | MERGED (`06a2795`), PR CI 2/2 SUCCESS | 이름·검색·판·삭제 보호 기반 완료. #104 main 합치기 대기는 종료 |
+| 단독 미리보기 #75 / PR #105 | MERGED (`3d14577`), PR CI 2/2 SUCCESS | Claude가 인수해 충돌을 풀었음. #105를 옛 가지에서 다시 합칠 작업 없음. K4 재편집은 #120, 전파는 #119로 남음 |
+| #111 / PR #116, #112 / PR #137 | MERGED (`114e12e`, `56c66d3`) | 저장 전 배치 API 삭제 보호와 옛 SQLite 행의 엔진 키 규칙 이관까지 반영. 옛 앱 자체 원형 계산을 복원하지 않음 |
+| #24 / PR #43 | MERGED (`f6115c8`) | 메일머지 표시 글 구간·자리 중복 집계·추천 목록 반영. 2절의 “서버 fields를 안 씀”, “PR #43 인수 대기”는 과거 상태 |
+| #103 / PR #113, #99 / PR #114 | MERGED | #69·#73·#103은 CLOSED 확인. #99는 D6 결정이 남아 OPEN; 전체 해결로 닫지 않음 |
+
+열린 PR은 확인 시점 #28·#42·#44·#65(옛 초안)와 #140(작업 기록 25회차)다. 초안은 통째로 합치지 말고 현재 계약과 diff를 대조한다. 특히 #65는 사용자가 요구와 다르다고 합치지 말라고 한 시안이다. 이번 인계에서는 닫거나 상태를 바꾸지 않았다. #140은 다른 담당자가 기록 중이므로 `task-record.md`에 같은 인계 내용을 덧붙이지 않았다.
+
+### 놓치면 안 되는 잔여·정정
+
+| 항목 | 현재 넘길 내용 |
+| --- | --- |
+| 미연결/미채움 | **2절 §6.2의 차단 구현을 모든 자리에 대한 보장으로 읽지 않는다.** #126: 작업창·`/quick`에서 혼합 서식·규칙 밖 키 등의 잔류 자리가 성공 결과에 남는 결함이 OPEN이다. #134는 등록 안 된 누름틀·메일머지 키의 사전 알림. `WORKBENCH_UNLINKED`가 있다는 사실만으로 두 이슈를 완료 처리하지 않는다 |
+| 저장소 ID·삭제 | SQLite 행 ID, `k`+16진 8자의 원형 ID, 판 번호를 구별한다. 저장 작업의 고정 참조·template proto 사용처와 열린 세션의 배치 보호는 별개다. #125: 닫은 창의 배치 기억과 다른 탭 목록 갱신이 남음. #123: `quick-messages`의 BLOCK_* 쉬운 말 누락 |
+| 원형·미리보기 | 옛 행 이관은 엔진 `protoFromFragment`를 쓴다(#112). `inputCount`는 엔진 미리보기 fields 합이며 거절 시 `null`/화면 “미확인”; 숫자를 추정하지 않는다. #138: 여러 문단 필드의 사이 문단 `{{ }}`가 키로 세어지는 엔진 계약 불일치가 남음 |
+| 블록 편집 | 저장 전 초안은 원문 일부를 유지하고 저장된 ID 미리보기를 요청하지 않는다. 저장 후 미리보기 거절 때 옆 상세·확대창 모두 쉬운 말과 원문 일부. 이 구현은 K4의 “고쳐 다시 떼기·새 판” 완료와 다름(#120). 공용 블록 전파는 #119 |
+| TXT | 현재 범위는 바탕 글 + `{{항목}}` 채움·복사, 소스 줄 번호·비교/선택 글 가져오기. `{{#이름}}…{{/이름}}` 잔류 알림은 구간 엔진 해석의 구현이 아님(#58). 굵게 문법은 원문 그대로. 옛 조건 OR 결함은 #127 |
+| M1·사용 모드 | #7·#77·#8·#10은 아직 남음. #44의 옛 브라우저 파일 왕복 차단 기록을 현재 브라우저 사용 불가로 일반화하지 않는다. 아래 API 업로드 절차가 정본이다. 저장 작업 JSON을 template@2 사용 모드 완성으로 간주하지 않는다 |
+| 실사용·Helper | #126 → #133(template@2 이관), #131(표시 형식), #130(키 충돌 결정), #132(14종 시드), #129(한글 검증), #135(Helper 인계)를 참조한다. Studio가 Helper 저장소를 고치지 않는다. 전달 JSON 계약은 엔진 명세 8.8.14의 초안과 구분한다 |
+
+최우선 순서는 [요구 문서](../apps/studio-lite/docs/user-requirements.md) **8.9-13**이다. 과거 이 문서의 D4/U 순서나 대화의 #60→#71 순서로 덮지 않는다. 진행 PR·M1 종료 → `/quick` 실사용 한 바퀴 → 표/타입/라벨/연결 → 나머지 제작 조작 순이며, 제작 AI 경로는 병행 가능하고 사용 단계에는 AI가 없다. 후순위·미정은 자동 승인된 작업이 아니다.
+
+### 구현을 찾을 곳과 재현 근거
+
+| 흐름 | 현재 코드·검사 |
+| --- | --- |
+| 열기·연결·배치·생성·저장/복원·무효화 | [src/workbench.ts](../apps/studio-lite/src/workbench.ts), [web/workbench.js](../apps/studio-lite/web/workbench.js), [workbench.test.ts](../apps/studio-lite/test/workbench.test.ts), [block-insert.test.ts](../apps/studio-lite/test/block-insert.test.ts) |
+| SQLite 원형/판·사용처·삭제 보호 | [src/block-library.ts](../apps/studio-lite/src/block-library.ts), [src/server.ts](../apps/studio-lite/src/server.ts), [block-library.test.ts](../apps/studio-lite/test/block-library.test.ts), [block-delete-guard.test.ts](../apps/studio-lite/test/block-delete-guard.test.ts) |
+| 저장소 창·단독 미리보기 | [web/block-library.js](../apps/studio-lite/web/block-library.js); host `previewBlock` → rhwp 읽기 전용 렌더. 옆 상세 축소를 위해 뷰어 최소 배율을 바꾸지 않았음 |
+| TXT·빠른 생성·Helper | [txt-plain.test.ts](../apps/studio-lite/test/txt-plain.test.ts), [src/quick.ts](../apps/studio-lite/src/quick.ts), [src/g2b.ts](../apps/studio-lite/src/g2b.ts). `/`, `/quick`, 옛 `/template`은 다른 경로이며 한 곳의 통과로 전부 검증됐다고 하지 않음 |
+
+마지막 Codex 검사는 **해당 당시 가지**의 근거다. 현재 main 전체의 검사 수치로 재사용하지 않는다.
+
+| 당시 상태 | 실제 보고된 검사 | Git에 남은 근거 |
+| --- | --- | --- |
+| #98 `45f98d7`/`adabadb` | verify 총 1776 / 통과 1710 / 실패 0 / 건너뜀 66. 제목 1·2·되돌리기·복사 차단 이유·비교 12회 | [완료 댓글](https://github.com/SJO1231/HWPX-Studio/pull/98#issuecomment-6007445996), [예시 캡처](../apps/studio-lite/docs/screenshots/pr98-heading-review.png) |
+| #102 `a9d8c00` | 1779 / 1713 / 0 / 66. 넣기·취소·Ctrl+Z·원문 불변·두 해상도 | [완료 댓글](https://github.com/SJO1231/HWPX-Studio/pull/102#issuecomment-6008074645), [예시 캡처](../apps/studio-lite/docs/screenshots/pr102-merge-review.png) |
+| #104 `dae44a8` | 1781 / 1715 / 0 / 66. 위 흐름과 저장 작업 사용처·삭제 차단 | [완료 댓글](https://github.com/SJO1231/HWPX-Studio/pull/104#issuecomment-6008374828), [예시 캡처](../apps/studio-lite/docs/screenshots/pr104-merge-review.png) |
+| #105 `b199613` | 1783 / 1717 / 0 / 66. 블록 회귀 8/8, 초안 잘못된 조회 0, 실제 해시 불일치로 엔진 거절·원문 대체 표시 | [부분 완료 댓글](https://github.com/SJO1231/HWPX-Studio/pull/105#issuecomment-6008169510), [예시 캡처](../apps/studio-lite/docs/screenshots/pr105-preview-fallback.png). 댓글의 main 합치기 대기는 이후 Claude가 완료 |
+
+당시 건너뜀은 통과 수에 넣지 않았다. 한컴 열림·본문 값·문단 속성·화면 조판은 서로 다른 검증이다. 과거 실제 자료 검사와 합성 예시 캡처를 서로의 대체 증거로 쓰지 않는다. 현재 인계는 Git·문서·소스 대조이며 브라우저/한컴 재실행은 하지 않았다. 추가 CI·Claude 검증 근거는 각 병합 PR 및 [검증 기준](validation.md)의 해당 절을 따른다.
+
+### 다음 담당자와 향후 Codex의 재개 절차
+
+1. 저장소 원격이 `SJO1231/HWPX-Studio`인지, `git status --short`, `git worktree list`, `git branch --show-current`로 현재 소유·미커밋 변경을 확인한다. `git fetch origin` 뒤 열린 PR의 최신 댓글/리뷰/수정 시각과 이 문서 기준 이후 main을 대조한다. 다른 작업자의 체크아웃을 전환하거나 초기화하지 않는다.
+2. **첫 행동:** #126의 최신 담당·PR을 확인한다. 이 인계 기준에는 OPEN이고 선행 PR #43은 이미 main이다. 진행자가 있으면 중복 구현 대신 그 PR을 이어 검토한다. 다음 구현을 맡았다면 잔류 자리의 `error` 차단/`keep` 알림과 Helper JSON 수신을 해당 이슈 기준으로 재현한다. 성공 조건은 #126의 정책별 시험·실제 화면·사용 안내까지이며, M1 전체 종료와 구분한다.
+3. 새 작업은 최신 main에서 이슈별 가지·PR로 진행한다. 이 인계만으로 Codex에 제품 수정·병합 권한이 돌아오지 않는다. 향후 사용자가 Codex 재개를 요청하면 담당 파일·이슈를 먼저 확인하고 Claude와 같은 파일을 동시에 수정하지 않는다.
+4. Node 24+, 저장소 루트 `npm install` 후 `npm run typecheck`, `node --test apps/studio-lite/test/*.test.ts`, 필수 `npm run verify`. Python/오라클·실제 자료 환경은 [프로젝트 사실](project-context.md) 기준. 다른 worktree의 `node_modules` 연결 때문에 `@hwpx-studio/engine`이 다른 가지를 가리키지 않는지 확인한다(PR #137 환경 기록). 다른 가지 시험 통과를 현재 가지 근거로 쓰지 않는다.
+5. 실행은 루트 `npm run start:lite`. 기존 서버 포트·프로세스를 먼저 확인하고 자신의 시험 서버만 관리한다. 시험 DB는 OS 임시 폴더에 분리하며 실제 SQLite를 삭제·교체하거나 자동 이관 실험 대상으로 쓰지 않는다. `data/`, `artifacts/`, 다운로드 작업 파일·임시 로그는 Git 인계 대상이 아니다.
+6. 브라우저는 [프로젝트 사실의 자동 시험 절](project-context.md#브라우저-자동-시험에서-파일-선택-창-없이-문서-열기-2026-10-06) 순서: API `/api/workbench/open` 업로드 → 받은 `sourceUrl`을 페이지에서 fetch → `File`/`DataTransfer`로 파일 입력 → change. 저장 전 변경이 있으면 먼저 새로고침, 세션 8개 제한 때문에 주소를 새로 발급한다. 임시 스크립트의 예전 세션 URL을 복사하지 않는다.
+7. [check-layout-a.js](../apps/studio-lite/tools/check-layout-a.js)는 합성 TXT 자동 회귀이며 `playwright-cli run-code --filename=apps/studio-lite/tools/check-layout-a.js`로 열린 앱에서 실행한다. 이것만으로 HWPX 실문서·파일 왕복·한컴을 검증했다고 하지 않는다. #60 I~Q 확인 문장 중 변경한 항목을 실제 화면으로 채점하고 1366×768·1024×768을 확인한다.
+8. 화면 PR은 `examples/quick/` 가짜 값 캡처, 확인 문장별 판정, 명령·수치·미검증, 사용 안내·예시 사용 순서를 포함한다. 실제 공고서 그림·이름·개인 경로는 올리지 않는다. 완료 시 **이 문서 0절**의 기준·남은 이슈·다음 행동만 갱신해 다음 담당자에게 넘긴다. 사본 인계문을 추가하지 않는다.
+
+## 최초 조사 기록 (이하 1~4절)
+
+“현재”·“남음”은 `a4f43e6` 조사 시점 표현이다. 특히 PR #43·#105·#114 및 #111·#112의 상태와 미채움 차단 설명은 위 0절이 후속 정정이다. 제안·결정 필요 목록을 새 지시나 미처리 대기열로 자동 실행하지 않는다.
 
 ## 1. 파일 대조표 (인수인계 폴더)
 
