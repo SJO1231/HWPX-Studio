@@ -2,7 +2,7 @@
 <html lang="ko">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>HWPX Studio · 템플릿 준비</title><link rel="stylesheet" href="/style.css"><link rel="stylesheet" href="/quick.css"></head>
 <body>
-<header class="topbar"><div class="brand"><span class="mark">H</span><strong>HWPX Studio <small>lite</small></strong></div><nav class="actions" aria-label="작업 방식"><a class="active" href="/">템플릿 준비 · 빠른 생성</a><a href="/template">저장한 템플릿으로 생성</a></nav><span class="pill">내 PC에서 처리</span></header>
+<header class="topbar"><div class="brand"><span class="mark">H</span><strong>HWPX Studio <small>lite</small></strong></div><nav class="actions" aria-label="작업 방식"><a class="active" href="/quick" aria-current="page">템플릿 준비 · 빠른 생성</a><a href="/template">저장한 템플릿으로 생성</a></nav><span class="pill">내 PC에서 처리</span></header>
 <div id="status" role="status" aria-live="polite">문서와 JSON 데이터를 올려 연결을 확인하세요.</div>
 <main class="quick-workspace">
 <aside class="quick-left">
@@ -14,9 +14,9 @@
 <section class="quick-center"><div class="pane-heading"><div><h2 id="viewer-title">원본 문서</h2><p>읽기 전용 · 클릭/드래그로 위치 확인 · Esc 선택 취소</p></div><label>배율<select id="scale"><option value="0.6">60%</option><option value="0.8" selected>80%</option><option value="1">100%</option></select></label></div><button id="original" class="small" disabled>원본 다시 보기</button><div id="pages"><p class="empty">HWPX를 올리면 원본 형태로 표시합니다.</p></div><section id="results-box" hidden><h2>생성 결과 · 알림</h2><div class="quick-table"><table id="results"></table></div></section></section>
 <aside class="quick-right">
 <section><h2>선택한 위치</h2><p id="location" class="muted">문서에서 자리를 선택하세요.</p><div id="drafts"></div><label for="mapping">연결할 데이터 경로</label><select id="mapping" disabled><option value="">데이터를 먼저 올리세요</option></select><p id="mapping-note" class="muted">낱말·누름틀·셀·문단 중 선택한 대상만 연결합니다. 문단은 문단 전체를 바꿉니다.</p><button id="assign" class="full" disabled>선택한 자리 연결</button><button id="cancel-selection" class="full" disabled>선택 취소 (Esc)</button></section>
-<section><h2>JSON 데이터</h2><label class="file-button full">JSON 데이터 올리기<input id="quick-data" type="file" accept=".json" hidden disabled></label><p id="data-info" class="muted">객체 하나 또는 객체 배열을 지원합니다.</p><details><summary>데이터 경로 목록</summary><div id="keys"></div></details></section>
+<section><h2>JSON 데이터</h2><label class="file-button full">JSON 데이터 올리기<input id="quick-data" type="file" accept=".json" hidden disabled></label><p id="data-info" class="muted">객체 하나, 객체 배열, G2B Helper 내보내기(document-input.json)를 지원합니다.</p><details><summary>데이터 경로 목록</summary><div id="keys"></div></details></section>
 <section><h2>자리 · 데이터 대조표</h2><p class="muted">누름틀 이름·메일머지 키·{{키}}를 데이터 경로와 맞대어 봅니다. 빈칸 후보는 자동 주입하지 않습니다.</p><p id="match-summary" class="match-summary"></p><div class="quick-table"><table id="matches"></table></div></section>
-<section><h2>생성 설정</h2><label for="missing">값이 없을 때</label><select id="missing"><option value="error">해당 건을 실패로 처리</option><option value="keep">원래 글 유지</option><option value="empty">빈 글로 채우기</option></select><button id="generate" class="primary full" disabled>연결 확인 후 HWPX 생성</button><p class="muted">생성물은 별도로 내려받습니다. 사용자 원본을 덮어쓰지 않습니다.</p></section>
+<section><h2>생성 설정</h2><label for="missing">값이 없을 때</label><select id="missing"><option value="error">해당 건을 실패로 처리</option><option value="keep">원래 글 유지</option><option value="empty">빈 글로 채우기</option></select><p class="muted">실패로 처리하면 값이 없거나 채우지 못한 {{…}} 자리가 결과에 남는 건은 만들지 않습니다. 다른 방법은 남은 자리를 알림으로 보여 줍니다.</p><button id="generate" class="primary full" disabled>연결 확인 후 HWPX 생성</button><p class="muted">생성물은 별도로 내려받습니다. 사용자 원본을 덮어쓰지 않습니다.</p></section>
 </aside>
 </main>
 <script type="module" src="/quick.js"></script>

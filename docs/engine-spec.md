@@ -1577,6 +1577,8 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | 값·선택 문제(needs-input) | — | `MISSING_PROFILE`·`MISSING_REVISION`·`INVALID_CHILDREN`·`UNSUPPORTED_CHILDREN`·`INVALID_FIELDS`·`FIELD_COLLISION`·`MISSING_FIELDS`·`MONEY_PRECISION`·`MISSING_CONDITION_FIELDS`·`BLOCK_SELECTION`·`GENERATION_INPUT` | 확정 Field의 열이 없거나 null이면 `MISSING_FIELDS`(빈 글은 값). 금액은 정수 원만(`금`·`원`·`원정`·쉼표·`₩`는 떼고 읽음). 블록은 저장한 선택이 먼저, 없으면 조건·우선순위(동률·없음은 `BLOCK_SELECTION`) |
 | 출력 문제(error) | — | `OUTPUT_ERROR` | 출력은 프로필 폴더의 `g2b-<requestId의 sha256>-<순번>.hwpx`. 같은 이름의 다른 파일은 덮어쓰지 않는다 |
 
+**Helper JSON을 `/quick`에서 라벨–값으로 펼치는 규칙**(2026-10-07, #126, 구현: `apps/studio-lite/src/quick.ts`의 `parseQuickData`): Helper가 내보낸 파일(`document-input.json`)은 `{ format: "g2b-helper-document", version: 1, source }`이다(Helper 저장소의 내보내기 함수, 읽기만 해서 확인). `version`이 1이 아니면 `QUICK_HELPER_VERSION`으로 거절한다. `source`가 배열이면 Helper DB 레코드(`{ fields, userValues, children, … }`)마다 한 건, 객체이면 화면 추출본(`{ pointInfo, tables }`, 여러 frame이면 `{ frames: [{ pointInfo, tables }, …] }`)이고 frame·표·행 순서대로 **표의 행마다 한 건**이다. 행은 그대로 라벨(열 이름)–값이고 `pointInfo`(화면 위치)는 쓰지 않는다. 생성 요청 꼴(`requestId` 글 + `items` 배열, 위 1판 `Item`)도 받아 항목마다 한 건이다. `fields`·`userValues`가 있는 항목은 1판 다리와 같이 `{ ...fields, ...userValues }`로 합치고, 두 객체에 같은 이름이 있으면 그 건만 `QUICK_FIELD_COLLISION`, `fields`가 객체가 아니거나 행이 객체가 아니면 그 건만 `DATA_SCHEMA`로 실패한다. `children`은 쓰지 않는다. 열 이름은 바꾸지 않으므로 `/quick`에서는 문서의 `{{키}}`·누름틀 이름·메일머지 키가 열 이름과 같아야 채운다(공백·괄호가 든 열 이름은 `/quick`의 키 규칙 밖이다). 알아보지 못한 JSON은 전처럼 객체·배열·묶음 형식으로 읽는다.
+
 2판(template@2)으로 옮길 때(초안):
 
 - **요청·응답 형은 1판 그대로 둔다**(Helper를 고치지 않고 옮기는 것이 목표). 프로필의 `revisionId`(lite 저장 프로젝트)는 Studio 안에서 템플릿 id·판으로 바꾼다(위 대응표의 "G2B 프로필은 이관 뒤 새 템플릿 판으로"). 요청에 템플릿·출력 경로를 받지 않는 규칙도 그대로다.

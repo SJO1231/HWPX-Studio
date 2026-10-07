@@ -33,6 +33,11 @@ export type PlacesView = {
   fields: { name: string; count: number; mailMerge?: number; usable: boolean; fillable: number; merging: number; unfillable: { shape: UnfillableShape; count: number; reasons?: string[] }[] }[];
   /** `{{키}}`별 곳 수. 메일머지가 맡는 표시 글 안의 `{{키}}`는 엔진이 채우지 않으므로(필드가 값을 넣는다, 엔진 명세 8.3) 세지 않는다 */
   placeholders: { key: string; count: number }[];
+  /**
+   * 키가 데이터 경로 꼴이 아니라(괄호·공백 등) 엔진이 채우지 않고 결과에 그대로 남는 `{{…}}`의 키별 곳 수(키는 앞뒤 공백을 뗀 글).
+   * 구간 표기(`{{#…}}`·`{{/…}}`)와 목록에 오른 누름틀·메일머지(`fields`)의 표시 글 안의 것은 세지 않는다(그 필드가 자리다)
+   */
+  offRule: { key: string; count: number }[];
   /** 후보 자리(표시만). 많으면 앞의 200개 */
   candidates: { kind: CandidateKind; evidence: string }[];
   candidatesTruncated: boolean;
@@ -48,8 +53,12 @@ export type TemplateResponse = {
 
 // ── POST /api/quick/data ─────────────────────────────────────────
 
-/** `object` 객체 하나, `array` 객체 배열, `bundle` 묶음 형식(`data`가 객체), `bundleArray` 묶음 형식(`data`가 배열) */
-export type DataForm = "object" | "array" | "bundle" | "bundleArray";
+/**
+ * `object` 객체 하나, `array` 객체 배열, `bundle` 묶음 형식(`data`가 객체), `bundleArray` 묶음 형식(`data`가 배열),
+ * `helperExport` G2B Helper 내보내기(`document-input.json`, `format: "g2b-helper-document"`, `version: 1`),
+ * `helperRequest` Helper 생성 요청 꼴(`{ requestId, items: [{ fields, userValues }] }`). 두 Helper 꼴은 건마다 평평한 라벨–값으로 펼친다(엔진 명세 8.8.14)
+ */
+export type DataForm = "object" | "array" | "bundle" | "bundleArray" | "helperExport" | "helperRequest";
 
 export type DataKey = {
   /** 점으로 이은 경로(`applicant.name`) */
@@ -117,10 +126,19 @@ export type ResultView = {
   errors: ReportEntry[];
   /**
    * 정보(실패·건너뜀이 아니다): 줄바꿈·탭이 든 값이 들어간 자리(`QUICK_MULTILINE`)와 엔진이 계획 단계에서 낸 경고(`BatchItem.warnings`.
-   * 예: 여러 문단에 걸친 누름틀을 채우며 문단을 합친 `FIELD_PARAGRAPHS_MERGED`. `place`는 `누름틀 "이름"`, `detail`은 엔진 메시지). 성공한 건에만 있다
+   * 예: 여러 문단에 걸친 누름틀을 채우며 문단을 합친 `FIELD_PARAGRAPHS_MERGED`. `place`는 `누름틀 "이름"`, `detail`은 엔진 메시지),
+   * 채우지 못한 `{{…}}`를 남긴 건의 `QUICK_LEFTOVER_KEPT`(누락 정책이 `error`가 아닐 때). 성공한 건에만 있다
    */
   notes: ReportEntry[];
+  /**
+   * 엔진이 만든 결과에 남은 `{{…}}`(구간 표기 제외, 키별 곳 수. 데이터 값에서 온 글은 세지 않는다). 남은 곳이 있을 때만 있다.
+   * 누락 정책이 `error`면 그 건은 실패(`QUICK_LEFTOVER`, 내려받을 파일 없음)이고, 아니면 성공에 알림 `QUICK_LEFTOVER_KEPT`가 붙는다
+   */
+  leftover?: Leftover;
 };
+
+/** 결과에 남은 `{{…}}`: 곳 수 합과 키별 곳 수(처음 나온 순서) */
+export type Leftover = { count: number; keys: { key: string; count: number }[] };
 
 export type GenerateResponse = {
   session: string;

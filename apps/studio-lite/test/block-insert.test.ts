@@ -61,6 +61,8 @@ test('block placement and generated warnings reuse the shared easy-language tabl
  const work={session:opened.session,index:0,edits:[],headings:[],blocks:[],placements:[{id:stored.id,version:1,from:opened.paragraphs[index].id,to:opened.paragraphs[index].id}]};
  const preview=app.post('/api/workbench/block-placement-preview',work) as any;
  assert(preview.warnings.includes(plainOf('FRAG_UNIT_CONVERTED')));
- const result=app.post('/api/workbench/generate',work) as any;assert(result.notes.includes(plainOf('FRAG_UNIT_CONVERTED')));assert(!result.notes.join().includes('FRAG_UNIT_CONVERTED'));
+ // 데이터 없이 만들면 예시 서식의 {{키}} 7곳이 남으므로 기본 정책(생성 막기)은 막고(#126), 자리 유지로 만든 결과에서 경고 문구를 본다
+ assert.throws(()=>app.post('/api/workbench/generate',work),(e:any)=>e.code==='WORKBENCH_UNLINKED'&&e.message.includes('남은 자리 7곳'));
+ const result=app.post('/api/workbench/generate',{...work,missing:'keep'}) as any;assert(result.notes.includes(plainOf('FRAG_UNIT_CONVERTED')));assert(!result.notes.join().includes('FRAG_UNIT_CONVERTED'));assert.equal(result.unresolved,7);
  }finally{db.close();}
 });
