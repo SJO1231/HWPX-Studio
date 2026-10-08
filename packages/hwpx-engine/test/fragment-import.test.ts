@@ -31,6 +31,7 @@ import {
   NS_HH,
   NS_HP,
   NS_HS,
+  buildHwpx,
   buildZip,
   bytesEqual,
   duplicates,
@@ -1358,6 +1359,102 @@ test("7.5 조각의 없는 참조 기록이 없는 이전 형식 조각(dangling
   // 같은 원본에서 뗀 기록으로 세면 세 id 모두 새 자원이 받는다(이 사례가 실제로 겹치는 사례라는 확인이기도 하다)
   const recorded = { ...legacy, dangling: extractFragment(src, sel(0, 0)).dangling };
   assert.deepEqual(carriedOverlaps(recorded, target, r.result).sort(), ["borderFill 2", "charPr 2", "font 1"]);
+});
+
+// ── 새 이진 항목이 없는 이진 자료 참조를 차지하지 않는다(#157) ─────────────────────────
+// 없는 이진 자료를 가리키는 참조(조각이 원본에서부터 가진 것, 대상에 이미 있는 것)는 그대로 남는다. 새 항목이 그 id(또는 내용이 없는 manifest 항목의 이름)를
+// 받으면 그 참조가 새 그림을 가리키게 된다.
+
+const PIC = (id: string, ref: string): string => para(`<hp:pic id="${id}"><hc:img binaryItemIDRef="${ref}"/></hp:pic>`);
+const PNG_A = utf8("synthetic picture A");
+const PNG_B = utf8("synthetic picture B, different size");
+
+/** 그림 문단과 이진 항목을 가진 합성 문서. `data`가 없는 항목은 manifest에만 있고 패키지 항목(내용)이 없다. */
+function binaryDoc(body: string, items: { id: string; href: string; data?: Uint8Array }[], header = MINIMAL_HEADER): HwpxDocument {
+  const bytes = buildHwpx([sectionXml(body, ` xmlns:hc="${NS_HC}"`)], header, true);
+  const base = reparse(bytes);
+  const hpf = decode(readEntry(base.pkg.archive, bytes, HPF)).replace("</opf:manifest>", `${items.map((b) => PICTURE_ITEM(b.id, b.href)).join("")}</opf:manifest>`);
+  const add = items.flatMap((b) => (b.data === undefined ? [] : [{ name: b.href, data: b.data, method: 0 as const }]));
+  return reparse(rewriteArchive(bytes, base.pkg.archive, { replace: new Map([[HPF, utf8(hpf)]]), add }));
+}
+
+const picturesOf = (doc: HwpxDocument): string[] => doc.pkg.manifestItems.filter((m) => m.href.startsWith("BinData/")).map((m) => `${m.id}=${m.href}`);
+const binRefsOf = (xml: string): string[] => attrsOf(xml, "binaryItemIDRef");
+
+/** 결과 manifest에 새로 생긴 항목 가운데 id가 `ids`에 든 것(그 id를 가리키던 참조가 새 그림을 가리키게 된 것) */
+function capturedIds(target: HwpxDocument, result: HwpxDocument, ids: readonly string[]): string[] {
+  const before = new Set(target.pkg.manifestItems.map((m) => m.id));
+  return result.pkg.manifestItems.filter((m) => !before.has(m.id) && ids.includes(m.id)).map((m) => m.id);
+}
+
+test("7.5-6 조각이 원본에도 대상에도 없는 이진 자료 image2를 가리키고 그 id가 대상의 다음 새 항목 id여도 새 항목은 그 id를 받지 않는다(#157)", () => {
+  const src = binaryDoc(PIC("1", "image1") + PIC("2", "image2"), [{ id: "image1", href: "BinData/image1.png", data: PNG_A }]);
+  const target = binaryDoc(PIC("5", "image1"), [{ id: "image1", href: "BinData/image1.png", data: PNG_B }]);
+  const r = runDocs(src, 0, 1, target, endOf(target));
+  assert.deepEqual(r.fragment.dangling, [{ kind: "binaryItem", id: "image2", count: 1 }]);
+  assert.deepEqual(r.fragment.binaries.map((b) => b.itemId), ["image1"]);
+  // 전제: 대상의 image1은 내용이 달라 새 항목이 필요하고, 대상 manifest만 피하면 다음 id는 image2다. 대상에는 없는 참조가 없다
+  assert.deepEqual(picturesOf(target), ["image1=BinData/image1.png"]);
+  assert.deepEqual(missingMessages(target), []);
+  // 겹침 0: 새 항목은 image2를 건너뛰어 image3을 받는다
+  assert.deepEqual(capturedIds(target, r.result, ["image2"]), []);
+  assert.deepEqual(picturesOf(r.result), ["image1=BinData/image1.png", "image3=BinData/image3.png"]);
+  assert.ok(bytesEqual(readEntry(r.result.pkg.archive, r.bytes, "BinData/image3.png"), PNG_A));
+  assert.ok(bytesEqual(readEntry(r.result.pkg.archive, r.bytes, "BinData/image1.png"), PNG_B), "대상의 기존 그림은 그대로");
+  // 넣은 본문: 있던 그림은 새 항목을, 없는 image2는 그대로 없는 대상을 가리킨다
+  assert.deepEqual(binRefsOf(r.block), ["image3", "image2"]);
+  assert.deepEqual(missingMessages(r.result), ["binaryItem image2이(가) 없는데 1곳에서 가리킵니다."]);
+  assert.deepEqual([r.plan.summary["addedBinaries"], r.plan.summary["reusedBinaries"]], [1, 0]);
+  // JSON 왕복 조각도 같은 계획이다
+  assert.deepEqual(planImport(target, parseFragment(serializeFragment(r.fragment)), endOf(target)), r.plan);
+  // 같은 결과에 다시 넣으면 그림은 재사용되고(같은 내용), 없는 참조는 여전히 비어 있다
+  const again = runDocs(src, 0, 1, r.result, endOf(r.result), { fragment: r.fragment });
+  assert.deepEqual([again.plan.summary["addedBinaries"], again.plan.summary["reusedBinaries"]], [0, 1]);
+  assert.deepEqual(again.plan.additions, []);
+  assert.deepEqual(binRefsOf(again.block), ["image3", "image2"]);
+  assert.deepEqual(missingMessages(again.result), ["binaryItem image2이(가) 없는데 2곳에서 가리킵니다."]);
+  // `dangling` 키가 없는 이전 형식 조각은 조각 쪽 id를 알 수 없어 건너뛰지 못한다(알려진 한계): 같은 사례에서 새 항목이 image2를 받는다
+  const json = JSON.parse(serializeFragment(r.fragment)) as Record<string, unknown>;
+  delete json["dangling"];
+  const legacy = runDocs(src, 0, 1, target, endOf(target), { fragment: parseFragment(JSON.stringify(json)) });
+  assert.deepEqual(capturedIds(target, legacy.result, ["image2"]), ["image2"]);
+});
+
+// 대상 header의 테두리 2가 이미지 채우기로 없는 이진 자료 image3을 가리킨다
+const IMAGE_FILL_HEADER = MINIMAL_HEADER.replace(
+  '<hh:borderFills itemCnt="1"><hh:borderFill id="1" threeD="0"/>',
+  '<hh:borderFills itemCnt="2"><hh:borderFill id="1" threeD="0"/><hh:borderFill id="2" threeD="0"><hc:fillBrush><hc:imgBrush mode="TOTAL"><hc:img binaryItemIDRef="image3"/></hc:imgBrush></hc:fillBrush></hh:borderFill>',
+);
+
+test("7.5-6 대상이 이미 없는 이진 자료(본문 image2, 테두리의 이미지 채우기 image3)를 가리키면 새 항목은 그 id를 건너뛴다. 조각 항목의 id 자체가 대상의 없는 참조여도 같다(#157)", () => {
+  assert.notEqual(IMAGE_FILL_HEADER, MINIMAL_HEADER);
+  const src = binaryDoc(PIC("1", "image1"), [{ id: "image1", href: "BinData/image1.png", data: PNG_A }]);
+  const target = binaryDoc(PIC("5", "image1") + PIC("6", "image2"), [{ id: "image1", href: "BinData/image1.png", data: PNG_B }], IMAGE_FILL_HEADER);
+  const r = runDocs(src, 0, 0, target, endOf(target));
+  assert.deepEqual(r.fragment.dangling, []);
+  assert.deepEqual(missingMessages(target), ["binaryItem image2이(가) 없는데 1곳에서 가리킵니다."]);
+  assert.deepEqual(capturedIds(target, r.result, ["image2", "image3"]), []);
+  assert.deepEqual(picturesOf(r.result), ["image1=BinData/image1.png", "image4=BinData/image4.png"]);
+  assert.deepEqual(binRefsOf(r.block), ["image4"]);
+  assert.deepEqual(missingMessages(r.result), missingMessages(target), "대상의 없는 참조는 여전히 없는 대상을 가리킨다");
+  // 조각 항목의 id(image1)를 대상이 manifest 없이 가리키면 그 id를 쓰지 않는다
+  const bare = binaryDoc(PIC("5", "image1"), []);
+  const s = runDocs(src, 0, 0, bare, endOf(bare));
+  assert.deepEqual(capturedIds(bare, s.result, ["image1"]), []);
+  assert.deepEqual(picturesOf(s.result), ["image2=BinData/image2.png"]);
+  assert.deepEqual(binRefsOf(s.block), ["image2"]);
+  assert.deepEqual(missingMessages(s.result), ["binaryItem image1이(가) 없는데 1곳에서 가리킵니다."]);
+});
+
+test("7.5-6 새 항목 이름은 대상 manifest 항목이 가리키는데 패키지에 없는 이름도 피한다: 그 항목이 새 그림을 가리키게 되지 않는다(#157)", () => {
+  const src = binaryDoc(PIC("1", "image1"), [{ id: "image1", href: "BinData/image1.png", data: PNG_A }]);
+  const target = binaryDoc(PIC("5", "logo"), [{ id: "logo", href: "BinData/image1.png" }]); // 내용 없음
+  assert.equal(target.pkg.archive.entries.some((e) => e.name === "BinData/image1.png"), false);
+  const r = runDocs(src, 0, 0, target, endOf(target));
+  assert.deepEqual(picturesOf(r.result), ["logo=BinData/image1.png", "image1=BinData/image1_2.png"]);
+  assert.equal(r.result.pkg.archive.entries.some((e) => e.name === "BinData/image1.png"), false, "대상의 logo는 여전히 내용이 없다");
+  assert.ok(bytesEqual(readEntry(r.result.pkg.archive, r.bytes, "BinData/image1_2.png"), PNG_A));
+  assert.deepEqual(binRefsOf(r.block), ["image1"]);
 });
 
 // ── rootfile ────────────────────────────────────────────────────────────

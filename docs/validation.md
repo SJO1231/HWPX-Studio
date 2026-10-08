@@ -863,3 +863,21 @@ CLI `block extract`로 떼고 `block insert --section 0 --index 25`(대상 2쪽�
 | 다단·머리말·꼬리말·페이지 번호 | 남음 + 미검증 | 대상에 미치는 영향 관측(위 표). 계약은 #70 결정 대기 |
 
 검사 명령: `python tools/com/open_check.py --out <결과> --pdf-dir <폴더> <문서...>`, `python tools/com/read_text.py --spec <명세> --out <결과>`, `python tools/com/read_shape.py --spec <명세> --out <결과> --timeout 180`, `python tools/com/read_para_props.py --spec <명세> --out <결과> --timeout 180`, `node apps/cli/src/main.ts block extract|insert …`. 명세, 줄 대조, 합성 문서 만들기 스크립트는 임시 파일로만 쓰고 저장소에 두지 않았다.
+
+## 38. 조각 가져오기 이진 자료 새 항목: 없는 이진 자료 참조의 id·내용 없는 manifest 이름 건너뛰기 (2026-10-08, 이슈 #157)
+
+엔진 명세 7.5 단계 6. 새 이진 항목 id는 대상 manifest의 id만 피했다. 조각이 원본에서부터 없는 이진 자료를 가리키던 참조(`dangling`)와 대상이 이미 없는 이진 자료를 가리키는 참조(본문 그림, header 테두리의 이미지 채우기)는 id 그대로 남는데, 새 항목이 그 id를 받으면 그 참조가 새 그림을 가리켰다. 새 id를 줄 때 그 id를 건너뛰고, 항목 이름은 대상 manifest 항목이 가리키는(패키지에 내용이 없는) 이름도 건너뛰게 고쳤다. 같은 내용(sha256) 재사용과 있는 참조의 대응은 그대로다. 아래는 구현자 시험이고 독립 검증 전이다.
+
+| 검사 | 결과 |
+| --- | --- |
+| 합성 겹침(5사례) | 조각 쪽: 원본이 image1(내용 A)과 없는 image2를 가리키고 대상 image1은 내용 B → 새 항목 고치기 전 image2(넣은 두 그림이 모두 새 그림을 가리킴), 고친 뒤 image3, 넣은 본문 참조 image3·image2, 결과의 없는 참조 binaryItem image2 1곳. 대상 쪽: 본문 없는 image2와 header 없는 image3 → image2 → image4, header 없는 image2만 → image2 → image3, 대상이 manifest 없이 image1을 가리킬 때 조각의 image1 → image1 → image2. 이름: 대상 manifest 항목 logo가 패키지에 없는 BinData/image1.png를 가리킬 때 → 새 이름 BinData/image1.png → BinData/image1_2.png. 고치기 전 5/5 겹침, 고친 뒤 0. 대상의 없는 참조는 결과에서도 없는 대상 |
+| 재사용·왕복 | 조각 쪽 사례의 JSON 왕복 조각은 같은 계획, 결과에 다시 넣으면 추가 0·재사용 1 |
+| 이전 형식 조각 | `dangling` 키가 없는 조각은 조각 쪽 id를 몰라 건너뛰지 못한다(같은 사례에서 image2). 명세 7.5에 한계로 적음 |
+| 변이 확인 | 네 가지 제외(header 참조·본문 참조·조각 `dangling`·manifest 이름)를 하나씩 되돌리면 각각 합성 시험 1개가 실패 |
+| 실제 공고서 무작위 50회(읽기 전용) | 16건 모두 이진 항목 0이라 문서 안에는 그림이 든 범위가 없다. 시험 자료의 그림 문단(`hancom/picture` image1, `extra/features-picture` BIN0001)을 원본 공고서의 무작위 자리에 넣은 메모리 사본에서 그 그림을 품은 범위(합 967문단, 그림 64 = 있는 것 50·없는 참조 14)를 떼어 다른 공고서에 넣음(시드 157). 21회는 대상에 같은 id·다른 내용의 그림을 먼저 넣고, 23회는 대상에, 14회는 조각에 다음 새 항목 id를 가리키는 없는 참조를 넣음. 같은 입력(다시 읽은 대상·JSON 왕복) 같은 바이트 50/50, 검사기 새 오류 0(조각의 없는 참조로 설명되는 14건은 저장 게이트와 같은 판정으로 뺌), 결과에 다시 넣으면 그림 재사용 50/50, 겹침 0. 고치기 전 코드로 같은 50회: 겹침 32회(없는 참조를 넣은 32회 전부). 없는 참조가 없는 18회의 결과 바이트 요약은 고치기 전·뒤 같음(`9a692c59c5`). 문서 모음 그대로 |
+| 기존 시험 | F13 그림 조각 5개·rootfile 시험 통과(새 id·이름 기대값 그대로). #115 실제 공고서 50회(36절)·단위 변환 50회(27절) 통과, 스트레스 도구 자체 시험 27/27 |
+| 회귀 | main(#158) 위에서 형 검사 0. `npm test` 1,825개 중 1,756 통과, 0 실패, 69 선택 실행분(새 시험 4개: 합성 3·실제 공고서 1(선택 실행)) |
+
+시험: `node --test --test-name-pattern="#157" packages/hwpx-engine/test/fragment-import.test.ts`, `HWPX_CORPUS_DIR=<폴더> node --test packages/hwpx-engine/test/fragment-binary-corpus.test.ts`.
+
+남은 것: 한글로 결과 열기(새 항목 id·이름만 바뀌어 하지 않음, COM은 다른 작업이 사용 중), 실제 그림이 든 문서끼리의 이식(문서 모음에 없음), 이전 형식 조각의 조각 쪽 id, 모델이 읽지 않는 파트(바탕쪽 등)와 해석하지 못한 참조(`binDataIDRef` 등)의 이진 자료 id는 보지 않음, 독립 검증.
