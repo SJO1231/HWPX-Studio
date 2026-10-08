@@ -89,8 +89,11 @@ function mapResources(target: HwpxDocument, fragment: Fragment): ResourcePlan {
   const fingerprint = createFingerprinter(lookup);
 
   // 종류(글꼴은 언어별) 안의 지문 → id 목록, 다음 새 id(그 종류에서 가장 큰 숫자 id + 1, 항목이 없으면 0)와 건너뛸 id
-  // (대상에서 없는 자원을 가리키던 참조의 id: 새 자원이 받으면 기존 문단·자원이 새 자원을 가리키게 된다)
+  // (대상에서 없는 자원을 가리키던 참조의 id: 새 자원이 받으면 기존 문단·자원이 새 자원을 가리키게 된다.
+  // 조각이 원본에서부터 없는 자원을 가리키던 참조의 id: 가져오기가 그대로 옮기므로 새 자원이 받으면 넣은 문단·자원이 새 자원을 가리키게 된다.
+  // 조각의 기록은 글꼴 언어를 모르므로 글꼴은 모든 언어에서 건너뛴다)
   const danglingIds = danglingIdsOf(target, lookup);
+  const carriedIds = (kind: string): string[] => fragment.dangling.flatMap((d) => (d.kind === kind ? [d.id] : []));
   type Group = { byFp: Map<string, string[]>; next: number; skip: ReadonlySet<string> };
   const groups = new Map<string, Group>();
   const groupOf = (kind: string, lang: string | undefined): Group => {
@@ -109,7 +112,7 @@ function mapResources(target: HwpxDocument, fragment: Fragment): ResourcePlan {
         else ids.push(item.id);
         if (isNumericId(item.id)) max = Math.max(max, Number(item.id));
       }
-      group = { byFp, next: max + 1, skip: danglingIds(kind, lang) };
+      group = { byFp, next: max + 1, skip: new Set([...danglingIds(kind, lang), ...carriedIds(kind)]) };
       groups.set(key, group);
     }
     return group;
