@@ -414,7 +414,9 @@ export function createG2B2(db: DatabaseSync) {
     mkdirSync(outputDirectory, { recursive: true });
     const directory = realpathSync(outputDirectory);
     if (!statSync(directory).isDirectory()) bad('PROFILE_INVALID', '출력 경로가 폴더가 아닙니다.');
-    const profile: Profile = { id: id as string, label: (label as string).trim(), templateId: templateId as string, version: version as number, outputDirectory: directory, ...(fileName === undefined ? {} : { fileName: fileName as string }) };
+    // fileName을 빼고 보내면 같은 id에 저장된 규칙을 둔다(화면의 "다시 확인"은 GET 꼴로 판만 바꿔 보낸다, #149)
+    const rule = fileName ?? profileRow(id as string)?.['fileName'];
+    const profile: Profile = { id: id as string, label: (label as string).trim(), templateId: templateId as string, version: version as number, outputDirectory: directory, ...(typeof rule === 'string' ? { fileName: rule } : {}) };
     db.prepare('INSERT INTO g2b_profile(id,document) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET document=excluded.document').run(profile.id, JSON.stringify(profile));
     return profile;
   }

@@ -15,6 +15,7 @@
         <button id="open-document" type="button">문서 열기</button><button id="load-work" type="button">작업 불러오기</button><button id="open-comparison" type="button">비교 문서 열기</button>
       </div></details>
       <button id="save-work" type="button" title="작업 저장 (Ctrl+S)" disabled>저장</button>
+      <label class="case-label" for="record-select">업무 건<select id="record-select" disabled><option value="0">견본 값</option></select></label>
       <button id="generate" type="button" title="생성 (Ctrl+Enter)" class="primary" disabled>생성</button>
     </nav>
   </header>
@@ -29,7 +30,8 @@
         <div class="menu-panel data-panel">
           <div class="panel-heading"><strong>연결할 데이터</strong><button id="open-data" type="button" disabled>파일 열기</button></div>
           <p id="data-info" class="muted">데이터가 없습니다.</p>
-          <label class="record-label" for="record-select">사용할 행<select id="record-select" disabled><option value="0">데이터 없음</option></select></label><label class="txt-missing" for="txt-missing">연결 안 된 입력 자리<select id="txt-missing"><option value="error">생성 막기 (기본)</option><option value="keep">자리 유지</option></select></label>
+          <p id="key-notice" class="key-notice" hidden></p><details id="data-only" class="data-only" hidden><summary></summary><p></p></details>
+          <label class="txt-missing" for="txt-missing">연결 안 된 입력 자리<select id="txt-missing"><option value="error">생성 막기 (기본)</option><option value="keep">자리 유지</option></select></label>
           <div id="data-preview" class="data-preview" hidden></div>
           <details class="advanced-input"><summary>직접 입력</summary><label for="data-text" class="sr-only">JSON 데이터</label><textarea id="data-text" rows="5" spellcheck="false" placeholder='{"사업명": "전산장비 구매"}'></textarea><button id="load-data-text" type="button" disabled>데이터 사용</button></details>
         </div>
@@ -84,7 +86,7 @@
     <button type="button" role="menuitem" data-action="inputDetail">입력 항목 만들기</button><button type="button" role="menuitem" data-action="saveBlock">블록으로 저장</button><button type="button" role="menuitem" data-action="branchDetail" disabled title="분기점 만들기는 다음 구현 단계에서 지원합니다.">분기점 만들기</button><button type="button" role="menuitem" data-action="dataDetail">데이터 연결</button><button type="button" role="menuitem" data-action="labelPick">참고 글 지정</button>
     <div class="menu-divider"></div><button type="button" role="menuitem" data-action="copySelection">복사</button><button type="button" role="menuitem" data-action="importSelection">선택 글 가져오기</button>
   </div>
-  <div id="selection-remote" class="selection-remote" role="toolbar" aria-label="선택 리모컨" hidden><div class="remote-actions"><button type="button" data-action="inputDetail">입력 항목 만들기</button><button type="button" data-action="saveBlock">블록으로 저장</button><button type="button" data-action="branchDetail" disabled title="분기점 만들기는 다음 구현 단계에서 지원합니다.">분기점 만들기</button><button type="button" data-action="dataDetail">데이터 연결</button><button type="button" data-action="labelPick">참고 글 지정</button><button id="remote-close" type="button" aria-label="리모컨 닫기">닫기</button></div><form id="remote-form"><label for="remote-name">이름 · Enter로 확정</label><input id="remote-name" list="data-keys" autocomplete="off"><button type="submit">확정</button><button id="remote-designate" type="button">지정</button></form></div>
+  <div id="selection-remote" class="selection-remote" role="toolbar" aria-label="선택 리모컨" hidden><div class="remote-actions"><button type="button" data-action="inputDetail">입력 항목 만들기</button><button type="button" data-action="saveBlock">블록으로 저장</button><button type="button" data-action="branchDetail" disabled title="분기점 만들기는 다음 구현 단계에서 지원합니다.">분기점 만들기</button><button type="button" data-action="dataDetail">데이터 연결</button><button type="button" data-action="labelPick">참고 글 지정</button><button id="remote-close" type="button" aria-label="리모컨 닫기">닫기</button></div><form id="remote-form"><label for="remote-name">이름 · Enter로 확정</label><input id="remote-name" list="data-keys" autocomplete="off"><button type="submit">확정</button><button id="remote-designate" type="button">지정</button></form><label id="remote-link-row" class="remote-link" hidden>데이터 키<select id="remote-link"></select></label></div>
   <dialog id="block-library-dialog" aria-labelledby="block-library-title"><header><h2 id="block-library-title">블록 저장소</h2><button id="block-library-close" type="button">닫기</button></header><div id="block-library-body"></div></dialog>
   <script type="module" src="/workbench.js"></script>
 </body>

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { placeText, readTypedValue } from '@hwpx-studio/engine';
 import { decorateValue, suggestType, TYPE_LABEL, VALUE_TYPES, type ValueType } from '../src/value-type.ts';
 
 // 타입 추천 규칙 표(#147): 타입마다 10개 이상, 경계 사례 포함. [원문 글, 타입, 단위?]
@@ -89,7 +90,7 @@ test('value decoration: amount commas and no doubled 원, date in the original s
   assert.equal(decorateValue('money', '1234000', '1,234,000', '원 (부가세 포함)'), '1,234,000');
   assert.equal(decorateValue('money', '1234000원', '1,234,000', '원'), '1,234,000', 'value 원 + following 원 → once');
   assert.equal(decorateValue('money', '1234000원', '{{금액}}', '원'), '1,234,000');
-  assert.equal(decorateValue('money', '1234000원', '{{금액}}', ''), '1,234,000원', 'no 원 in the source: the value keeps its own');
+  assert.equal(decorateValue('money', '1234000원', '{{금액}}', ''), '1,234,000', 'no number shape in the source: the value unit goes, like the engine (#172)');
   assert.equal(decorateValue('money', '1234000', '{{금액}}', ' 원'), '1,234,000');
   assert.equal(decorateValue('money', '2000000', '금 1,000,000원', ''), '금 2,000,000원');
   assert.equal(decorateValue('money', '₩2,000,000', '1,000원정', ''), '2,000,000원정');
@@ -132,4 +133,14 @@ test('value decoration: amount commas and no doubled 원, date in the original s
   for (const type of ['phone', 'text', 'longText', 'time'] as const)
     for (const v of ['02-123-4567', '0212345678', '010-0000-0000', '0101011234567', '007', '14:00', '1234000'])
       assert.equal(decorateValue(type, v, '02-999-9999', '원'), v, `${type} ${v}`);
+});
+
+test('#172 amount without a number shape in the source matches the engine money default: the value unit goes, the source unit after the place is kept once', () => {
+  const engine = (value: string, following: string) => { const t = readTypedValue('money', value); assert(t.ok); return placeText(t.text, undefined, following); };
+  let n = 0;
+  for (const value of ['1234000원', '1,234,000', '금 1,234,000원', '-1234', '₩12,000', '1234000원정', '12345678901234567890', '0원'])
+    for (const following of ['', '원', ' 원(부가세 포함)', '(부가세 포함)']) { assert.equal(decorateValue('money', value, '{{금액}}', following), engine(value, following), value + ' / ' + following); n++; }
+  assert.equal(n, 32);
+  // 원문이 수 모양이면 전처럼 원문 모양("원" 한 번)
+  assert.equal(decorateValue('money', '1234000원', '1,000원', ''), '1,234,000원');
 });

@@ -10,7 +10,7 @@ import { toRhwpPosition, type RhwpPosition } from '../../../packages/viewer/src/
 import { extractBlockDraft, type BlockDraft, type BlockLibrary } from './block-library.ts';
 import { parseCsv } from './core.ts';
 import { analyzePlaces, describeLeftover, findLeftovers, leftoverOf, listKeys, parseQuickData, type QuickData } from './quick.ts';
-import { CONTEXT, ITEM_KEYS, LABEL_MAX, LABEL_RELS, isField, repsOf, spanNow, validKey, type InputItem } from './input-table.ts';
+import { CONTEXT, ITEM_KEYS, LABEL_MAX, LABEL_RELS, g2bTemplate, isField, repsOf, spanNow, validKey, type G2BEntry, type InputItem } from './input-table.ts';
 import { labelAt } from './item-label.ts';
 import { VALUE_TYPES, decorateValue } from './value-type.ts';
 
@@ -26,8 +26,8 @@ type Edit = { id: string; text: string };
 type Heading = { id: string; level: 1 | 2 };
 type Block = { id: string; from: string; to: string; text: string; alias: string };
 type Placement = {id:string;version:number;from:string;to:string};
-type Work = { edits: Edit[]; headings: Heading[]; blocks: Block[]; placements: Placement[]; inputItems: InputItem[]; index: number; missing: "error" | "keep" };
-type Session = { workspaceId?: string; kind: 'hwpx' | 'text'; name: string; source: Uint8Array; doc?: HwpxDocument; sourceText?: string; rows: Row[]; headings?: { id: string; name: string }[]; data?: QuickData; dataContent?: string; output?: Uint8Array; blockPreviews?: Map<string, BlockDraft>; pins?: Set<string> };
+type Work = { edits: Edit[]; headings: Heading[]; blocks: Block[]; placements: Placement[]; inputItems: InputItem[]; index: number; missing: "error" | "keep"; samples?: Record<string, string> };
+type Session = { workspaceId?: string; kind: 'hwpx' | 'text'; name: string; source: Uint8Array; doc?: HwpxDocument; sourceText?: string; rows: Row[]; headings?: { id: string; name: string }[]; data?: QuickData; dataContent?: string; output?: Uint8Array; blockPreviews?: Map<string, BlockDraft>; pins?: Set<string>; inputs?: Input[] };
 const rowId = (section: number, path: number[]) => `p:${section}:${path.join('.')}`;
 const sameParent = (a: Row, b: Row) => a.sectionIndex === b.sectionIndex && a.path.length === b.path.length && a.path.slice(0, -1).every((n, i) => n === b.path[i]);
 const contains = (a: Row, b: Row, row: Row) => sameParent(a, row) && row.path.at(-1)! >= a.path.at(-1)! && row.path.at(-1)! <= b.path.at(-1)!;
@@ -110,9 +110,16 @@ function open(name: unknown, content: unknown): Session {
   const doc = parseDocument(openPackage(source));
   return { kind: 'hwpx', name: `${sanitizeFileStem(name)}.hwpx`, source, doc, rows: rowsOf(doc) };
 }
+// shortcut: 업무 건 이름은 건마다 값이 다른 첫 글·수 열(없으면 첫 열)의 값 20자다, 이름 열을 고르게 할 때 올린다(#149 "이름 열 지정")
+function caseNames(s: Session): string[] {
+  const rows = (s.data?.records ?? []).map(r => 'dataset' in r ? r.dataset.data : {});
+  const keys = [...new Set(rows.flatMap(r => Object.keys(r)))].filter(k => rows.every(r => typeof r[k] === 'string' || typeof r[k] === 'number'));
+  const name = keys.find(k => new Set(rows.map(r => r[k])).size > 1) ?? keys[0];
+  return rows.map(r => name === undefined ? '' : String(r[name]).replace(/\s+/g, ' ').trim().slice(0, 20));
+}
 function dataInfo(s: Session) {
   const first = s.data?.records[0];
-  return { records: s.data?.records.length ?? 0, keys: s.data ? listKeys(s.data.records).keys : [], preview: first && 'dataset' in first ? first.dataset.data : {}, index: 0 };
+  return { records: s.data?.records.length ?? 0, keys: s.data ? listKeys(s.data.records).keys : [], preview: first && 'dataset' in first ? first.dataset.data : {}, index: 0, cases: caseNames(s) };
 }
 function parseData(content: unknown, name: unknown): { data: QuickData; content: string } {
   need(typeof content === 'string' && Buffer.byteLength(content) <= MAX_TEXT && typeof name === 'string');
@@ -154,12 +161,45 @@ function workOf(s: Session, input: Record<string, unknown>): Work {
     for(const r of covered){need(!occupied.has(r.id),'WORKBENCH_OVERLAP');occupied.add(r.id);if(placements.includes(b as Placement))need(!edits.some(e=>e.id===r.id),'WORKBENCH_OVERLAP');}
   }
   need(input.missing === undefined || input.missing === "error" || input.missing === "keep");
-  return { edits, headings, blocks, placements, inputItems: inputItemsOf(input.inputItems, row), index, missing: input.missing ?? "error" };
+  // 견본 값(#149): 데이터 없이 표에 적은 값. 열쇠(데이터 키, 없으면 이름) → 글
+  need(input.samples === undefined || isObj(input.samples) && Object.keys(input.samples).length <= 3000);
+  const samples = input.samples === undefined ? undefined : Object.fromEntries(Object.entries(input.samples).map(([k, v]) => { need(k.trim() !== '' && k.length <= 500 && typeof v === 'string'); return [text(k), text(v)]; }));
+  return { edits, headings, blocks, placements, inputItems: inputItemsOf(input.inputItems, row), index, missing: input.missing ?? "error", ...(samples ? { samples } : {}) };
 
 }
 
+/** 견본 값의 데이터(키의 점은 하위 항목). 프로토타입 없는 객체라 `__proto__` 같은 키도 그냥 열이다 */
+function sampleData(samples: Record<string, string>): Dataset {
+  const data: Record<string, unknown> = Object.create(null);
+  for (const [key, value] of Object.entries(samples)) {
+    const parts = key.split('.'); let at = data;
+    for (const p of parts.slice(0, -1)) at = (isObj(at[p]) ? at[p] : at[p] = Object.create(null)) as Record<string, unknown>;
+    at[parts.at(-1)!] = value;
+  }
+  return { data, derived: {} };
+}
 /**
- * 표 보기의 입력 항목(#146). 생성에는 쓰지 않고(확정한 항목은 이미 편집 글의 `{{키}}`다) 작업 파일에 남겼다 되살린다.
+ * 생성에 쓸 데이터: 고른 업무 건(데이터 행), 데이터가 없으면 표에 적은 견본 값. 데이터 연결(#149): 필드 이름과 다른 데이터 키에 이은 누름틀·메일머지는
+ * 그 키의 값을 필드 이름으로 받는다. 엔진 2판 별칭과 같은 규칙이라 필드 이름 열과 연결한 열에 모두 값이 있으면 막는다(`DATA_ALIAS_CONFLICT`).
+ */
+function datasetOf(s: Session, work: Work): Dataset | undefined {
+  const record = s.data?.records[work.index];
+  const base = record && 'dataset' in record ? record.dataset : s.data || !work.samples ? undefined : sampleData(work.samples);
+  if (!base) return;
+  const data = { ...base.data };
+  for (const i of work.inputItems) {
+    const field = isField(i.origin) && i.status !== 'excluded' && i.key ? s.inputs?.find(x => x.kind === i.origin && x.row === i.row && x.start === i.start && x.end === i.end)?.name : undefined;
+    if (field === undefined || field === i.key) continue;
+    const value = resolvePathValue(base, i.key, 'error');
+    if (value.kind !== 'text') continue;
+    if (Object.hasOwn(base.data, field) && base.data[field] != null) fail('DATA_ALIAS_CONFLICT', `'${field}' 필드는 데이터 키 '${i.key}'에 연결했는데 데이터에 '${field}' 값도 있습니다. 한 열만 남기세요.`);
+    data[field] = value.text;
+  }
+  return { data, derived: base.derived };
+}
+
+/**
+ * 표 보기의 입력 항목(#146). 생성에는 확정한 자리의 타입 꾸밈과 누름틀·메일머지의 데이터 연결(#149)에만 쓰고(확정한 항목은 이미 편집 글의 `{{키}}`다) 작업 파일에 남겼다 되살린다.
  * 위치는 원문 줄 글 기준이고, 확정한 항목은 이름이 있고 키가 규칙에 맞아야 한다(누름틀·메일머지는 필드 이름이 키).
  */
 function inputItemsOf(value: unknown, row: (id: unknown) => Row): InputItem[] {
@@ -183,6 +223,27 @@ function inputItemsOf(value: unknown, row: (id: unknown) => Row): InputItem[] {
     need(!seen.has(id), 'WORKBENCH_DUPLICATE'); seen.add(id);
     return item;
   });
+}
+
+/**
+ * Helper 서식 판(#173·#149)의 자리: 문서에서 찾은 누름틀·메일머지·`{{키}}`(추천 목록에서 제외한 것 빼고)와, 표 보기에서 지정·확정하고 이름을 적은 자리(원문 구간의 word 앵커,
+ * 빈 문단이면 line 앵커). 구간이 비어 앵커를 만들 수 없는 지정은 넣지 않고 수만 돌려준다.
+ */
+function g2bEntries(s: Session, items: readonly InputItem[]): { entries: G2BEntry[]; skipped: number } {
+  const entries: G2BEntry[] = [];
+  let skipped = 0;
+  for (const x of s.inputs ?? []) {
+    const r = items.find(i => i.origin === x.kind && i.row === x.row && i.start === x.start && i.end === x.end);
+    if (r?.status !== 'excluded') entries.push({ kind: x.kind, name: x.kind === 'placeholder' ? x.name.trim() : x.name, ...(r ? { key: r.key, type: r.type } : {}) });
+  }
+  for (const r of items) {
+    if (r.origin !== 'user' || r.status === 'excluded' || !r.name.trim()) continue;
+    const row = s.rows.find(x => x.id === r.row)!, id = 'a' + (entries.filter(e => e.anchor).length + 1);
+    const anchor = r.start < r.end ? makeWordAnchor(s.doc!, id, row.sectionIndex, row.path, r.start, r.end) : row.text === '' ? makeLineAnchor(s.doc!, id, row.sectionIndex, row.path) : undefined;
+    if (anchor) entries.push({ kind: anchor.kind, name: r.name.trim(), key: r.key, type: r.type, anchor, unit: /원\s*$/u.test(row.text.slice(r.start, r.end)) });
+    else skipped++;
+  }
+  return { entries, skipped };
 }
 
 /** 표 보기 견본 값: 고른 데이터 행에서 쓸 수 있는 키의 값(글로 바꾼 것, 200자까지) */
@@ -270,8 +331,7 @@ const unlinked = (what: string): never => fail('WORKBENCH_UNLINKED', `연결 안
 // `dataset`을 주면 그 데이터로 만든다(남은 자리를 셀 때 값의 중괄호를 가린 데이터로 다시 만드는 용도)
 function build(s: Session, work: Work, makeTemplate = false, library?: BlockLibrary, override?: Dataset) {
   need(s.doc, 'WORKBENCH_SOURCE');
-  const record = s.data?.records[work.index];
-  const dataset = makeTemplate ? undefined : override ?? (record && 'dataset' in record ? record.dataset : undefined);
+  const dataset = makeTemplate ? undefined : override ?? datasetOf(s, work);
   const compositionData=work.placements.length?undefined:dataset;
   const template = emptyTemplate();
   const formats: { row: Row; text: string; spans: { start: number; end: number }[]; block: boolean; keys: ReturnType<typeof findPlaceholders> }[] = [];
@@ -364,7 +424,7 @@ function build(s: Session, work: Work, makeTemplate = false, library?: BlockLibr
 }
 
 function buildText(s: Session, work: Work) {
-  const record = s.data?.records[work.index], dataset = record && 'dataset' in record ? record.dataset : undefined;
+  const dataset = datasetOf(s, work);
   const separators = [...s.sourceText!.matchAll(/\r\n|\r|\n/g)].map(m => m[0]);
   const edits = new Map(work.edits.filter(e => e.text !== s.rows.find(r => r.id === e.id)!.text).map(e => [e.id, e]));
   let text = '', filled = 0, ranges = 0;
@@ -409,7 +469,7 @@ export function createWorkbench(library?: BlockLibrary) {
     });
     if (sessions.size >= 8) sessions.delete(sessions.keys().next().value!);
     const session = randomUUID(); sessions.set(session, s);
-    return {session,kind:s.kind,name:s.name,sourceUrl:`/api/workbench/source?session=${session}`,...(s.sourceText===undefined?{}:{sourceText:s.sourceText}),paragraphs:s.rows,fields,inputs:inputsOf(s),outline,blockCandidates};
+    return {session,kind:s.kind,name:s.name,sourceUrl:`/api/workbench/source?session=${session}`,...(s.sourceText===undefined?{}:{sourceText:s.sourceText}),paragraphs:s.rows,fields,inputs:s.inputs=inputsOf(s),outline,blockCandidates};
   };
   return {
     // Unsaved placements exist only here; block deletion must see every open session.
@@ -432,7 +492,7 @@ export function createWorkbench(library?: BlockLibrary) {
         if (path === '/api/workbench/restore') {
           need(typeof input.workspace !== 'string' || Buffer.byteLength(input.workspace) <= 20 * 1024 * 1024, 'WORKBENCH_WORKSPACE');
           const raw: unknown = typeof input.workspace === 'string' ? JSON.parse(input.workspace) : input.workspace;
-          need(isObj(raw) && raw.schema === schema && (raw.kind === 'text' || raw.kind === 'hwpx') && Object.keys(raw).every(k => ['schema', 'kind', 'name', 'source', 'sha256', 'data', 'edits', 'headings', 'blocks', 'placements', 'inputItems', 'index', 'missing', 'workspaceId'].includes(k)), 'WORKBENCH_WORKSPACE');
+          need(isObj(raw) && raw.schema === schema && (raw.kind === 'text' || raw.kind === 'hwpx') && Object.keys(raw).every(k => ['schema', 'kind', 'name', 'source', 'sha256', 'data', 'edits', 'headings', 'blocks', 'placements', 'inputItems', 'index', 'missing', 'samples', 'workspaceId'].includes(k)), 'WORKBENCH_WORKSPACE');
           const s = open(raw.name, raw.source); need(raw.kind === s.kind, 'WORKBENCH_WORKSPACE'); need(raw.sha256 === hash(s.source), 'WORKBENCH_SOURCE_HASH');
           if (raw.data !== undefined) { const parsed = parseData(raw.data, 'data.json'); s.data = parsed.data; s.dataContent = parsed.content; }
           need(raw.workspaceId===undefined||typeof raw.workspaceId==='string'&&/^[0-9a-f-]{36}$/.test(raw.workspaceId),'WORKBENCH_WORKSPACE');
@@ -496,6 +556,11 @@ export function createWorkbench(library?: BlockLibrary) {
           return { ...(address ? { id: rowId(address.sectionIndex, address.path) } : {}), location };
         }
         if (path === '/api/workbench/sample') return sampleOf(s, input.index);
+        if (path === '/api/workbench/g2b-template') {
+          need(s.doc && (input.id === undefined || typeof input.id === 'string' && /^t[0-9a-f]{8}$/.test(input.id)));
+          const { entries, skipped } = g2bEntries(s, workOf(s, input).inputItems), sha256 = hash(s.source);
+          return { template: g2bTemplate(entries, { id: (input.id as string | undefined) ?? 't' + sha256.slice(0, 8), version: 1, name: s.name.replace(/\.hwpx$/i, ''), sha256 }), skipped };
+        }
         if (path === '/api/workbench/item-label') {
           // 지정한 자리의 가장 가까운 라벨(#148): 같은 문단 앞 `라벨:` → 같은 표 행 왼쪽 라벨 칸 → 위 제목
           const row = s.rows.find(r => r.id === input.row); need(row, 'WORKBENCH_POSITION');
@@ -535,7 +600,7 @@ export function createWorkbench(library?: BlockLibrary) {
           let notes = result.notes, unresolved = 'unresolved' in result ? result.unresolved : undefined;
           if (s.kind === 'hwpx' && !makeTemplate) {
             // 결과에 남은 {{…}}(혼합 서식·이름 규칙 밖·자리 유지 등): 기본 정책은 생성 막기, 자리 유지면 알림(빠른 생성과 같은 판정)
-            const record = s.data?.records[work.index], dataset = record && 'dataset' in record ? record.dataset : undefined;
+            const dataset = datasetOf(s, work);
             const left = leftoverOf(result.output, dataset, masked => { try { return build(s, work, false, library, masked).output; } catch { return undefined; } });
             if (left.count && work.missing === 'error') unlinked(describeLeftover(left));
             if (left.count) { unresolved = left.count; notes = [...notes, `채우지 못한 {{…}} 자리가 결과에 그대로 남았습니다(${describeLeftover(left)})`]; }

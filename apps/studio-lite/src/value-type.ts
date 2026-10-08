@@ -78,7 +78,7 @@ const WEEKDAYS = '일월화수목금토';
 /**
  * 확정한 자리에 넣을 값 글을 타입과 원문 모양에 맞춘다. `original`은 그 자리의 원문 글, `following`은 원문에서 자리 바로 뒤 글이다.
  * - 금액·수량: 값이 수 하나(앞뒤 글 허용)일 때만. 금액은 천 단위 쉼표, 수량은 원문 수에 쉼표가 있을 때만 쉼표.
- *   원문이 수 모양이면 원문의 앞 글·뒤 글(`금 `·`원`·`개` 등)을 따르고, 아니면 값의 앞 글·뒤 글을 쓴다.
+ *   원문이 수 모양이면 원문의 앞 글·뒤 글(`금 `·`원`·`개` 등)을 따르고, 아니면 금액은 값의 앞뒤 글(`금`·`원`·`₩`)을 떼고(엔진 money 기본 표시와 같다, #172) 수량은 값의 것을 쓴다.
  *   자리 바로 뒤 원문이 그 뒤 글로 시작하면(`{{금액}}원`) 붙이지 않는다("원"이 두 번 나오지 않는다).
  * - 날짜: 값이 날짜일 때. 원문이 날짜면 그 서식(구분 글·공백·끝 글·0 채움·요일 괄호. 요일은 새 날짜로 다시 센다)을 따르고,
  *   원문에 날짜 서식이 없으면(`{{계약일}}` 등) 기본 `YYYY. MM. DD.`(사용자 결정 2026-10-09: 기본 서식, 서식 설정으로 덮는다)이다.
@@ -91,7 +91,7 @@ export function decorateValue(type: ValueType, value: string, original: string, 
     const o = numberParts(original);
     const number = type === 'money' || (o ? o.comma : v.comma) ? group(v.number) : v.number.replace(/^0+(?=\d)/, '');
     // 앞 글·뒤 글은 원문 모양, 부호는 값의 것(`△1234` → `△1,234`)
-    const prefix = o ? o.prefix : v.prefix, suffix = o ? o.suffix : v.suffix;
+    const prefix = o ? o.prefix : type === 'money' ? '' : v.prefix, suffix = o ? o.suffix : type === 'money' ? '' : v.suffix;
     return prefix + v.sign + number + (suffix.trim() !== '' && following.trimStart().startsWith(suffix.trim()) ? '' : suffix);
   }
   if (type === 'date') {
