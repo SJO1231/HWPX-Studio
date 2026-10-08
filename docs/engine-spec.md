@@ -361,6 +361,7 @@ type Fragment = {
   lineSegSpans: { start: number; end: number }[]
   texts: string[]                   // 조각 안 모든 문단의 논리 텍스트(문서 순서)
   prints: string[]                  // 조각 안 모든 서식 참조의 지문(문서 순서)
+  dangling: { kind: string; id: string; count: number }[]  // 소스에서 이미 없는 대상을 가리키던 참조의 종류·id별 개수(FRAG_DANGLING_SOURCE와 짝, 7.8). 이전 형식 조각은 빈 목록으로 읽는다
 }
 type FragmentResource = {
   kind: string; lang?: string; id: string; xml: string
@@ -398,7 +399,7 @@ type InsertPoint = { sectionIndex: number; parentPath: number[]; index: number; 
 3. **본문 재작성**: 조각 원문의 참조 속성값을 대응표대로 바꾼다. 줄 배치 캐시 구간을 지운다.
 4. **인스턴스 id**: 객체 id·instId가 대상에 이미 있거나 자리값(`0`, 빈 값)이면 새 값(대상과 조각을 합친 가장 큰 숫자 + 1부터)을 준다. 필드는 시작 id와 끝의 `beginIDRef`를 함께 바꾼다. 문단 id는 자리값(빈 값, `0`, `2147483648`, `4294967295`)이 아니고 대상에 이미 있을 때만 새 값(문단 id 최댓값 + 1부터, 자리값은 건너뜀)으로 바꾼다.
 5. **책갈피**: 이름이 대상과 겹치면 `_1`, `_2` …를 붙인다.
-6. **이진 자료**: 대상에 같은 내용(sha256)의 항목이 있으면 그 id를 재사용한다. 없으면 겹치지 않는 새 id와 항목 이름으로 추가하고 manifest에 등록한다.
+6. **이진 자료**: 대상에 같은 내용(sha256)의 항목이 있으면 그 id를 재사용한다. 없으면 겹치지 않는 새 id와 항목 이름으로 추가하고 manifest에 등록한다. 새 id는 대상 manifest의 id와, 없는 이진 자료를 가리키는 참조의 id(대상 본문·header의 것, 조각의 `dangling`)를 건너뛰고, 항목 이름은 패키지 항목과 대상 manifest 항목이 가리키는 이름을 건너뛴다. 그 참조·항목은 그대로 남으므로 새 항목이 같은 id·이름을 받으면 새 그림을 가리키게 되기 때문이다(#157). `dangling` 키가 없는 이전 형식 조각은 조각 쪽 id를 몰라 건너뛰지 못한다.
 7. **삽입**: 삽입 지점 문단의 시작(before) 또는 끝(after)에 재작성한 조각 원문을 넣는다.
 8. `summary`에 재사용·추가·재발급 수를 적는다.
 
@@ -1258,11 +1259,11 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | --- | --- | --- | --- | --- |
 | `text` | 글은 그대로, 수·참거짓은 글(8.2의 값 변환) | 없음 | 원문 그대로(앞자리 0·전화·식별번호 꼴 보존) | 없음(제어 문자는 `VALUE_CONTROL_CHAR`) |
 | `number` | 십진수 글(앞뒤 공백 무시, 천 단위 쉼표, 음수 `-`) 또는 JSON 수 | 십진 글(쉼표 없음, 앞자리 0을 뗌, 소수 자릿수 그대로) | `1,234.50` | `1,23`·`+5`·`1e3`·`.5`·`5.`·전각 숫자·단위가 붙은 글 |
-| `money` | number와 같되 앞의 `금`, 끝의 `원`·`원정`, `₩`, 모든 공백을 떼고 음수는 `-` 또는 `△`(`₩` 앞뒤 어디든) | number와 같다 | `-1,234원` | `1,234달러`·`△-1`·`원`만·`+1,234` |
+| `money` | number와 같되 앞의 `금`, 끝의 `원`·`원정`, `₩`·전각 `￦`, 모든 공백을 떼고 음수는 `-` 또는 `△`(`₩` 앞뒤 어디든) | number와 같다 | `-1,234원` | `1,234달러`·`△-1`·`원`만·`+1,234` |
 | `percent` | 십진수 또는 끝에 `%`를 붙인 십진수(`%` 앞 공백 허용). 12.5%는 12.5 | number와 같다 | `12.5%` | `%12`·`12%%`·`12‰`·`12 퍼센트` |
 | `date` | `YYYYMMDD`·`YYYY-MM-DD`·`YYYY/MM/DD`·`YYYY.MM.DD`(구분자 앞뒤 공백 허용, 월·일 1~2자리, 점 꼴은 끝 점 허용). 달력 검사(윤년 포함) | `YYYY-MM-DD` | `YYYY. MM. DD.` | 2월 30일·평년 2월 29일·13월·0일·연도 0·섞인 구분자·`2026년 10월 9일` |
 | `datetime` | date 꼴 + 공백 또는 `T` + `HH:MM` 또는 `HH:MM:SS`(시 1~2자리 0~23, 분·초 2자리 0~59) | `YYYY-MM-DDTHH:MM:SS` | `YYYY. MM. DD. HH:mm`(입력에 초가 있으면 `:ss`를 더함) | 시각 없음·`24:00`·초 60·시간대(`Z`·`+09:00`)·소수 초 |
-| `boolean` | 참거짓, `true`/`false`·`Y`/`N`(대소문자 무시)·`예`/`아니오`(앞뒤 공백 무시) | `true`·`false` | `예`·`아니오` | `1`·`0`(수·글 모두)·`yes`·`네`·`아니요` |
+| `boolean` | 참거짓, `true`/`false`·`Y`/`N`(대소문자 무시)·`예`/`아니오`·`아니요`(앞뒤 공백 무시) | `true`·`false` | `예`·`아니오` | `1`·`0`(수·글 모두)·`yes`·`네` |
 
 - 수(number·money·percent)는 십진 글 그대로 다룬다. 표시 글은 정규 꼴에서 만들고 JavaScript 수를 거치지 않는다(`"9007199254740993"` → `9,007,199,254,740,993`, `"1234.50"` → `1,234.50`). 크기 제한이 없다. JSON 수는 기본 글 꼴이 십진 꼴일 때만 읽는다(`1e21` 이상처럼 지수 꼴이면 `DATA_FORMAT`). 천 단위 쉼표는 세 자리씩 바르게 묶은 것만 받는다(`1,23`은 오타로 보고 거절). `-0`·`-0.00`은 부호를 뗀다. 앞자리 0은 `text`에서만 남는다(`"007"`은 number·money에서 7).
 - 빈 값: `null`·없음은 누락이다(아래 누락 정책). 빈 글은 모든 타입에서 빈 값(state `empty`, `text` 빈 글)이고, text 밖 타입은 공백뿐인 글도 빈 값이다. 빈 값은 형식 오류가 아니다.
@@ -1280,6 +1281,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 - 자리 바로 뒤 단위: money·percent 값의 글은 단위로 끝난다. 생성(8.8.12)은 자리마다 바로 뒤 글(스페이스·탭·NBSP·전각 공백을 건너뜀)이 그 단위로 시작하면 단위를 뗀 글을 넣는다(`금 {{금액}}원정` → `금 1,234원정`, `{{율}} %` → `12.5 %`). 바로 뒤 글은 `{{ }}`·`word` 자리는 같은 문단의 자리 뒤 글, 누름틀·메일머지는 끝 표식 뒤 글이다. `line`·`cell` 자리는 문단·칸 전체를 바꾸므로 뒤 글이 없어 단위를 붙인다. 앞의 `₩`·`금`이나 전각 `％`는 보지 않는다.
 - 조건(8.8.8)은 꾸미기 전 값으로 비교한다: number·money·percent는 수(정규 꼴을 JavaScript 수로 바꾼 것. 아주 큰 수·긴 소수는 근삿값), date·datetime은 정규 꼴 글(글자 순서가 시간 순서), boolean은 참거짓, text는 글, 빈 값은 빈 글이다.
 - #29 판과의 차이: `money`가 `"1,234"`·`"1,234원"`·소수·안전 정수 밖의 수를 받는다(의도한 확장). 정수 입력의 출력 꼴(`1,234원`·`-1,234원`)은 같다. 빈 글 `money`는 `DATA_FORMAT`이 아니라 빈 값이다.
+- 값 형식 7종 예약(2026-10-09 확정, #131): 지금 형식은 `text`·`money` 둘뿐이다. #131에서 `/api/g2b` 2판의 타입 7종(`text`·`number`·`money`·`percent`·`date`·`datetime`·`boolean`)으로 넓히고, 읽기·표시 규칙은 8.8.14의 타입 표를 따른다(`money`는 쉼표·`원`·`₩` 허용, 십진 문자열 유지, 표시 기본 `-1,234`, 서식에 "원"이 있으면 숫자만. 표시 기본값은 서식 설정으로 덮는다). 구현 전까지는 위 `money` 규칙이 유효하다.
 - 연결 `{ value, key 또는 path, aliases? }`: 값에 데이터 한 칸을 잇는다. 쓰이는 값(자리·조건·블록 글이 가리키는 값)마다 정확히 하나가 있어야 하고, 없으면 `TPL_UNBOUND_VALUE`, 둘 이상이면 `TPL_FIELD`다. 쓰이지 않는 값은 연결이 없어도 된다. `bindings[]`가 없으면 빈 목록으로 읽는다.
   - `key`: 데이터 행(JSON 객체)의 최상위 열 이름 그대로다. 공백·점·괄호가 있어도 된다(점은 경로 구분이 아니다). 엑셀 머리글을 그대로 쓰기 위한 것이다.
   - `path`: 중첩 경로(8.2의 경로 문법).
@@ -1758,6 +1760,8 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | `range` 앵커와 `makeRangeAnchor`, 액션의 range 수용, 보고서의 `moves` | `src/fill/` | 7.10. 내부에서 이동표 변환과 느슨한 `{{ }}` 찾기 |
 | `checkAnchors(doc, t)`, `planRelocation(t, checks)`, `redraftAnchor(doc, old, draft)` | `src/fill/` | 8.8.13의 상태표·relocated 일괄 갱신 계획·재지정(id 유지). `resolveAnchors`(안에서 `locateRange`)를 재사용하고, `draftAnchors`의 초안을 입력으로 받는다 |
 | `patternOf(doc, at)`, `suggestSimilar(doc, pattern)` | `src/fill/` | 7.10(#20. #19의 탐지 규칙에 의존) |
+| `isLabelText(text)` | `src/fill/candidates.ts` | 8.3 후보 자리의 라벨 글 규칙(개체 자리 글자·앞뒤 공백을 뺀 글이 12자 이하이고 문장 끝맺음·빈칸 모양이 아님). `labelCellRight`가 쓴다(lite 행 머리 라벨, #148) |
+| `colonLabel(text)` | `src/fill/candidates.ts` | 8.3 후보 자리의 `라벨:` 글 규칙. 맞으면 라벨(앞뒤 공백 걷음), 아니면 undefined. `isLabelColon`이 쓴다(lite `라벨:` 라벨, #148) |
 | `listProtoUsage(templates, protoId, latest)`, `planProtoUpdate(t, proto)` | `src/template/` | 8.8.7(#21). 형식과 무관한 순수 함수 |
 | CLI `fill --template(@2) --case --blobs <폴더>` | `apps/cli` | 8.4. 앱과 같은 바이트 |
 | `extractBlock(doc, range, meta)`, `reextractBlock(resultDoc, range, proto, meta)` | `src/fill/block-store.ts` | 8.8.17. 범위에서 블록(원형 판 + 조각 덩어리)을 떼고, 결과 문서에서 다시 떼어 새 판 |

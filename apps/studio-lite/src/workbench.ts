@@ -10,7 +10,9 @@ import { toRhwpPosition, type RhwpPosition } from '../../../packages/viewer/src/
 import { extractBlockDraft, type BlockDraft, type BlockLibrary } from './block-library.ts';
 import { parseCsv } from './core.ts';
 import { analyzePlaces, describeLeftover, findLeftovers, leftoverOf, listKeys, parseQuickData, type QuickData } from './quick.ts';
-import { ITEM_KEYS, isField, validKey, type InputItem } from './input-table.ts';
+import { CONTEXT, ITEM_KEYS, LABEL_MAX, LABEL_RELS, isField, repsOf, spanNow, validKey, type InputItem } from './input-table.ts';
+import { labelAt } from './item-label.ts';
+import { VALUE_TYPES, decorateValue } from './value-type.ts';
 
 import { plainOf as plainBlock } from '../../studio/src/messages.ts';
 const MAX_SOURCE = 10 * 1024 * 1024;
@@ -25,12 +27,12 @@ type Heading = { id: string; level: 1 | 2 };
 type Block = { id: string; from: string; to: string; text: string; alias: string };
 type Placement = {id:string;version:number;from:string;to:string};
 type Work = { edits: Edit[]; headings: Heading[]; blocks: Block[]; placements: Placement[]; inputItems: InputItem[]; index: number; missing: "error" | "keep" };
-type Session = { workspaceId?: string; kind: 'hwpx' | 'text'; name: string; source: Uint8Array; doc?: HwpxDocument; sourceText?: string; rows: Row[]; data?: QuickData; dataContent?: string; output?: Uint8Array; blockPreviews?: Map<string, BlockDraft>; pins?: Set<string> };
+type Session = { workspaceId?: string; kind: 'hwpx' | 'text'; name: string; source: Uint8Array; doc?: HwpxDocument; sourceText?: string; rows: Row[]; headings?: { id: string; name: string }[]; data?: QuickData; dataContent?: string; output?: Uint8Array; blockPreviews?: Map<string, BlockDraft>; pins?: Set<string> };
 const rowId = (section: number, path: number[]) => `p:${section}:${path.join('.')}`;
 const sameParent = (a: Row, b: Row) => a.sectionIndex === b.sectionIndex && a.path.length === b.path.length && a.path.slice(0, -1).every((n, i) => n === b.path[i]);
 const contains = (a: Row, b: Row, row: Row) => sameParent(a, row) && row.path.at(-1)! >= a.path.at(-1)! && row.path.at(-1)! <= b.path.at(-1)!;
 const paragraph = (doc: HwpxDocument, row: Pick<Row, 'sectionIndex' | 'path'>) => [...walkParagraphs(doc.sections[row.sectionIndex]!.paragraphs)].find(p => p.path.length === row.path.length && p.path.every((n, i) => n === row.path[i]));
-type Input = { kind: 'clickHere' | 'mailMerge' | 'placeholder'; name: string; row: string; start: number; end: number; usable?: boolean };
+type Input = { kind: 'clickHere' | 'mailMerge' | 'placeholder'; name: string; row: string; start: number; end: number; usable?: boolean; label?: ReturnType<typeof labelAt> };
 
 /**
  * 추천 목록의 입력 항목 후보(문서 순서): 누름틀(이름 있음)·메일머지(키 있음)와 필드 표시 글 밖의 `{{키}}`. 필드 표시 글 안의 `{{키}}`는 그 필드가 맡으므로
@@ -57,8 +59,11 @@ function inputsOf(s: Session): Input[] {
     out.push({ kind: 'placeholder', name: m[1]!, row: r.id, start: m.index, end: m.index + m[0].length, usable: isValidPath(m[1]!.trim()) });
   }
   const order = new Map(s.rows.map((r, i) => [r.id, i]));
+  // 찾은 자리마다 가장 가까운 라벨(#148)을 붙인다
+  for (const x of out) { const label = labelOf(s, s.rows.find(r => r.id === x.row)!, x.start); if (label) x.label = label; }
   return out.sort((a, b) => (order.get(a.row) ?? 0) - (order.get(b.row) ?? 0) || a.start - b.start);
 }
+const labelOf = (s: Session, row: Row, start: number) => labelAt(s.doc, s.rows, s.headings ?? [], row, start);
 
 function placementInfo(s:Session,selected:Placement,library:BlockLibrary){
   need(s.doc,'BLOCK_HWPX');
@@ -162,11 +167,17 @@ function inputItemsOf(value: unknown, row: (id: unknown) => Row): InputItem[] {
   const seen = new Set<string>();
   return ((value as unknown[] | undefined) ?? []).map(x => {
     need(isObj(x) && Object.keys(x).every(k => (ITEM_KEYS as readonly string[]).includes(k)));
-    const r = row(x.row), { start, end, name, key, type, status, origin } = x;
+    const r = row(x.row), { start, end, name, key, typeSet, label, before, after, status, origin } = x;
+    // #146 작업 파일의 금액 타입 이름 `amount`는 `money`(엔진 8.8.4·Helper 계약의 이름)로 읽는다
+    const type = x.type === 'amount' ? 'money' : x.type;
     need(Number.isInteger(start) && Number.isInteger(end) && (start as number) >= 0 && (start as number) <= (end as number) && (end as number) <= r.text.length, 'WORKBENCH_POSITION');
     need(typeof name === 'string' && name.length <= 500 && checkValueText(name) === undefined && typeof key === 'string' && key.length <= 500 && checkValueText(key) === undefined);
-    need((type === 'text' || type === 'amount') && ['recommended', 'designated', 'confirmed', 'excluded'].includes(status as string) && ['user', 'placeholder', 'clickHere', 'mailMerge'].includes(origin as string));
-    const item = { row: r.id, start, end, name, key, type, status, origin } as InputItem;
+    need((VALUE_TYPES as readonly unknown[]).includes(type) && (typeSet === undefined || typeof typeSet === 'boolean') && ['recommended', 'designated', 'confirmed', 'excluded'].includes(status as string) && ['user', 'placeholder', 'clickHere', 'mailMerge'].includes(origin as string));
+    // 라벨(#148): 글 1~80자, 관계, 거리. 앞뒤 글은 각 60자까지
+    need(label === undefined || isObj(label) && Object.keys(label).length === 3 && typeof label.text === 'string' && label.text.trim() !== '' && label.text.length <= LABEL_MAX && checkValueText(label.text) === undefined
+      && (LABEL_RELS as readonly unknown[]).includes(label.rel) && Number.isInteger(label.distance) && (label.distance as number) >= 0 && (label.distance as number) <= 100000);
+    for (const side of [before, after]) need(side === undefined || typeof side === 'string' && side.length <= CONTEXT && checkValueText(side) === undefined);
+    const item = { row: r.id, start, end, name, key, type, ...(typeSet ? { typeSet } : {}), ...(label === undefined ? {} : { label }), ...(before === undefined ? {} : { before }), ...(after === undefined ? {} : { after }), status, origin } as InputItem;
     need(item.status !== 'confirmed' || item.name.trim() !== '' && (isField(item.origin) || validKey(item.key)), 'WORKBENCH_FIELD_NAME');
     const id = `${item.row}:${item.start}:${item.end}:${item.origin}`;
     need(!seen.has(id), 'WORKBENCH_DUPLICATE'); seen.add(id);
@@ -187,7 +198,21 @@ function sampleOf(s: Session, index: unknown) {
 }
 
 // ponytail: this projection only supports **bold** and {{path}}, not Markdown round trips.
-function projected(input: string, dataset: Dataset | undefined, format = true, keepKeys = false) {
+/**
+ * 타입 꾸밈(#147): 확정해 `{{키}}`로 바꾼 자리(금액·날짜·수량)의 값 글을 원문 모양에 맞춘다. 열쇠는 그 `{{키}}`가 지금 편집 글에서 시작하는 위치다.
+ * 문서에 원래 있던 `{{키}}`·누름틀·메일머지는 엔진이 채우므로 여기서 꾸미지 않는다(엔진 표시 형식 #131).
+ */
+function decorationsOf(items: readonly InputItem[], row: Row, current: string): Map<number, (value: string) => string> {
+  const out = new Map<number, (value: string) => string>(), reps = repsOf(items, row.id, row.text);
+  for (const i of items) {
+    if (i.row !== row.id || i.status !== 'confirmed' || !reps.some(r => r.start === i.start && r.end === i.end) || !['money', 'date', 'quantity'].includes(i.type)) continue;
+    const at = spanNow(row.text, current, reps, i.start, i.end);
+    if (at) out.set(at.start, value => decorateValue(i.type, value, row.text.slice(i.start, i.end), row.text.slice(i.end)));
+  }
+  return out;
+}
+
+function projected(input: string, dataset: Dataset | undefined, format = true, keepKeys = false, decorate?: Map<number, (value: string) => string>) {
   let text = '', bold = false, start = 0, cursor = 0, filled = 0;
   const spans: { start: number; end: number }[] = [];
   const literal = (value: string) => format ? value.replace(/\r\n?/g, '\n') : value;
@@ -207,7 +232,8 @@ function projected(input: string, dataset: Dataset | undefined, format = true, k
       else {
         need(isValidPath(path) && dataset, 'WORKBENCH_DATA_REQUIRED');
         // Data is appended literally; its ** and {{}} are never parsed again.
-        text += resolveValue(dataset, path); filled++;
+        const value = resolveValue(dataset, path), shape = decorate?.get(match.index);
+        text += shape ? shape(value) : value; filled++;
       }
     }
     cursor = match.index + match[0].length;
@@ -252,7 +278,7 @@ function build(s: Session, work: Work, makeTemplate = false, library?: BlockLibr
   const row = (id: string) => s.rows.find(r => r.id === id)!;
   const edits = work.edits.filter(e => e.text !== row(e.id).text);
   for (const [i, edit] of edits.entries()) {
-    const r = row(edit.id), content = projected(edit.text, compositionData, true, makeTemplate||work.placements.length>0), id = `edit${i}`;
+    const r = row(edit.id), content = projected(edit.text, compositionData, true, makeTemplate||work.placements.length>0, decorationsOf(work.inputItems, r, edit.text)), id = `edit${i}`;
     const partial = r.rangeEditable ? undefined : changedRange(s.doc, r, content.text);
     if (r.rangeEditable || partial) {
       const a = r.text.length ? makeWordAnchor(s.doc, id, r.sectionIndex, r.path, partial?.start ?? 0, partial?.end ?? r.text.length) : makeLineAnchor(s.doc, id, r.sectionIndex, r.path);
@@ -345,11 +371,13 @@ function buildText(s: Session, work: Work) {
   const left: string[] = [];
   for (let i = 0; i < s.rows.length; i++) {
     const row = s.rows[i]!, block = work.blocks.find(b => b.from === row.id), edit = edits.get(row.id);
-    const content = (block ? block.text : edit ? edit.text : row.text).replace(/\{\{([^{}]*)\}\}/g, (token, key: string) => {
+    const decorate = edit && !block ? decorationsOf(work.inputItems, row, edit.text) : undefined;
+    const content = (block ? block.text : edit ? edit.text : row.text).replace(/\{\{([^{}]*)\}\}/g, (token, key: string, at: number) => {
       const path = key.trim();
       if (/^[#/]/.test(path)) { ranges++; return token; }
       const value = dataset && isValidPath(path) ? resolvePathValue(dataset, path, 'error') : undefined;
-      if (value?.kind === 'text') { filled++; return value.text; }
+      const shape = decorate?.get(at);
+      if (value?.kind === 'text') { filled++; return shape ? shape(value.text) : value.text; }
       left.push(token); return token;
     });
     if (block) i = s.rows.findIndex(r => r.id === block.to);
@@ -373,6 +401,7 @@ export function createWorkbench(library?: BlockLibrary) {
     const fields = s.kind === 'hwpx' ? analyzePlaces(s.source).fields : [];
     const headings = s.doc ? detectHeadings(s.doc) : [];
     const outline = headings.map(h => ({id:rowId(h.at.sectionIndex,[...h.at.parentPath,h.index]),name:h.text,level:h.marker.level}));
+    s.headings = outline;
     const blockCandidates = headings.flatMap(h => {
       const range=headingRangeOf(s.doc!,h.at,h.index);if(!range)return [];
       const from=rowId(h.at.sectionIndex,[...h.at.parentPath,range.from]),to=rowId(h.at.sectionIndex,[...h.at.parentPath,range.to]);
@@ -467,6 +496,14 @@ export function createWorkbench(library?: BlockLibrary) {
           return { ...(address ? { id: rowId(address.sectionIndex, address.path) } : {}), location };
         }
         if (path === '/api/workbench/sample') return sampleOf(s, input.index);
+        if (path === '/api/workbench/item-label') {
+          // 지정한 자리의 가장 가까운 라벨(#148): 같은 문단 앞 `라벨:` → 같은 표 행 왼쪽 라벨 칸 → 위 제목
+          const row = s.rows.find(r => r.id === input.row); need(row, 'WORKBENCH_POSITION');
+          const start = input.start as number, end = input.end as number;
+          need(Number.isInteger(start) && Number.isInteger(end) && start >= 0 && start <= end && end <= row.text.length, 'WORKBENCH_POSITION');
+          const label = labelOf(s, row, start);
+          return label ? { label } : {};
+        }
         if (path === '/api/workbench/check-input') {
           // 표 보기 확정 전 검사: 글자 모양이 섞인 줄은 바뀐 구간이 한 모양 안이어야 생성된다(changedRange와 같은 판정)
           const row = s.rows.find(r => r.id === input.row); need(row, 'WORKBENCH_POSITION');

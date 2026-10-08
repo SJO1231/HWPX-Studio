@@ -71,6 +71,7 @@ test("Q5: 쉬운 말은 값 원문을 모른다 — 같은 코드는 언제나 �
   assert.equal(plainOf("DATA_MISSING"), plainOf("DATA_MISSING"));
   assert.match(plainOf("DATA_MISSING"), /없습니다/);
   assert.match(plainOf("VALUE_CONTROL_CHAR"), /제어 문자/);
+  assert.match(plainOf("DATA_FORMAT"), /타입\(금액·숫자·백분율·날짜·일시·참거짓\)으로 읽을 수 없습니다/);
   assert.match(plainOf("FILL_MIXED_FORMAT"), /글자 모양/);
   assert.match(plainOf("PKG_NOT_ZIP"), /\.hwpx/);
 });
