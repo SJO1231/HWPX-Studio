@@ -190,7 +190,7 @@ test("W8: clickHere·mailMerge는 조립본에서 이름·키로 다시 열거�
   for (const key of MERGE_KEYS) {
     const fields = fieldsOf(doc, "MAILMERGE", key);
     assert.ok(fields.length >= fieldsOf(before, "MAILMERGE", key).length, key);
-    const want = key === "추정가격" ? "60,000,000원" : key === "예정가격" ? "98,765원" : label(key);
+    const want = key === "추정가격" ? "60,000,000" : key === "예정가격" ? "98,765" : label(key);
     for (const f of fields) assert.equal(f.valueText, want, `${key}[${f.occurrence}]`);
   }
   assert.ok(fieldsOf(doc, "MAILMERGE", "담당자").length > fieldsOf(before, "MAILMERGE", "담당자").length, "조각 안의 필드도 채운다");
@@ -329,7 +329,7 @@ test("W8·W2: 원본 해시가 다르면 TPL_SOURCE_MISMATCH, 중첩 슬롯은 T
 
 // ── 값 ─────────────────────────────────────────────────────────
 
-test("값: rejected·DATA_MISSING 값을 쓰는 자리는 그 코드로 실패, 쓰는 자리가 덮였거나 고르지 않은 블록 안이면 막지 않는다. 금액은 1,234원 꼴", () => {
+test("값: rejected·DATA_MISSING 값을 쓰는 자리는 그 코드로 실패, 쓰는 자리가 덮였거나 고르지 않은 블록 안이면 막지 않는다. 금액은 1,234 꼴(단위 없음)", () => {
   const k = kit();
   const load = loaderOf(k.blobs);
   const run = (edit: (row: Record<string, unknown>) => void, t: StudioTemplate = k.t, sme = "N"): StudioGenerateResult => {
@@ -357,8 +357,8 @@ test("값: rejected·DATA_MISSING 값을 쓰는 자리는 그 코드로 실패, 
     row["추정 가격"] = "007";
   }));
   const doc = reparse(out(money));
-  assert.ok(fieldsOf(doc, "MAILMERGE", "예정가격").every((f) => f.valueText === "-1,234원"));
-  assert.ok(fieldsOf(doc, "MAILMERGE", "추정가격").every((f) => f.valueText === "7원"));
+  assert.ok(fieldsOf(doc, "MAILMERGE", "예정가격").every((f) => f.valueText === "-1,234"));
+  assert.ok(fieldsOf(doc, "MAILMERGE", "추정가격").every((f) => f.valueText === "7"));
   // valueEdits가 행보다 이긴다
   const record = recordFor(label, { price: 60000000 });
   const c = caseOf(k.t, record, { selections: { s2: manual(k.t, "s2", "b3") }, valueEdits: { [k.valueId("사업명")]: "정정 사업" } });

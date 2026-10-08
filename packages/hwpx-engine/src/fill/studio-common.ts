@@ -219,7 +219,7 @@ export function valueFor(v: BoundValue): { issue: { code: string; message: strin
   return v.text === undefined ? { keep: true } : { text: v.text };
 }
 
-/** 값 id → 단위(money의 원, percent의 %. 표시 설정 반영). 자리 바로 뒤 글이 같은 단위로 시작하면 단위를 뗀다(8.8.4, `placeText`) */
+/** 값 id → 단위(percent의 %, money는 display.unit을 줄 때만. 표시 설정 반영). 자리 바로 뒤 글이 같은 단위로 시작하면 단위를 뗀다(8.8.4, `placeText`) */
 export const unitsOf = (t: StudioTemplate): Map<string, string | undefined> => new Map(t.values.map((d) => [d.id, valueUnit(d.format, d.display)]));
 
 /** 등록되지 않은 `{{ }}`의 정책에 따른 이슈(키별 건수) */
