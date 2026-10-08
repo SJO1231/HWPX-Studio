@@ -98,7 +98,7 @@ function kitOf(id: string, bytes: Uint8Array, doc: HwpxDocument, next: () => num
   const vid = new Map(names.map((n, i) => [n, `v${i + 1}`]));
   const raw = {
     schema: "hwpx-studio/template@2", id: "t00000133", version: 1, source: { kind: "hwpx", sha256: sha256Hex(bytes) }, anchors,
-    values: names.map((name) => ({ id: vid.get(name), name, format: formats.get(name) })),
+    values: names.map((name) => ({ id: vid.get(name), name, format: formats.get(name), ...(formats.get(name) === "money" ? { display: { unit: "원" } } : {}) })),
     bindings: names.map((name) => ({ value: vid.get(name), key: name })),
     places: [
       ...spots.map((sp, i) => ({ id: `p${i + 1}`, kind: "word", anchor: `a${i + 1}`, value: vid.get(sp.value) })),

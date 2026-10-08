@@ -193,9 +193,9 @@ export type BoundValue = {
   format: ValueFormat;
   state: ValueState;
   /**
-   * 자리에 채울 글(형식과 표시 설정을 적용한 뒤. money는 기본 1,234원 꼴). 값이 missing이고 누락 정책이 empty이면 빈 글이다.
+   * 자리에 채울 글(형식과 표시 설정을 적용한 뒤. money는 기본 1,234 꼴, 단위 없음). 값이 missing이고 누락 정책이 empty이면 빈 글이다.
    * text 밖 형식의 빈 값(빈 글·공백뿐인 글)도 빈 글이다(state empty).
-   * money·percent는 단위로 끝나고, 자리 바로 뒤 글이 같은 단위로 시작하면 생성이 단위를 뗀다(8.8.4).
+   * 단위가 있으면(percent 기본 %, money는 display.unit을 줄 때만) 단위로 끝나고, 자리 바로 뒤 글이 같은 단위로 시작하면 생성이 단위를 뗀다(8.8.4).
    * 소비자는 text가 있으면 채우고, issue가 있으면 막고, 둘 다 없으면(missing + keep) 자리를 그대로 둔다.
    */
   text?: string;
