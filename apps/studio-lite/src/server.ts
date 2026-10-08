@@ -19,7 +19,8 @@ import { parseDocument, openPackage } from '@hwpx-studio/engine';
 
 // Preview rejections: engine codes use the shared plain table; app/host codes already carry a plain sentence.
 const previewPlain=(e:unknown)=>{const code=(e as {code?:unknown}|null)?.code;return typeof code==='string'&&KNOWN_CODES.includes(code)?blockMessage(code):e instanceof HostError?e.message:'블록 미리보기를 만들지 못했습니다.';};
-const pathCode=(e:unknown)=>e instanceof Error && 'code' in e && typeof e.code==='string'?{code:e.code,plain:plainOf(e.code)}:{};
+// 오류가 제 쉬운 말(`plain`)을 가지면 코드 표의 문장보다 그것을 쓴다(같은 코드의 더 좁은 경우, 예: /quick의 Helper 판 불일치)
+const pathCode=(e:unknown)=>e instanceof Error && 'code' in e && typeof e.code==='string'?{code:e.code,plain:'plain' in e&&typeof e.plain==='string'?e.plain:plainOf(e.code)}:{};
 const ROOT=fileURLToPath(new URL('../',import.meta.url));
 export function createApp(database=':memory:') {
   const db=new DatabaseSync(database);
@@ -34,12 +35,17 @@ export function createApp(database=':memory:') {
       const data=body instanceof Uint8Array ? body : type.startsWith('application/json') ? JSON.stringify(body) : String(body);
       res.writeHead(status,{'Content-Type':type,'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; connect-src 'self'",...headers}); res.end(data);
     };
+    let generating=false;
     try {
       const port=(server.address() as any)?.port;
       const origins=[`http://127.0.0.1:${port}`,`http://localhost:${port}`];
-      if(!origins.some(o=>o===`http://${req.headers.host}`) || (req.headers.origin && !origins.includes(req.headers.origin))) return send(403,{error:'허용되지 않은 출처입니다.'});
       const url=new URL(req.url??'/',origins[0]);
       const path=url.pathname;
+      // 생성 창구(2판 계약 8.8.14)는 본문을 읽기 전의 거절(403·405·415·413·JSON 아님)과 내부 예외(500)도 { code, message } 꼴이다(1판·2판을 본문 전에는 가릴 수 없다)
+      generating=path==='/api/g2b/generate';
+      const refuse=(status:number,message:string)=>send(status,generating?g2b2Body(new G2B2Error(status,'INVALID_REQUEST',message)):{error:message});
+      if(!origins.some(o=>o===`http://${req.headers.host}`) || (req.headers.origin && !origins.includes(req.headers.origin))) return refuse(403,'허용되지 않은 출처입니다.');
+      if(generating&&req.method!=='POST')return refuse(405,'생성 창구는 POST 요청만 받습니다.');
       if(req.method==='GET') {
         const result=workbench.get(path,url.searchParams)??quick.get(path,url.searchParams);
         if(result)return send(200,result.body,'type' in result && typeof result.type==='string'?result.type:'application/vnd.hancom.hwpx',result.name?{'Content-Disposition':`attachment; filename="document.hwpx"; filename*=UTF-8''${encodeURIComponent(result.name)}`}:{});
@@ -76,13 +82,11 @@ export function createApp(database=':memory:') {
         return send(404,{error:'없는 경로입니다.'});
       }
       if(req.method!=='POST' || !path.startsWith('/api/')) return send(405,{error:'지원하지 않는 요청입니다.'});
-      // 생성 창구(2판 계약 8.8.14)는 본문을 읽기 전의 거절도 { code, message } 꼴이다(1판·2판을 본문 전에는 가릴 수 없다)
-      const generating=path==='/api/g2b/generate';
-      if(!req.headers['content-type']?.startsWith('application/json'))return send(415,generating?g2b2Body(new G2B2Error(415,'INVALID_REQUEST','JSON 요청만 받습니다.')):{error:'JSON 요청만 받습니다.'});
+      if(!req.headers['content-type']?.startsWith('application/json'))return refuse(415,'JSON 요청만 받습니다.');
       // 한도를 넘은 본문은 버리면서 끝까지 읽은 뒤 413을 보낸다(읽다 끊으면 보내는 쪽이 답장 대신 연결 끊김을 받는다)
       const chunks:Buffer[]=[];let size=0;
       for await(const chunk of req){size+=chunk.length;if(size<=32*1024*1024)chunks.push(chunk);}
-      if(size>32*1024*1024)return send(413,generating?g2b2Body(new G2B2Error(413,'INVALID_REQUEST','요청은 32MB 이내여야 합니다.')):{error:'요청은 32MB 이내여야 합니다.'});
+      if(size>32*1024*1024)return refuse(413,'요청은 32MB 이내여야 합니다.');
       let input;
       try{input=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch(e){if(generating)throw new G2B2Error(400,'INVALID_REQUEST','요청 본문이 JSON이 아닙니다.');throw e;}
       if(path==='/api/block/rename')return send(200,blockLibrary.rename(input?.id,input?.name));
@@ -96,6 +100,10 @@ export function createApp(database=':memory:') {
       if(path==='/api/g2b/profiles') {
         if(!req.headers.origin)return send(403,{error:'생성 프로필은 Studio의 Helper 연결 화면에서 설정하세요.'});
         return send(200,{profile:input&&typeof input==='object'&&'templateId' in input?g2b2.saveProfile(input):g2b.saveProfile(input)});
+      }
+      if(path==='/api/g2b/profiles/delete') {
+        if(!req.headers.origin)return send(403,{error:'생성 프로필은 Studio의 Helper 연결 화면에서 설정하세요.'});
+        return send(200,g2b2.deleteProfile(input));
       }
       if(path==='/api/g2b/templates') {
         if(!req.headers.origin)return send(403,{error:'서식은 Studio 화면에서 저장하세요.'});
@@ -127,7 +135,10 @@ export function createApp(database=':memory:') {
         return send(200,{id:Number(result.lastInsertRowid),saved:true});
       }
       send(404,{error:'없는 API입니다.'});
-    } catch(e) {if(e instanceof G2B2Error)return send(e.status,g2b2Body(e));send(e instanceof G2BRequestError || e instanceof HostError?e.status:400,{error:e instanceof Error?e.message:'요청 처리에 실패했습니다.',...(e instanceof G2BRequestError?{status:'error',code:e.code}:pathCode(e)),...(req.url?.split('?')[0]==='/api/block/preview'?{plain:previewPlain(e)}:{})});}
+    } catch(e) {if(e instanceof G2B2Error)return send(e.status,g2b2Body(e));
+      // 생성 창구의 내부 예외: 메시지에 경로·SQL이 들 수 있어 쉬운 말만 보낸다
+      if(generating&&!(e instanceof G2BRequestError))return send(500,g2b2Body(new G2B2Error(500,'GENERATION_FAILED',plainOf('GENERATION_FAILED'))));
+      send(e instanceof G2BRequestError || e instanceof HostError?e.status:400,{error:e instanceof Error?e.message:'요청 처리에 실패했습니다.',...(e instanceof G2BRequestError?{status:'error',code:e.code}:pathCode(e)),...(req.url?.split('?')[0]==='/api/block/preview'?{plain:previewPlain(e)}:{})});}
   });
   server.on('close',()=>db.close());
   return server;

@@ -16,6 +16,7 @@ import { readFixture, reparse } from '../../../packages/hwpx-engine/test/helpers
 import { ds, insertText, KEEP, line, longValue, rng, tpl } from '../../../packages/hwpx-engine/test/range-helpers.ts';
 import { createApp } from '../src/server.ts';
 import { createG2B2, fileBase, windowCode } from '../src/g2b-v2.ts';
+import { g2bTemplate } from '../src/input-table.ts';
 
 const sha = (v: string | Uint8Array) => createHash('sha256').update(v).digest('hex');
 const texts = (bytes: Uint8Array) => parseDocument(openPackage(bytes)).sections.flatMap(s => [...walkParagraphs(s.paragraphs)].map(p => p.logicalText));
@@ -533,5 +534,93 @@ test('서식이 안 쓰는 열은 값이 무엇이든(타입과 안 맞는 값·
     await setup(app, join(root, 'out'));
     const r = await app.post('/api/g2b/generate', req('unused', [item({ ...DATA, 원천금액: '확인 중', 원천날짜: '2월 30일', 원천객체: { a: 1 }, 원천목록: [1, 2] })], { types: { 원천금액: 'money', 원천날짜: 'date' } }));
     assert.equal(r.body.status, 'success'); assert.deepEqual(r.body.warnings, []); assert.equal(r.body.results[0].warnings, undefined);
+  });
+});
+
+// ── #173 Helper 프로필 화면 ──────────────────────────────────────
+
+const MAILMERGE = readFileSync(new URL('../../../examples/quick/template-mailmerge.hwpx', import.meta.url));
+type Found = { kind: 'clickHere' | 'mailMerge' | 'placeholder'; name: string; type?: 'money' };
+
+test('#173 화면 API: 열린 문서로 만든 서식 판 저장(같은 내용은 같은 판, 바뀌면 다음 판), 프로필 저장·목록·판 고정·다시 확인·삭제(Origin 없으면 403), 그 판으로 50건 생성', async () => {
+  await withApp(async (app, root) => {
+    // 화면이 하는 그대로: 작업창이 찾은 누름틀·메일머지·{{키}}로 template@2를 만든다
+    const opened = await app.post('/api/workbench/open', { name: 'mailmerge.hwpx', content: MAILMERGE.toString('base64') });
+    const found: Found[] = opened.body.inputs.map((x: Found) => ({ kind: x.kind, name: x.kind === 'placeholder' ? x.name.trim() : x.name }));
+    const id = 't' + sha(MAILMERGE).slice(0, 8), source = MAILMERGE.toString('base64');
+    const make = (version: number, list = found) => g2bTemplate(list, { id, version, name: '메일머지 예시', sha256: sha(MAILMERGE) });
+    const t1 = readStudioTemplate(JSON.stringify(make(1))) as StudioTemplate;
+    const names = [...new Set(found.map(x => x.name))];
+    assert.equal(found.length, 45); assert.equal(t1.values.length, names.length); assert.equal(t1.places.length, new Set(found.map(x => x.kind + x.name)).size);
+    assert(t1.values.every(v => v.format === 'text'));
+
+    for (const [path, body] of [['/api/g2b/templates', { template: make(1), source }], ['/api/g2b/profiles', { id: 'p-1', label: 'x', templateId: id, version: 1, outputDirectory: root }], ['/api/g2b/profiles/delete', { id: 'p-1' }]] as const)
+      assert.equal((await app.post(path, body)).http, 403, path);
+    assert.deepEqual((await app.studio('/api/g2b/templates', { template: make(1), source })).body, { template: { id, version: 1, name: '메일머지 예시' } });
+    assert.equal((await app.studio('/api/g2b/templates', { template: make(1), source })).http, 200);
+    const profile = { id: 'p-1', label: '메일머지 공고', templateId: id, version: 1, outputDirectory: join(root, 'out') };
+    assert.equal((await app.studio('/api/g2b/profiles', profile)).http, 200);
+    const listed = (await app.get('/api/g2b/profiles')).body.profiles;
+    assert.deepEqual(listed, [{ ...profile, outputDirectory: listed[0].outputDirectory }]);
+
+    // 그 판으로 Helper(Origin 없음) 50건: 자리 45곳·값 여럿에 긴 값(여러 문장·줄바꿈·탭·XML 특수문자)
+    const next = rng(0x173a);
+    const items = Array.from({ length: 50 }, (_, i) => ({ values: Object.fromEntries(names.map(n => [n, `${n} ${i}: ${longValue(next, 200, 500)}\n둘째 문장 & <확인> "인용".\t탭 뒤`])) }));
+    const r = await app.post('/api/g2b/generate', { format: 'studio-generate', version: 2, requestId: 'mm-50', profileId: 'p-1', items });
+    assert.equal(r.http, 200, JSON.stringify(r.body).slice(0, 500)); assert.equal(r.body.summary.succeeded, 50, JSON.stringify(r.body.results[0]).slice(0, 500)); assert.deepEqual(r.body.warnings, []);
+    let errors = 0;
+    for (const [i, x] of r.body.results.entries()) {
+      const bytes = new Uint8Array(readFileSync(x.path)), all = texts(bytes).join('\n');
+      errors += newErrors(new Uint8Array(MAILMERGE), bytes).length;
+      assert(!all.includes('{{'), `남은 {{ ${i}`);
+      for (const n of names) assert(all.includes(`${n} ${i}: `), `${n} ${i}`);
+    }
+    assert.equal(errors, 0);
+
+    // 서식이 바뀌면(표에서 한 줄 제외·금액 타입) 1판에는 저장되지 않고(409) 다음 판에 저장된다. 프로필은 다시 확인 전까지 1판
+    const changed = found.filter(x => x.name !== '사유 설명').map(x => x.name === '추정가격' ? { ...x, type: 'money' as const } : x);
+    wholeError(await app.studio('/api/g2b/templates', { template: make(1, changed), source }), 409, 'REQUEST_CONFLICT');
+    assert.equal((await app.studio('/api/g2b/templates', { template: make(2, changed), source })).body.template.version, 2);
+    assert.equal((readStudioTemplate(JSON.stringify(make(2, changed))) as StudioTemplate).values.find(v => v.name === '추정가격')!.format, 'money');
+    assert.equal((await app.get('/api/g2b/profiles')).body.profiles[0].version, 1);
+    assert.equal((await app.studio('/api/g2b/profiles', { ...listed[0], version: 2 })).http, 200);
+    assert.equal((await app.get('/api/g2b/profiles')).body.profiles[0].version, 2);
+    const money = await app.post('/api/g2b/generate', { format: 'studio-generate', version: 2, requestId: 'mm-v2', profileId: 'p-1', items: [{ values: { ...items[0]!.values, 추정가격: 1234000 } }] });
+    assert.equal(money.body.status, 'success'); assert(texts(readFileSync(money.body.results[0].path)).join('\n').includes('1,234,000'));
+
+    // 삭제: 목록에서 빠지고, 없는 id는 deleted false, 틀린 id는 400
+    assert.deepEqual((await app.studio('/api/g2b/profiles/delete', { id: 'p-1' })).body, { deleted: true });
+    assert.deepEqual((await app.get('/api/g2b/profiles')).body.profiles, []);
+    assert.deepEqual((await app.studio('/api/g2b/profiles/delete', { id: 'p-1' })).body, { deleted: false });
+    wholeError(await app.studio('/api/g2b/profiles/delete', { id: '../x' }), 400, 'INVALID_REQUEST');
+  });
+});
+
+test('#173 생성 창구의 403·405·내부 예외(500)도 { code, message } 꼴, 내부 예외 메시지에 SQL·경로 없음', async () => {
+  await withApp(async (app, root) => {
+    await setup(app, join(root, 'out'));
+    wholeError(await app.post('/api/g2b/generate', req('web', [item()]), 'https://public.example'), 403, 'INVALID_REQUEST');
+    wholeError(await app.raw('PUT', '/api/g2b/generate', JSON.stringify(req('put', [item()])), { 'Content-Type': 'application/json' }), 405, 'INVALID_REQUEST');
+    wholeError(await app.get('/api/g2b/generate'), 405, 'INVALID_REQUEST');
+    const side = new DatabaseSync(join(root, 'test.sqlite')); side.exec('DROP TABLE g2b2_request'); side.close();
+    const r = await app.post('/api/g2b/generate', req('boom', [item()]));
+    wholeError(r, 500, 'GENERATION_FAILED');
+    assert(!/g2b2_request|SQL|sqlite|[A-Za-z]:[\\/]/i.test(r.body.message), r.body.message);
+  });
+});
+
+test('#173 /quick·작업창: 판이 다른 Helper 내보내기 파일은 쉬운 말 "판이 다릅니다"(코드 QUICK_BAD_DATA 그대로)', async () => {
+  await withApp(async app => {
+    const sentence = 'Helper 내보내기 파일 판이 다릅니다(2판만 받습니다).';
+    const quick = await app.post('/api/quick/template', { name: 'mailmerge.hwpx', content: MAILMERGE.toString('base64') });
+    const opened = await app.post('/api/workbench/open', { name: 'mailmerge.hwpx', content: MAILMERGE.toString('base64') });
+    for (const version of [1, 3, null]) {
+      const content = JSON.stringify({ format: 'studio-generate', version, items: [{ values: { 사업명: '가' } }] });
+      const r = await app.post('/api/quick/data', { session: quick.body.session, content });
+      assert.equal(r.http, 400); assert.equal(r.body.code, 'QUICK_BAD_DATA'); assert.equal(r.body.plain, sentence);
+      assert.equal((await app.post('/api/workbench/data', { session: opened.body.session, name: 'helper.json', content })).body.error, sentence);
+    }
+    const r = await app.post('/api/quick/data', { session: quick.body.session, content: JSON.stringify({ format: 'studio-generate', version: 2, items: {} }) });
+    assert.equal(r.body.code, 'QUICK_BAD_DATA'); assert.notEqual(r.body.plain, sentence);
   });
 });

@@ -196,6 +196,7 @@ export type QuickData = { form: DataForm; records: BatchRecord[] };
 
 /** G2B Helper 내보내기 파일의 꼴 이름: 생성 요청(`/api/g2b` 2판)과 같은 꼴 `{ format, version: 2, items, columns? }`(엔진 명세 8.8.14) */
 const HELPER_FORMAT = "studio-generate";
+const HELPER_VERSION = "Helper 내보내기 파일 판이 다릅니다(2판만 받습니다).";
 
 const flat = (data: Record<string, unknown>): BatchRecord => ({ dataset: { data, derived: {} } });
 
@@ -215,7 +216,9 @@ export function parseQuickData(body: Uint8Array): QuickData {
   let records: BatchRecord[];
   if (isObj(raw) && raw["format"] === HELPER_FORMAT) {
     const items = raw["items"];
-    if (raw["version"] !== 2 || !Array.isArray(items)) throw new HostError(400, "QUICK_BAD_DATA", `Helper 내보내기 파일은 version 2이고 items 배열이 있어야 합니다(올린 파일은 version ${JSON.stringify(raw["version"] ?? null)}).`);
+    // 판이 다르면 코드는 QUICK_BAD_DATA 그대로, 화면(`plain`)은 쉬운 말 한 문장(#173)
+    if (raw["version"] !== 2) throw Object.assign(new HostError(400, "QUICK_BAD_DATA", HELPER_VERSION), { plain: HELPER_VERSION });
+    if (!Array.isArray(items)) throw new HostError(400, "QUICK_BAD_DATA", "Helper 내보내기 파일에는 items 배열이 있어야 합니다.");
     form = "helperExport";
     records = items.map((item, i) => (isObj(item) && isObj(item["values"]) ? flat(item["values"]) : { error: { code: "DATA_SCHEMA", message: `${i + 1}번째 Helper 항목에 values 객체가 없습니다.` } }));
   } else {

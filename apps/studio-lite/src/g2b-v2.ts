@@ -419,6 +419,12 @@ export function createG2B2(db: DatabaseSync) {
     return profile;
   }
 
+  /** 프로필 지우기(Studio 화면 전용, #173). 끝난 요청의 기록·서식 판은 그대로라 재시도는 기록된 판으로 답한다 */
+  function deleteProfile(input: unknown) {
+    if (!isObj(input) || typeof input['id'] !== 'string' || !PROFILE_ID.test(input['id'])) throw new G2B2Error(400, 'INVALID_REQUEST', say('INVALID_REQUEST', '{ id }를 보내 주세요.'));
+    return { deleted: db.prepare('DELETE FROM g2b_profile WHERE id=?').run(input['id']).changes > 0 };
+  }
+
   /** `GET /api/g2b/profiles`: 2판 프로필은 `{ id, label, templateId, version, outputDirectory }`, 1판 프로필은 저장한 그대로(1판 다리) */
   const profiles = () => db.prepare('SELECT document FROM g2b_profile ORDER BY id').all().map(row => {
     const p = JSON.parse(String(row['document'])) as Record<string, unknown>;
@@ -571,6 +577,6 @@ export function createG2B2(db: DatabaseSync) {
     return pending;
   }
 
-  return { generate, profiles, saveProfile, saveTemplate, labels };
+  return { generate, profiles, saveProfile, deleteProfile, saveTemplate, labels };
 }
 export type G2B2 = ReturnType<typeof createG2B2>;
