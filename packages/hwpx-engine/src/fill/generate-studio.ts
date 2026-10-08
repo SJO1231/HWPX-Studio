@@ -1,6 +1,7 @@
 import { makeIssue } from "../errors.ts";
 import type { Fragment } from "../fragment/types.ts";
 import { parseDocument } from "../model/document.ts";
+import { walkParagraphs } from "../model/paragraph.ts";
 import type { HwpxDocument, ParagraphNode } from "../model/types.ts";
 import { openPackage } from "../package/open.ts";
 import { sha256Hex } from "../template/hash.ts";
@@ -95,16 +96,25 @@ function blockRegions(resolved: ReadonlyMap<string, ResolvedAnchor>, owners: Rea
   return regions;
 }
 
-/** 누름틀·메일머지 필드의 표시 구간(문단별). 그 안의 `{{ }}`는 필드 자리가 맡는다 */
+/**
+ * 누름틀·메일머지 필드의 표시 구간(문단별). 그 안의 `{{ }}`는 필드 자리가 맡는다.
+ * 여러 문단에 걸친 필드는 시작 문단의 표식 뒤, 끝 문단의 표식 앞, 그리고 두 표식 사이에 통째로 든 문단 전체(사이 문단과 그 안·시작 꼬리·끝 머리의 표 칸 문단)다.
+ */
 export function fieldSpans(fields: readonly FieldTarget[]): Map<ParagraphNode, { from: number; until: number }[]> {
   const out = new Map<ParagraphNode, { from: number; until: number }[]>();
+  const add = (p: ParagraphNode, r: { from: number; until: number }): void => void out.set(p, [...(out.get(p) ?? []), r]);
   for (const f of fields) {
     if (f.info.type !== "CLICK_HERE" && f.info.type !== "MAILMERGE") continue;
     const paragraphs = new Set<ParagraphNode>([f.paragraph, ...(f.endParagraph === null ? [] : [f.endParagraph])]);
     for (const p of paragraphs) {
       const r = fieldRangeIn(f, p);
-      if (r !== undefined) out.set(p, [...(out.get(p) ?? []), r]);
+      if (r !== undefined) add(p, r);
     }
+    if (f.endParagraph === null || f.endParagraph === f.paragraph || f.end === null) continue;
+    const from = f.paragraph.pieces[f.begin.pieceIndex]?.end;
+    const to = f.endParagraph.pieces[f.end.pieceIndex]?.start;
+    if (from === undefined || to === undefined) continue;
+    for (const p of walkParagraphs(f.section.paragraphs)) if (p.element.start >= from && p.element.end <= to) add(p, { from: 0, until: p.logicalText.length });
   }
   return out;
 }
