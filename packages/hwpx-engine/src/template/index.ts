@@ -21,5 +21,6 @@ export { readStudioTemplate, readCase, readBlockProto } from "./studio-read.ts";
 export { writeStudioTemplate, writeCase, writeBlockProto, templateSha256, caseSha256, contentSha256 } from "./studio-write.ts";
 export { canonicalStudioJson } from "./studio-write.ts";
 export { bindValues, type BindOptions } from "./studio-bind.ts";
+export { readTypedValue, placeText, valueUnit, VALUE_FORMATS, type TypedValue } from "./value-format.ts";
 export { selectSlots } from "./studio-select.ts";
 export { listProtoUsage, planProtoUpdate, checkTemplateUpdates } from "./studio-proto.ts";

@@ -9,7 +9,7 @@ import { decodeEntities, escapeAttr } from "../xml/chars.ts";
 import { parseXmlBytes } from "../xml/parse.ts";
 import { attrNode, attrValue, childEl, childEls, subElements, elIs, nsRole, walkElements, type XElement } from "../xml/tree.ts";
 import { validateFragment } from "./json.ts";
-import { createFingerprinter, danglingIdsOf, makeLookup } from "./resources.ts";
+import { createFingerprinter, danglingIdsOf, makeLookup, resourceRefs } from "./resources.ts";
 import { paragraphsAt, sectionAt } from "./select.ts";
 import type { Fragment, FragmentResource, ImportOptions, ImportPlan, InheritedDuplicate, InsertPoint } from "./types.ts";
 import { convertFragmentUnits } from "./units.ts";
@@ -285,13 +285,23 @@ function freeEntryName(id: string, href: string, taken: Set<string>): string {
 
 type BinaryPlan = { ids: Map<string, string>; reused: number; added: number };
 
-/** 조각의 이진 자료를 대상에 대응시킨다: 같은 내용이 있으면 재사용, 없으면 항목과 manifest 등록을 계획에 더한다. */
+/**
+ * 조각의 이진 자료를 대상에 대응시킨다: 같은 내용이 있으면 재사용, 없으면 항목과 manifest 등록을 계획에 더한다.
+ * 새 항목 id는 대상 manifest의 id에 더해 없는 이진 자료를 가리키는 참조의 id(대상 본문·header의 것, 조각이 원본에서부터 가진 것 = `dangling`)를 피하고,
+ * 항목 이름은 패키지 항목에 더해 manifest 항목이 가리키는 이름을 피한다. 그 참조·항목은 그대로 남으므로 새 항목이 같은 id·이름을 받으면 새 그림을 가리키게 된다(#157).
+ */
 function planBinaries(target: HwpxDocument, fragment: Fragment, edits: SpanEdit[], additions: EditPlan["additions"]): BinaryPlan {
   const out: BinaryPlan = { ids: new Map(), reused: 0, added: 0 };
   if (fragment.binaries.length === 0) return out;
   const { pkg } = target;
+  // 대상이 가리키는 이진 자료 id 가운데 있는 것은 manifest id라 이미 들어 있다. 더해지는 것은 없는 참조의 id다
   const takenIds = new Set(pkg.manifestItems.map((m) => m.id));
-  const takenNames = new Set(pkg.archive.entries.map((e) => e.name.toLowerCase()));
+  for (const items of Object.values(target.header.resources)) {
+    for (const item of items) for (const ref of resourceRefs(item)) if (ref.kind === "binaryItem") takenIds.add(ref.id);
+  }
+  for (const section of target.sections) for (const ref of section.bodyRefs) if (ref.kind === "binaryItem") takenIds.add(ref.id);
+  for (const d of fragment.dangling) if (d.kind === "binaryItem") takenIds.add(d.id);
+  const takenNames = new Set([...pkg.archive.entries.map((e) => e.name), ...pkg.manifestItems.map((m) => m.href)].map((n) => n.toLowerCase()));
   const addedBySha = new Map<string, string>();
   const items: string[] = [];
   const located = locateManifest(pkg);

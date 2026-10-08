@@ -17,6 +17,7 @@ import { collectFields, fieldRangeIn, type FieldTarget } from "./fields.ts";
 import { generate, type GateMode, type GenerateOptions, type GenerateResult, type Ledger } from "./gate.ts";
 import { explainInherited, noInherited, splitTolerated } from "./inherited.ts";
 import { remapAddress } from "./moves.ts";
+import { placeText } from "../template/value-format.ts";
 import { generateStudioText } from "./generate-studio-text.ts";
 import {
   EMPTY_DATASET,
@@ -30,6 +31,7 @@ import {
   sameList,
   skippedIssue,
   slotApplies,
+  unitsOf,
   unregisteredIssues,
   valueFor,
   type BlobLoader,
@@ -105,6 +107,12 @@ export function fieldSpans(fields: readonly FieldTarget[]): Map<ParagraphNode, {
     }
   }
   return out;
+}
+
+/** 필드 끝 표식 뒤의 글(끝 문단). 끝 표식이 없으면 빈 글 */
+function fieldAfter(f: FieldTarget): string {
+  const piece = f.end === null ? undefined : f.endParagraph?.pieces[f.end.pieceIndex];
+  return piece === undefined || f.endParagraph === null ? "" : f.endParagraph.logicalText.slice(piece.logicalEnd);
 }
 
 type Hit = { sectionIndex: number; paragraph: ParagraphNode; start: number; end: number; key: string };
@@ -232,6 +240,7 @@ function generateStudioHwpx(bytes: Uint8Array, t: StudioTemplate, record: Record
   const s2: Template = { schema: TEMPLATE_SCHEMA, anchors: [], rules: [], options: t.options?.mixedFormat === undefined ? {} : { mixedFormat: t.options.mixedFormat } };
   const filledFields = new Set<string>();
   const values = new Map(prep.values.map((v) => [v.id, v]));
+  const units = unitsOf(t);
   const covered = (p: ValuePlace, what: string): void => {
     report.dropped.push({ place: p.id, kind: p.kind, code: "PLACE_COVERED", message: `자리 ${p.id}(${p.kind})가 가리키는 곳(${what})이 블록 교체 범위 안에 들어 빠졌습니다.` });
   };
@@ -292,18 +301,21 @@ function generateStudioHwpx(bytes: Uint8Array, t: StudioTemplate, record: Record
     return { id, kind: "cell", table: { sectionIndex, ordinal }, row: r.cell.row, col: r.cell.col };
   };
 
+  // 자리마다 채울 앵커와 자리 바로 뒤 글(값의 단위를 뗄지 정한다, 8.8.4). 줄·칸 자리는 뒤 글이 없다
   for (const p of t.places) {
-    const targets: Anchor[] = [];
+    const targets: { anchor: Anchor; after: string }[] = [];
     const fieldKeys: string[] = [];
     if (p.kind === "word" || p.kind === "line" || p.kind === "cell") {
       const a = movedAnchor(p, p.id);
+      const r = origResolved.anchors.get(p.anchor);
       if (a === null) covered(p, "앵커");
-      else if (a !== undefined) targets.push(a);
+      else if (a !== undefined) targets.push({ anchor: a, after: r?.kind === "word" ? r.paragraph.logicalText.slice(r.end) : "" });
     } else if (p.kind === "clickHere" || p.kind === "mailMerge") {
       if (p.where !== undefined && !selected.has(p.where)) continue;
       for (const [k, f] of (fieldTargets(p) ?? []).entries()) {
         const id = `${p.id}@${k}`;
-        targets.push(p.kind === "clickHere" ? { id, kind: "field", name: f.info.name, occurrence: f.info.occurrence } : { id, kind: "field", mergeKey: f.info.mergeKey ?? "", occurrence: f.info.occurrence });
+        const anchor: Anchor = p.kind === "clickHere" ? { id, kind: "field", name: f.info.name, occurrence: f.info.occurrence } : { id, kind: "field", mergeKey: f.info.mergeKey ?? "", occurrence: f.info.occurrence };
+        targets.push({ anchor, after: fieldAfter(f) });
         fieldKeys.push(fieldKey(f));
       }
     } else if (p.kind === "placeholder") {
@@ -314,7 +326,8 @@ function generateStudioHwpx(bytes: Uint8Array, t: StudioTemplate, record: Record
         if (nfc(h.key) !== want || (p.where !== undefined && !inRegion(regions, p.where, h.sectionIndex, h.paragraph.path))) continue;
         claimed.add(h);
         const id = `${p.id}@${k++}`;
-        targets.push({ id, kind: "word", at: { sectionIndex: h.sectionIndex, path: [...h.paragraph.path] }, start: h.start, end: h.end, print: wordPrintAt(h.paragraph.logicalText, h.start, h.end) });
+        const anchor: Anchor = { id, kind: "word", at: { sectionIndex: h.sectionIndex, path: [...h.paragraph.path] }, start: h.start, end: h.end, print: wordPrintAt(h.paragraph.logicalText, h.start, h.end) };
+        targets.push({ anchor, after: h.paragraph.logicalText.slice(h.end) });
       }
     }
     if (targets.length === 0) continue;
@@ -326,9 +339,9 @@ function generateStudioHwpx(bytes: Uint8Array, t: StudioTemplate, record: Record
       continue;
     }
     if ("keep" in outcome) continue;
-    for (const a of targets) {
+    for (const { anchor: a, after } of targets) {
       s2.anchors.push(a);
-      s2.rules.push({ id: a.id, do: { type: "fill", anchor: a.id, value: { text: outcome.text } } });
+      s2.rules.push({ id: a.id, do: { type: "fill", anchor: a.id, value: { text: placeText(outcome.text, units.get(p.value), after) } } });
     }
     for (const key of fieldKeys) filledFields.add(key);
   }

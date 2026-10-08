@@ -4,6 +4,7 @@ import type { Fragment } from "../fragment/types.ts";
 import { sha256Hex } from "../template/hash.ts";
 import { bindValues } from "../template/studio-bind.ts";
 import { selectSlots } from "../template/studio-select.ts";
+import { valueUnit } from "../template/value-format.ts";
 import type {
   BlockContent,
   BoundValue,
@@ -34,8 +35,8 @@ export type StudioGenerateOptions = GenerateOptions;
 /** 블록 교체 범위 안에 들어 빠진 자리(오류 아님) */
 export type CoveredPlace = { place: string; kind: ValuePlace["kind"]; code: "PLACE_COVERED"; message: string };
 
-/** 값 표의 보고용 사본: 값 원문(`text`·`number`)은 없다 */
-export type StudioValueReport = Omit<BoundValue, "text" | "number">;
+/** 값 표의 보고용 사본: 값 원문(`text`·`normalized`·`number`)은 없다 */
+export type StudioValueReport = Omit<BoundValue, "text" | "normalized" | "number">;
 
 export type StudioGenerateReport = {
   kind: "hwpx" | "md";
@@ -151,7 +152,7 @@ export function prepare(bytes: Uint8Array, t: StudioTemplate, record: Record<str
     if (hasErrors(issues)) return undefined;
   }
   const values = bindValues(t, record, c, opts.missing === undefined ? {} : { missing: opts.missing });
-  report.values = values.map(({ text: _text, number: _number, ...rest }) => rest);
+  report.values = values.map(({ text: _text, normalized: _normalized, number: _number, ...rest }) => rest);
   const selections = selectSlots(t, values, c);
   report.selections = selections;
   const slotName = new Map(t.slots.map((s) => [s.id, s.name]));
@@ -217,6 +218,9 @@ export function valueFor(v: BoundValue): { issue: { code: string; message: strin
   if (v.issue !== undefined) return { issue: v.issue };
   return v.text === undefined ? { keep: true } : { text: v.text };
 }
+
+/** 값 id → 단위(money의 원, percent의 %. 표시 설정 반영). 자리 바로 뒤 글이 같은 단위로 시작하면 단위를 뗀다(8.8.4, `placeText`) */
+export const unitsOf = (t: StudioTemplate): Map<string, string | undefined> => new Map(t.values.map((d) => [d.id, valueUnit(d.format, d.display)]));
 
 /** 등록되지 않은 `{{ }}`의 정책에 따른 이슈(키별 건수) */
 export function unregisteredIssues(counts: ReadonlyMap<string, number>, policy: "error" | "keep"): Issue[] {

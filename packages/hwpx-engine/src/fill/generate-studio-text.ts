@@ -8,6 +8,7 @@ import { parseText } from "../text/parse.ts";
 import type { TextBlock, TextDoc, TextResult } from "../text/types.ts";
 import type { Move } from "./anchor-types.ts";
 import { makeMove, remapAddress } from "./moves.ts";
+import { placeText } from "../template/value-format.ts";
 import {
   EMPTY_DATASET,
   engineAnchor,
@@ -19,6 +20,7 @@ import {
   prepare,
   skippedIssue,
   slotApplies,
+  unitsOf,
   unregisteredIssues,
   valueFor,
   type BlobLoader,
@@ -111,6 +113,7 @@ export function generateStudioText(bytes: Uint8Array, t: StudioTemplate, record:
   const claimed = new Set<Hit>();
   const anchorsById = new Map(t.anchors.map((a) => [a.id, a]));
   const values = new Map(prep.values.map((v) => [v.id, v]));
+  const units = unitsOf(t);
   const tables0 = doc0.blocks.filter((b) => b.kind === "table");
   const tables1 = doc1.blocks.filter((b) => b.kind === "table");
   const s2: Template = { schema: TEMPLATE_SCHEMA, anchors: [], rules: [], options: {} };
@@ -119,21 +122,23 @@ export function generateStudioText(bytes: Uint8Array, t: StudioTemplate, record:
   };
   const inRegion = (block: string, index: number): boolean => regions.some((r) => r.block === block && index >= r.from && index <= r.to);
 
+  // 자리마다 채울 앵커와 자리 바로 뒤 글(값의 단위를 뗄지 정한다, 8.8.4). 줄·칸 자리는 뒤 글이 없다
   for (const p of t.places) {
-    const targets: Anchor[] = [];
+    const targets: { anchor: Anchor; after: string }[] = [];
     if (p.kind === "word" || p.kind === "line" || p.kind === "cell") {
       const a = anchorsById.get(p.anchor);
       const anchor = a === undefined ? undefined : engineAnchor(a);
       if (anchor?.kind === "word" || anchor?.kind === "line") {
         const mapped = remapAddress(moves, anchor.at);
+        const after = anchor.kind === "word" ? (doc0.blocks.find((b) => b.index === anchor.at.path[0])?.text.slice(anchor.end) ?? "") : "";
         if (mapped === undefined) covered(p);
-        else targets.push({ ...anchor, id: p.id, at: mapped });
+        else targets.push({ anchor: { ...anchor, id: p.id, at: mapped }, after });
       } else if (anchor?.kind === "cell") {
         const table = tables0[anchor.table.ordinal];
         const mapped = table === undefined ? undefined : remapAddress(moves, { sectionIndex: 0, path: [table.index] });
         if (table === undefined) issues.push(makeIssue("error", "ANCHOR_NOT_FOUND", `자리 ${p.id}: ${anchor.table.ordinal}번째 표가 원본에 없습니다.`, p.id));
         else if (mapped === undefined) covered(p);
-        else targets.push({ ...anchor, id: p.id, table: { sectionIndex: 0, ordinal: tables1.findIndex((b) => b.index === mapped.path[0]) } });
+        else targets.push({ anchor: { ...anchor, id: p.id, table: { sectionIndex: 0, ordinal: tables1.findIndex((b) => b.index === mapped.path[0]) } }, after: "" });
       }
     } else if (p.kind === "placeholder") {
       if (p.where !== undefined && !selected.has(p.where)) continue;
@@ -143,7 +148,7 @@ export function generateStudioText(bytes: Uint8Array, t: StudioTemplate, record:
         if (nfc(h.key) !== want || (p.where !== undefined && !inRegion(p.where, h.block.index))) continue;
         claimed.add(h);
         const id = `${p.id}@${k++}`;
-        targets.push({ id, kind: "word", at: { sectionIndex: 0, path: [h.block.index] }, start: h.start, end: h.end, print: wordPrintAt(h.block.text, h.start, h.end) });
+        targets.push({ anchor: { id, kind: "word", at: { sectionIndex: 0, path: [h.block.index] }, start: h.start, end: h.end, print: wordPrintAt(h.block.text, h.start, h.end) }, after: h.block.text.slice(h.end) });
       }
     }
     // clickHere·mailMerge는 md에 없다(읽기가 TPL_ANCHOR로 막는다)
@@ -155,9 +160,9 @@ export function generateStudioText(bytes: Uint8Array, t: StudioTemplate, record:
       if (!issues.some((i) => i.code === outcome.issue.code && i.where === `value:${p.value}`)) issues.push(makeIssue("error", outcome.issue.code, `자리 ${p.id}: ${outcome.issue.message}`, `value:${p.value}`));
       continue;
     }
-    for (const a of targets) {
+    for (const { anchor: a, after } of targets) {
       s2.anchors.push(a);
-      s2.rules.push({ id: a.id, do: { type: "fill", anchor: a.id, value: { text: outcome.text } } });
+      s2.rules.push({ id: a.id, do: { type: "fill", anchor: a.id, value: { text: placeText(outcome.text, units.get(p.value), after) } } });
     }
   }
   const unregistered = new Map<string, number>();
