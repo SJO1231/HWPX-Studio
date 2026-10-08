@@ -382,8 +382,7 @@ test('실제 HTTP: 복합 입력 오류 8종은 output 없이 거절하고 다�
 const corpusBaseline=JSON.parse(readFileSync(new URL('./notice-baseline.json',import.meta.url),'utf8'));
 function corpusExpectations(hashes: string[]) {
   const expected=new Map<string,string>();
-  // Recognizing the reference corpus requires its full reviewed coverage, even if files disappeared.
-  if(corpusBaseline.documents.some((doc:any)=>hashes.includes(doc.sha256)))hashes=corpusBaseline.documents.map((doc:any)=>doc.sha256);
+  // Only reviewed documents present in the current corpus are expected; how many are present is reported as baseline.present (#118).
   for(const doc of corpusBaseline.documents)if(hashes.includes(doc.sha256)&&doc.fill!=='none')for(let i=0;i<3;i++)expected.set(doc.sha256.slice(0,10)+'-fill-'+i,doc.fill);
   const ids=hashes.map(h=>h.slice(0,10));
   for(const item of corpusBaseline.fragments)if(item.name.split('-fragment-').every((id:string)=>ids.includes(id)))expected.set(item.name,item.status);
@@ -396,12 +395,17 @@ function assertCorpusReport(report:any,expected:Map<string,string>) {
   assert(report.originalsUnchanged,'원본 파일이 변경되었습니다.');
   assert.equal(report.documents.filter((d:any)=>d.status==='analysis_failed').length,0,'분석 실패: report.json 확인');
   assert.equal(report.summary.failed,0,'예상하지 않은 생성/출력/보존/렌더 결함: report.json 확인');
-  assert(report.summary.passed>0,'생성 성공 0건: 검증을 통과할 수 없습니다.');
+  // Zero successes fails unless every case ran and the present documents were all reviewed as blocked (no expected success).
+  assert(report.summary.passed>0||(report.cases.length>0&&![...expected.values()].includes('passed')),'생성 성공 0건: 검증을 통과할 수 없습니다.');
   for(const [name,status] of expected){const found=report.cases.find((c:any)=>c.name===name);assert(found,'기준 시험 누락: '+name);assert(found.status==='passed'||(status!=='passed'&&found.status==='rejected'&&found.code===status),'기존 성공 범위 감소 또는 차단 사유 변경: '+name);}
 }
 
 test('회귀: 코퍼스는 미예상 예외와 성공 범위 감소를 차단하고 지정한 차단만 인정',()=>{
-  assert.equal(corpusExpectations([corpusBaseline.documents[0].sha256]).size,106,'참고자료가 일부 빠져도 전체 기준 시험을 요구한다');
+  const first=corpusBaseline.documents.find((doc:any)=>doc.fill!=='none');
+  assert.deepEqual([...corpusExpectations([first.sha256]).values()],[first.fill,first.fill,first.fill],'모음에 있는 문서의 기준 사례만 요구한다');
+  const pair=corpusBaseline.fragments[0].name;
+  const pairHashes=corpusBaseline.documents.filter((doc:any)=>pair.split('-fragment-').some((id:string)=>doc.sha256.startsWith(id))).map((doc:any)=>doc.sha256);
+  assert.equal(corpusExpectations(pairHashes).get(pair),'passed','두 문서가 모두 있으면 조각 교체 기준 사례도 요구한다');
   assert.equal(corpusFailure('generate','TypeError','MIXED_FORMAT'),'failed');
   assert.equal(corpusFailure('generate','MIXED_FORMAT'),'failed');
   assert.equal(corpusFailure('generate','MIXED_FORMAT','MIXED_FORMAT'),'rejected');
@@ -409,7 +413,10 @@ test('회귀: 코퍼스는 미예상 예외와 성공 범위 감소를 차단하
   const report={originalsUnchanged:true,documents:[],summary:{failed:0,passed:1},cases:[{name:'kept',status:'passed'}]};
   assert.throws(()=>assertCorpusReport(report,new Map([['missing','passed']])),/누락/);
   assert.throws(()=>assertCorpusReport({...report,cases:[...report.cases,{name:'lost',status:'rejected',code:'DATA_MISSING'}]},new Map([['lost','passed']])),/성공 범위 감소/);
-  assert.throws(()=>assertCorpusReport({...report,summary:{failed:0,passed:0}},new Map()),/성공 0건/);
+  assert.throws(()=>assertCorpusReport({...report,summary:{failed:0,passed:0}},new Map([['kept','passed']])),/성공 0건/);
+  assert.throws(()=>assertCorpusReport({...report,summary:{failed:0,passed:0},cases:[]},new Map()),/성공 0건/);
+  // 모음의 문서가 모두 기준에서 차단으로 검토된 것이면 성공 0건이 기대 결과다(#118)
+  assertCorpusReport({...report,summary:{failed:0,passed:0},cases:[{name:'blocked',status:'rejected',code:'MIXED_FORMAT'}]},new Map([['blocked','MIXED_FORMAT']]));
 });
 
 // Opt-in local corpus campaign. Never writes to the corpus or the user's SQLite.
@@ -433,6 +440,7 @@ if(process.env.HWPX_CORPUS_DIR) test('참고자료 공고서 시뮬레이션',as
   const report:any={started:new Date().toISOString(),root,matched:paths.length,unique:unique.length,duplicates:paths.length-unique.length,files:snapshots.map(x=>({file:relative(root,x.path),sha256:x.hash})),documents:[],cases:[],comparisons:[],originalsUnchanged:false};
   const cases:any[]=report.cases;
   const expectedCases=corpusExpectations(unique.map(x=>x.hash));
+  report.baseline={documents:corpusBaseline.documents.length,present:corpusBaseline.documents.filter((doc:any)=>unique.some(x=>x.hash===doc.sha256)).length,expectedCases:expectedCases.size};
   const compact=(name:string)=>name.replace(/\s/g,'');
   const relevant=(f:Field)=>f.confidence===1||/^(수요기관|사업명|공고명|품명|세부품명|사업예산|사업금액|추정가격|계약방법|납품기한|납품장소|수량|수량및단위|입찰공고번호|공고번호)$/.test(compact(f.name));
   const records=(fields:Field[],label:string)=>Array.from({length:3},(_,i)=>Object.fromEntries(fields.map((f,j)=>[f.column,f.format==='money'?[120000000,0,987654321][i]:`SIM_${label}_${i}_${j}${i===2?' 한글 & <검증> '.repeat(8):''}`])));
@@ -515,8 +523,9 @@ if(process.env.HWPX_CORPUS_DIR) test('참고자료 공고서 시뮬레이션',as
     report.originalsUnchanged=snapshots.every(x=>sha(readFileSync(x.path))===x.hash);
     report.finished=new Date().toISOString();report.summary={attempted:cases.length,passed:cases.filter(c=>c.status==='passed').length,rejected:cases.filter(c=>c.status==='rejected').length,failed:cases.filter(c=>c.status==='failed').length,pages:cases.filter(c=>c.status==='passed').reduce((n,c)=>n+c.pages,0)};
     writeFileSync(join(out,'report.json'),JSON.stringify(report,null,2));if(keepArtifacts&&!process.env.HWPX_CORPUS_OUT_DIR)writeFileSync(artifact('notice-simulation-latest.txt'),out);
-    console.log(JSON.stringify({report:join(out,'report.json'),...report.summary,originalsUnchanged:report.originalsUnchanged}));
+    console.log(JSON.stringify({report:join(out,'report.json'),...report.summary,baseline:report.baseline,originalsUnchanged:report.originalsUnchanged}));
   }
+  if(![...expectedCases.values()].includes('passed'))t.diagnostic(`성공 기대 사례 0(기준 문서 ${report.baseline.documents}종 중 ${report.baseline.present}종이 모음에 있고 모두 차단으로 검토됨): 생성 결과의 글·보존·렌더 검사는 돌지 않음(미검증)`);
   assertCorpusReport(report,expectedCases);
 });
 

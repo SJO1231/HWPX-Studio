@@ -284,11 +284,11 @@ function fragmentExtract(args: string[], out: Out): number {
   }
 }
 
-/** 채움 계획 보고서를 사람이 읽을 글로 출력한다(hwpx·md·txt 공통, 값 원문은 없다). */
-function printPlan(out: Out, plan: FillReport): void {
+/** 채움 계획 보고서를 사람이 읽을 글로 출력한다(hwpx·md·txt 공통, 값 원문은 없다). 데이터 없이 실행했으면(`data` false) 없던 경로 줄은 뺀다. */
+function printPlan(out: Out, plan: FillReport, data = true): void {
   out.log(`액션 ${plan.actions.length}개, 건너뜀 ${plan.skipped.length}, 버림 ${plan.dropped.length}, 재배치 ${plan.relocated.length}, 유지 ${plan.kept.length}종`);
   if (plan.requiredPaths.length > 0) out.log(`필요한 데이터 경로: ${plan.requiredPaths.join(", ")}`);
-  if (plan.missingPaths.length > 0) out.log(`데이터에 없던 경로: ${plan.missingPaths.join(", ")}`);
+  if (data && plan.missingPaths.length > 0) out.log(`데이터에 없던 경로: ${plan.missingPaths.join(", ")}`);
   for (const s of plan.skipped) out.log(`건너뜀 [${s.code}] ${s.ruleId} ${s.anchor}: ${s.message}`);
   const expected = Object.entries(plan.expected);
   if (expected.length > 0) out.log(`예상 수량 증감: ${expected.map(([k, v]) => `${k} ${v > 0 ? "+" : ""}${v}`).join(", ")}`);
@@ -296,11 +296,11 @@ function printPlan(out: Out, plan: FillReport): void {
 }
 
 /** 생성 결과를 사람이 읽을 글로 출력한다(값 원문은 없다). */
-function printResult(out: Out, result: GenerateResult | TextResult): void {
+function printResult(out: Out, result: GenerateResult | TextResult, data = true): void {
   const r = result.report;
   if ("mode" in r) {
     out.log(`방식: ${r.mode}${r.dryRun ? " (모의 실행)" : ""}`);
-    printPlan(out, r.plan);
+    printPlan(out, r.plan, data);
     const inherited = r.inherited;
     if (inherited.duplicateIds.length + inherited.danglingRefs.length > 0) {
       out.log(
@@ -309,7 +309,7 @@ function printResult(out: Out, result: GenerateResult | TextResult): void {
     }
   } else {
     out.log(`형식: ${r.kind}${r.dryRun ? " (모의 실행)" : ""}`);
-    printPlan(out, r.plan);
+    printPlan(out, r.plan, data);
   }
   printIssues(out, r.issues);
 }
@@ -572,7 +572,7 @@ async function blockInsert(args: string[], out: Out): Promise<number> {
     out.err(`오류 [${e.code}] ${e.message}`);
     return 1;
   }
-  for (const d of plan.formatDiffs) out.log(`서식 차이: 블록 문단 ${d.paragraph}의 ${PROPERTY_LABEL[d.property]}`);
+  for (const d of plan.formatDiffs) out.log(`서식 차이: 블록 문단 ${d.paragraph + 1}의 ${PROPERTY_LABEL[d.property]}`);
   printIssues(
     out,
     plan.issues.filter((i) => i.code === "BLOCK_FORMAT_DIFFERS"),
@@ -586,7 +586,7 @@ async function blockInsert(args: string[], out: Out): Promise<number> {
   });
   const result = await runGenerate(target, bytes, template, readDataset({}), { mode, missing: "keep", dryRun: false, fragments: {}, reissueInternal: false });
   const extra = { block: { id: proto.id, version: proto.version, formatDiffs: plan.formatDiffs } };
-  return finishGenerate(out, result, output, inputs, overwrite, reportPath, extra);
+  return finishGenerate(out, result, output, inputs, overwrite, reportPath, extra, false);
 }
 
 /** 저장소의 블록 목록(블록 id 순서). 읽을 수 없는 블록이 있으면 종료 코드 1 */
@@ -640,12 +640,13 @@ function finishGenerate(
   overwrite: boolean,
   reportPath: string | undefined,
   extra: Record<string, unknown> = {},
+  data = true,
 ): number {
   if (reportPath !== undefined) {
     const body = { ok: result.ok, dryRun: result.ok ? result.dryRun : false, report: result.report, ...("ledger" in result ? { ledger: result.ledger } : {}), ...extra };
     writeSafely(reportPath, json(body), inputs, overwrite);
   }
-  printResult(out, result);
+  printResult(out, result, data);
   if (!result.ok) {
     out.err("검증을 통과하지 못해 출력 파일을 만들지 않았습니다.");
     return 1;
