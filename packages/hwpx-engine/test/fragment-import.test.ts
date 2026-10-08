@@ -1297,6 +1297,69 @@ test("7.5 건너뛰는 id는 종류별이다: 본문의 없는 문단모양 1과
   assert.deepEqual(fillsOf(r.plan), []);
 });
 
+// ── 조각 쪽 없는 참조를 새 자원이 차지하지 않는다(#115) ─────────────────────────
+// 원본에서부터 없는 자원을 가리키던 조각의 참조는 id 그대로 옮긴다. 그 id가 대상에도 없을 때 새 자원이 받으면 넣은 문단·자원이 새 자원을 가리키게 된다.
+// 원본: 글꼴 0·테두리 1이 대상과 모양이 달라 새 자원이 되고, 글자모양 0은 없는 테두리 2를, 글자모양 1은 없는 글꼴 1(한글)을, 본문은 없는 글자모양 2를 가리킨다.
+// 대상(MINIMAL_HEADER)의 다음 새 id는 글꼴 1·테두리 2·글자모양 2라 셋 다 조각의 없는 id와 같다.
+const CARRIED_SRC_HEADER = MINIMAL_HEADER.replace('<hh:font id="0" face="x"', '<hh:font id="0" face="y"')
+  .replace('<hh:borderFill id="1" threeD="0"/>', '<hh:borderFill id="1" threeD="1"/>')
+  .replace('<hh:charPr id="0" height="1000" borderFillIDRef="1"><hh:fontRef hangul="0"/>', '<hh:charPr id="0" height="1500" borderFillIDRef="2"><hh:fontRef hangul="0"/>')
+  .replace('<hh:charPr id="1" height="1200" borderFillIDRef="1"><hh:fontRef hangul="0"/>', '<hh:charPr id="1" height="1200" borderFillIDRef="1"><hh:fontRef hangul="1"/>');
+const CARRIED_BODY =
+  '<hp:p paraPrIDRef="0" styleIDRef="0"><hp:run charPrIDRef="0"><hp:t>a</hp:t></hp:run><hp:run charPrIDRef="1"><hp:t>b</hp:t></hp:run><hp:run charPrIDRef="2"><hp:t>c</hp:t></hp:run></hp:p>';
+const idsOf = (doc: HwpxDocument, kind: string): string[] => (doc.header.resources[kind] ?? []).map((x) => x.id);
+
+/** 조각의 없는 참조(종류, id) 가운데 대상에 없던 그 id의 자원이 결과에 생긴 것(넣은 참조가 새 자원을 가리키게 된 것). 글꼴은 한글 목록만 있다 */
+function carriedOverlaps(fragment: Fragment, target: HwpxDocument, result: HwpxDocument): string[] {
+  const has = (doc: HwpxDocument, kind: string, id: string): boolean => idsOf(doc, kind).includes(id);
+  return fragment.dangling.filter((d) => !has(target, d.kind, d.id) && has(result, d.kind, d.id)).map((d) => `${d.kind} ${d.id}`);
+}
+
+test("7.5 조각이 원본에도 대상에도 없는 id(본문의 글자모양 2, 자원 안의 테두리 2·글꼴 1)를 가리키고 그 id가 대상의 다음 새 id여도 새 자원은 그 id를 받지 않는다(#115)", () => {
+  const src = parseSynthetic([CARRIED_BODY], CARRIED_SRC_HEADER);
+  assert.equal(CARRIED_SRC_HEADER.match(/face="y"|threeD="1"|borderFillIDRef="2"|hangul="1"/g)?.length, 4, "원본 header 변형 4곳");
+  const target = parseSynthetic([charRun("0")]);
+  const r = runDocs(src, 0, 0, target, endOf(target));
+  assert.deepEqual(r.fragment.dangling.map((d) => `${d.kind} ${d.id}`).sort(), ["borderFill 2", "charPr 2", "font 1"]);
+  // 전제: 대상의 다음 새 id(가장 큰 숫자 + 1)가 조각의 없는 id와 같고, 대상에는 없는 참조가 없다
+  assert.deepEqual([idsOf(target, "font"), idsOf(target, "borderFill"), idsOf(target, "charPr")], [["0"], ["1"], ["0", "1"]]);
+  assert.deepEqual(missingMessages(target), []);
+  // 겹침 0: 새 글꼴·테두리·글자모양은 조각의 없는 id를 건너뛴다
+  assert.deepEqual(carriedOverlaps(r.fragment, target, r.result), []);
+  assert.deepEqual(idsOf(r.result, "font"), ["0", "2"]);
+  assert.deepEqual(idsOf(r.result, "borderFill"), ["1", "3"]);
+  assert.deepEqual(idsOf(r.result, "charPr"), ["0", "1", "3", "4"]);
+  // 넣은 본문: 글자모양 0·1은 새 자원(3·4)을, 없는 글자모양 2는 그대로 없는 대상을 가리킨다. 자원 안의 없는 참조도 그대로다
+  assert.deepEqual(attrsOf(r.block, "charPrIDRef"), ["3", "4", "2"]);
+  const after = missingMessages(r.result);
+  for (const label of ["charPr 2", "borderFill 2", "font(HANGUL) 1"]) {
+    assert.equal(after.filter((m) => m.startsWith(`${label}이(가) 없는데 1곳`)).length, 1, `${label}: ${after.join("|")}`);
+  }
+  assert.equal(after.length, 3, after.join("|"));
+  const plan = planImport(target, r.fragment, endOf(target));
+  assert.deepEqual(plan.inherited.danglingRefs, r.fragment.dangling);
+  assert.equal(r.plan.summary["addedResources"], expectedAdded(r));
+  // JSON 왕복 조각도 같은 계획이다
+  assert.deepEqual(planImport(target, parseFragment(serializeFragment(r.fragment)), endOf(target)), plan);
+  // 같은 결과에 다시 넣으면 자원은 전부 재사용되고, 없는 참조는 여전히 비어 있다
+  const again = runDocs(src, 0, 0, r.result, endOf(r.result), { fragment: r.fragment });
+  assert.equal(again.plan.summary["addedResources"], 0);
+  assert.deepEqual(carriedOverlaps(r.fragment, r.result, again.result), []);
+});
+
+test("7.5 조각의 없는 참조 기록이 없는 이전 형식 조각(dangling 키 없음)은 그 id를 알 수 없어 건너뛰지 못한다(알려진 한계, #115)", () => {
+  const src = parseSynthetic([CARRIED_BODY], CARRIED_SRC_HEADER);
+  const target = parseSynthetic([charRun("0")]);
+  const json = JSON.parse(serializeFragment(extractFragment(src, sel(0, 0)))) as Record<string, unknown>;
+  delete json["dangling"];
+  const legacy = parseFragment(JSON.stringify(json));
+  assert.deepEqual(legacy.dangling, []);
+  const r = runDocs(src, 0, 0, target, endOf(target), { fragment: legacy });
+  // 같은 원본에서 뗀 기록으로 세면 세 id 모두 새 자원이 받는다(이 사례가 실제로 겹치는 사례라는 확인이기도 하다)
+  const recorded = { ...legacy, dangling: extractFragment(src, sel(0, 0)).dangling };
+  assert.deepEqual(carriedOverlaps(recorded, target, r.result).sort(), ["borderFill 2", "charPr 2", "font 1"]);
+});
+
 // ── rootfile ────────────────────────────────────────────────────────────
 
 test("7.5-6 이진 자료 등록은 container.xml이 가리키는 패키지 문서(pkg.rootfile)에 한다: 이름이 content.hpf가 아니어도 된다", () => {

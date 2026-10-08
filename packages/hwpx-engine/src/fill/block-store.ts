@@ -248,7 +248,8 @@ function insertedLookup(fragment: Fragment, target: FingerprintLookup): Fingerpr
  * 블록의 최상위 문단마다 문단 모양·스타일의 자원 지문(7.4)을 넣는 자리 문단(`at`의 구역·상위 목록·문단 번호)의 것과 견준다(8.8.17).
  * 다른 것만 돌려준다(블록 문단 순서, 한 문단 안에서 `paraPr` 다음 `style`). 지문은 모양으로 견주므로 문서마다 id가 달라도 같은 모양이면 같다.
  * 참조가 없으면 `none`, 자원이 없으면 `missing:<id>`로 본다. 블록 쪽은 넣은 뒤의 모양으로 본다: 원본에도 없던 자원을 가리키는 참조(`FRAG_DANGLING_SOURCE`,
- * 문단 안이든 자원 안이든)는 가져오기가 그대로 옮기므로 그 id를 대상에서 풀어 지문을 만든다. 자리 문단이 없으면 `FRAG_INSERT_POINT`. 글자 모양은 보지 않는다.
+ * 문단 안이든 자원 안이든)는 가져오기가 그대로 옮기므로 그 id를 대상에서 풀어 지문을 만든다. 대상에도 없으면 `missing:<id>`다(가져오기는 그 id를 새 자원에 주지 않아
+ * 넣은 뒤에도 없다, 7.5). 자리 문단이 없으면 `FRAG_INSERT_POINT`. 글자 모양은 보지 않는다.
  */
 export function blockFormatDiffs(target: HwpxDocument, fragment: Fragment, at: { sectionIndex: number; parentPath: number[]; index: number }): BlockFormatDiff[] {
   const list = paragraphsAt(sectionAt(target, at.sectionIndex, "FRAG_INSERT_POINT"), at.parentPath, "FRAG_INSERT_POINT");

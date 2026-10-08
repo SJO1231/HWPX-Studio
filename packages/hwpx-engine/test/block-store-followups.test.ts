@@ -170,7 +170,7 @@ test("8.8.17 D5: 원본에 없는 자원을 가리키는 블록(D1→D2)의 서�
   assert.equal((src0.header.resources["tabPr"] ?? []).length, 0);
   assert.ok(hasId(d2, "tabPr", "0"));
   // 문단의 없는 참조: 문단 1은 D2 본문이 쓰는 문단 모양, 문단 2는 D2에 있는 스타일 3, 문단 3은 D2에도 없는 문단 모양.
-  // 가져오기가 새 자원에 줄 수 있는 id(대상의 다음 새 id 근처)는 피한다: 그 id는 넣은 뒤 새 자원을 가리키게 되는데 비교는 `missing:`으로 본다(명세 8.8.17 알려진 한계)
+  // 대상의 다음 새 id는 여기서 쓰지 않는다(그 경우는 아래 #115 시험이 본다)
   const shared = at(d2.sections, 0).paragraphs.map((p) => p.attrs.paraPrIDRef).find((id): id is string => id !== null && !hasId(src0, "paraPr", id));
   assert.ok(shared !== undefined && hasId(d2, "style", "3") && !hasId(src0, "style", "3"));
   const absentPara = String(maxId(d2, "paraPr") + 100);
@@ -245,4 +245,35 @@ test("8.8.17 D5 무작위 60회(시드 99): 합성 문서 7개·한컴 저장본
   t.diagnostic(`넣기 ${tally.cases}, 넣은 없는 참조 ${tally.danglingParas}, 견준 (문단, 속성) ${tally.compared}, 실제로 다름 ${tally.differ}, 고치기 전 규칙의 거짓 차이 ${tally.falseBefore}·놓친 차이 ${tally.missedBefore}`);
   assert.ok(tally.falseBefore > 0, "고치기 전 규칙의 거짓 차이 경우가 들어 있다");
   assert.ok(tally.differ > 0 && tally.differ < tally.compared, "같은 것과 다른 것이 다 있다");
+});
+
+test("8.8.17 #115: 블록 문단이 원본에도 대상에도 없는 id를 가리키고 그 id가 대상의 다음 새 id(가져오기가 새 자원에 줄 id)여도 서식 비교 = 넣은 결과의 실제 차이, 블록 쪽 지문 = 넣은 문단의 실제 지문", (t) => {
+  const d1 = readFixture("D1");
+  const src0 = reparse(d1);
+  const d2 = reparse(readFixture("D2"));
+  // D1 1~3을 D2에 넣으면 새 문단 모양·스타일이 들어온다. 블록 문단이 D2의 다음 새 문단 모양·스타일 id(원본에도 없다)를 가리키게 바꾼다
+  const nextPara = String(maxId(d2, "paraPr") + 1);
+  const nextStyle = String(maxId(d2, "style") + 1);
+  assert.ok(!hasId(src0, "paraPr", nextPara) && !hasId(src0, "style", nextStyle));
+  const src = reparse(withRefs(d1, [[1, "paraPrIDRef", nextPara], [2, "styleIDRef", nextStyle], [3, "paraPrIDRef", nextPara]]));
+  const block = extractBlock(src, makeRangeAnchor(src, 0, [], 1, 3)!, meta());
+  assert.deepEqual(block.fragment.dangling.map((d) => `${d.kind} ${d.id}`).sort(), [`paraPr ${nextPara}`, `style ${nextStyle}`, "tabPr 0"].sort());
+  const tally: Tally = { cases: 0, compared: 0, differ: 0, falseBefore: 0, missedBefore: 0, danglingParas: 3 };
+  at(d2.sections, 0).paragraphs.forEach((_, j) => compare(d2, block, j, tally, `D1 1~3 다음 새 id → D2 자리 ${j}`));
+  // 넣은 결과: 새 문단 모양·스타일이 들어오되 그 id는 건너뛰어, 블록 문단의 없는 참조는 넣은 뒤에도 없다
+  const plan = planBlockInsert(d2, block.proto, block.blob, { sectionIndex: 0, parentPath: [], index: 0, position: "after" });
+  const out = reparse(applyPlan(d2.pkg, plan));
+  const added = (kind: string): string[] => (out.header.resources[kind] ?? []).flatMap((r) => (hasId(d2, kind, r.id) ? [] : [r.id]));
+  assert.ok(added("paraPr").length > 0 && added("style").length > 0, `새 자원 ${added("paraPr")} / ${added("style")}`);
+  assert.ok(!hasId(out, "paraPr", nextPara) && !hasId(out, "style", nextStyle), "블록의 없는 id를 새 자원이 받지 않는다");
+  // 블록 쪽 지문(formatDiffs의 block) = 넣은 결과에서 넣은 문단이 가리키는 자원의 지문(없으면 missing:<id>)
+  const print = printIn(out);
+  const list = at(out.sections, 0).paragraphs;
+  assert.ok(plan.formatDiffs.length > 0);
+  for (const d of plan.formatDiffs) {
+    const attr = d.property === "paraPr" ? "paraPrIDRef" : "styleIDRef";
+    assert.equal(d.block, print(d.property, at(list, 1 + d.paragraph).attrs[attr]), `문단 ${d.paragraph} ${d.property}`);
+  }
+  assert.ok(plan.formatDiffs.some((d) => d.block === `missing:${nextPara}`) && plan.formatDiffs.some((d) => d.block === `missing:${nextStyle}`));
+  t.diagnostic(`넣기 ${tally.cases}, 견준 (문단, 속성) ${tally.compared}, 실제로 다름 ${tally.differ}, 새 문단 모양 ${added("paraPr").join(",")}·스타일 ${added("style").join(",")}`);
 });
