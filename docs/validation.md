@@ -1072,7 +1072,22 @@ CLI `block extract`로 떼고 `block insert --section 0 --index 25`(대상 2쪽�
 
 남은 것: 독립 검증, 서식 판·2판 프로필을 저장하는 Studio 화면(지금은 Origin이 있는 요청으로만 저장), Helper와 같은 서식·같은 파일로 끝까지 시험(⑤, 한글 열기), 1판 다리·옛 Grid·kordoc 제거(⑥, #11·#36), `/quick`을 같은 창구로(⑦).
 
-## 44. Helper 프로필 화면(최소)·생성 창구 거절 꼴 (2026-10-09, 이슈 #173)
+## 44. 여러 문단 필드의 사이 문단 `{{ }}`를 키로 세지 않기 (2026-10-09, 이슈 #138)
+
+엔진 명세 8.8.17 `keys` 문장. 33절에서 발견한 것: 필드 표시 구간 계산(`fieldSpans`, `src/fill/generate-studio.ts`)이 여러 문단에 걸친 누름틀·메일머지의 시작·끝 문단에만 구간을 만들어, 사이 문단의 `{{ }}`가 원형 `keys`(`extractBlock`·`protoFromFragment`), 2판 생성 등록 판정(8.8.12), 블록 미리보기 자리(8.8.18)에서 자리로 셌다. 이제 두 표식 사이에 통째로 든 문단 전체(사이 문단과 그 표 칸 문단, 시작 꼬리·끝 머리의 표 칸 문단)를 표시 구간으로 본다. 아래는 구현자 시험이고 독립 검증 전이다. 한컴 COM은 쓰지 않았다.
+
+| 검사 | 결과 |
+| --- | --- |
+| 합성(세 문단 누름틀 + 네 문단 메일머지, 사이 문단 하나는 표 칸 `{{ }}`) | `keys` = 표시 구간 밖 3개(`extractBlock` = `protoFromFragment`, 저장 글에서 다시 읽은 조각도 같음), 미리보기 `fields` = 밖 `{{ }}` 3 + 누름틀 1 + 메일머지 1, 밖 `{{ }}`·두 필드만 등록한 2판 템플릿 생성 성공(오류 0) |
+| 변이 확인 | 고치기 전 코드로는 세 확인이 각각 실패: `keys`에 사이 문단 키 3개가 더해짐, 미리보기 `placeholder` 3개 더해짐, 생성 `PLACE_UNREGISTERED` 3건 |
+| 실제 공고서(읽기 전용) | 28절 시험 다시 실행: 16/16, 블록 32(거절 0)·문단 352, 서식 경고 32건·다른 문단 338개, 교체 32/32·새 오류 0, `keys` 0(28절과 같음). 미리보기 시험 32+16 같음·셈 같음, 값 타입 시험 50회 새 오류 0. 문서 모음 그대로 |
+| 회귀 | 형 검사 0. `npm test` 1,880개 중 1,809 통과, 0 실패, 71 선택 실행분. 작업 폴더의 `node_modules`가 주 체크아웃 엔진을 가리켜 앱 시험은 그 엔진을 읽으므로, 앱 시험(354개 중 353 통과·1 선택 실행분)과 실제 공고서 `g2b-v2-corpus`(통과)는 `@hwpx-studio/engine`을 작업 폴더 엔진으로 돌리는 로더(저장소 밖)로 다시 돌렸다 |
+
+시험: `node --test packages/hwpx-engine/test/block-proto-from-fragment.test.ts`, `HWPX_CORPUS_DIR=<폴더> node --test packages/hwpx-engine/test/block-corpus.test.ts packages/viewer/test/block-preview-corpus.test.ts packages/hwpx-engine/test/value-types-corpus.test.ts`.
+
+남은 것: 독립 검증. 미리보기 시험의 독립 계산(`test/preview-helpers.ts`)은 여러 문단 필드의 값 글을 빈 글로 받아 그 구간의 `{{ }}`를 빼지 못한다(실제 공고서 블록에는 그런 자리가 없어 영향 없음).
+
+## 45. Helper 프로필 화면(최소)·생성 창구 거절 꼴 (2026-10-09, 이슈 #173)
 
 [스튜디오 명세](studio-spec.md) 4a "Helper 생성 창구" 문단과 엔진 명세 8.8.14의 Studio 화면 전용 API. 작업창 왼쪽 흐름 탭의 "Helper 프로필" 절(`apps/studio-lite/web/workbench.*`), 서식 판 만들기 `apps/studio-lite/src/input-table.ts`의 `g2bTemplate`, 프로필 삭제 `POST /api/g2b/profiles/delete`. 아래는 구현자 시험이고 독립 검증 전이다. 한컴 COM은 쓰지 않았다.
 

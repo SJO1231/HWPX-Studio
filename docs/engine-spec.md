@@ -1725,7 +1725,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | 재시도 | 경로를 기록한 건(성공, 저장 실패)만 파일을 확인한다: 해시가 같으면 `reused: true`, 없으면 기록된 판으로 같은 경로에 다시 만들고, 다른 파일이 있으면 덮어쓰지 않고 `OUTPUT_ERROR`. 입력 필요·생성 실패 건은 같은 값·같은 판이라 기록한 결과를 그대로 돌려준다. 프로필을 준비하지 못한 요청(`PROFILE_INVALID`)은 기록하지 않는다(Studio에서 고친 뒤 같은 번호로 다시 보낼 수 있다). 재시도는 라벨 사전을 바꾸지 않는다 |
 | 처리 중 표·순서 | 2판 요청은 한 줄 대기열(1판 다리와 따로)로 처리하고 건 사이에 다른 요청을 받는다. 같은 번호가 처리 중이면 같은 지문은 같은 응답, 다른 지문은 바로 409 |
 | 파일 이름 | 프로필 `fileName` 규칙(없으면 `{identity}_{서식명}`). 자리 표시: `{identity}`(부분을 `_`로 이음)·`{identity[N]}`·`{서식명}`(`meta.name`, 없으면 서식 id)·`{stage}`·`{recordId}`. `identity`가 비거나 공백뿐이면 `g2b-<sha256(requestId) 앞 10자>-<itemIndex+1>`. 금지 글자 `<>:"/\|?*`와 제어 문자는 `_`, 이름 전체의 앞뒤 공백·점을 지우고 120자에서 자르며 Windows 예약 이름(`CON` 등)은 뒤에 `_`. 첫 처리에서 같은 이름이 같은 해시면 그 파일을 쓰고 `reused: true` |
-| Studio 화면 전용 API | Origin이 있어야 한다(Helper·명령줄은 403). `POST /api/g2b/templates { template, source(base64), blobs?: { sha256: base64 } }`: 2판·hwpx 서식만, 원본·조각 해시 대조, 저장한 판은 바꾸지 않음(다른 내용이면 409 `REQUEST_CONFLICT`) → `{ template: { id, version, name } }`. `POST /api/g2b/profiles { id, label, templateId, version, outputDirectory, fileName? }`(`templateId`가 있으면 2판 프로필, 없는 판이면 400 `PROFILE_INVALID`). `GET /api/g2b/profiles`는 2판 프로필을 계약 꼴로, 1판 프로필은 저장한 꼴 그대로 보인다. 2판 요청이 1판 프로필을 가리키면 건마다 `PROFILE_INVALID` |
+| Studio 화면 전용 API | Origin이 있어야 한다(Helper·명령줄은 403). `POST /api/g2b/templates { template, source(base64), blobs?: { sha256: base64 } }`: 2판·hwpx 서식만, 원본·조각 해시 대조, 저장한 판은 바꾸지 않음(다른 내용이면 409 `REQUEST_CONFLICT`) → `{ template: { id, version, name } }`. `POST /api/g2b/profiles { id, label, templateId, version, outputDirectory, fileName? }`(`templateId`가 있으면 2판 프로필, 없는 판이면 400 `PROFILE_INVALID`). `GET /api/g2b/profiles`는 2판 프로필을 계약 꼴로, 1판 프로필은 저장한 꼴 그대로 보인다. 2판 요청이 1판 프로필을 가리키면 건마다 `PROFILE_INVALID`. `POST /api/g2b/profiles/delete { id }`(Origin 필수, #173) → `{ deleted }`: 프로필만 지우고(없는 id는 `false`, 틀린 id는 400 `INVALID_REQUEST`) 서식 판·끝난 요청 기록은 그대로 둔다 |
 | 저장(SQLite, 템플릿 저장소 #25 전의 자리) | `g2b_template(id, version, document=정규 JSON)`, `g2b_blob(sha256, bytes=원본·조각)`, `g2b2_request(request_id, fingerprint, template_id, template_version)`, `g2b2_item(request_id, item_index, status, code, path, sha256, result)`, `g2b_label_helper(document)`. 프로필은 1판과 같은 `g2b_profile`. 값·만든 문서 바이트는 어디에도 없다. Studio 학습 층은 아직 저장이 없다(#147·#148) |
 
 엔진 코드 → 창구 이름(위 계약 줄에 더함): `DATA_ALIAS_CONFLICT` → `PROFILE_MAPPING_CONFLICT`(같은 행이면 다른 값 오류보다 먼저). `SEL_RECHECK`·`PLACE_UNREGISTERED`·`TPL_*`(`TPL_SOURCE_MISMATCH`·`TPL_FRAGMENT_MISSING`·`TPL_CONFLICT` 등)·`ANCHOR_*`·`FRAG_*` → `TEMPLATE_RECHECK`. 그 밖(`GATE_*`·`FILL_*`·문서를 열 수 없음 등) → `GENERATION_FAILED`. 메시지에는 옮기기 전 엔진 코드를 괄호로 적는다(값 원문 없음).
@@ -1837,7 +1837,7 @@ type AnchorAddress = Pick<WordAnchor, "kind" | "at" | "start" | "end"> | Pick<Li
 | `history[]` | 판마다 `{ version, at, change }` | 비어 있지 않고, 판 번호 오름차순이며, 마지막 줄이 원형의 판이다. `change`는 사람이 읽는 바뀐 점이고 문서 글·값 원문을 넣지 않는다 |
 
 - `content.fragment`는 조각 덩어리(`serializeFragment(extractFragment(…))`의 UTF-8 바이트)의 sha256이다. 조각은 `extractFragment` 결과 그대로라 블록 자신의 서식 자원(의존 닫힘)과 이진 자료를 담는다. 덩어리는 원형 밖에 둔다(2판 템플릿의 덩어리와 같은 꼴).
-- `keys`는 범위 안 문단(하위 목록 포함)의 느슨한 `{{ 키 }}`(8.8.5) 가운데 누름틀·메일머지 표시 구간 밖의 것을 처음 나온 순서로 담는다(NFC로 같은 키는 하나). 8.8.12의 등록 판정과 같은 범위다.
+- `keys`는 범위 안 문단(하위 목록 포함)의 느슨한 `{{ 키 }}`(8.8.5) 가운데 누름틀·메일머지 표시 구간 밖의 것을 처음 나온 순서로 담는다(NFC로 같은 키는 하나). 여러 문단에 걸친 필드의 표시 구간은 시작 문단의 표식 뒤, 끝 문단의 표식 앞, 그리고 두 표식 사이에 통째로 든 문단 전체(사이 문단과 그 표 칸 문단, 시작 꼬리·끝 머리의 표 칸 문단)다(#138). 8.8.12의 등록 판정, 8.8.18의 미리보기 자리와 같은 범위다.
 - 형식 오류는 `TPL_FIELD`다(8.8.10).
 
 **함수**
