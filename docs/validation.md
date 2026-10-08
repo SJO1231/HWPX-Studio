@@ -1081,7 +1081,7 @@ CLI `block extract`로 떼고 `block insert --section 0 --index 25`(대상 2쪽�
 | 합성(세 문단 누름틀 + 네 문단 메일머지, 사이 문단 하나는 표 칸 `{{ }}`) | `keys` = 표시 구간 밖 3개(`extractBlock` = `protoFromFragment`, 저장 글에서 다시 읽은 조각도 같음), 미리보기 `fields` = 밖 `{{ }}` 3 + 누름틀 1 + 메일머지 1, 밖 `{{ }}`·두 필드만 등록한 2판 템플릿 생성 성공(오류 0) |
 | 변이 확인 | 고치기 전 코드로는 세 확인이 각각 실패: `keys`에 사이 문단 키 3개가 더해짐, 미리보기 `placeholder` 3개 더해짐, 생성 `PLACE_UNREGISTERED` 3건 |
 | 실제 공고서(읽기 전용) | 28절 시험 다시 실행: 16/16, 블록 32(거절 0)·문단 352, 서식 경고 32건·다른 문단 338개, 교체 32/32·새 오류 0, `keys` 0(28절과 같음). 미리보기 시험 32+16 같음·셈 같음, 값 타입 시험 50회 새 오류 0. 문서 모음 그대로 |
-| 회귀 | 형 검사 0. `npm test` 1,880개 중 1,809 통과, 0 실패, 71 선택 실행분 |
+| 회귀 | 형 검사 0. `npm test` 1,880개 중 1,809 통과, 0 실패, 71 선택 실행분. 작업 폴더의 `node_modules`가 주 체크아웃 엔진을 가리켜 앱 시험은 그 엔진을 읽으므로, 앱 시험(354개 중 353 통과·1 선택 실행분)과 실제 공고서 `g2b-v2-corpus`(통과)는 `@hwpx-studio/engine`을 작업 폴더 엔진으로 돌리는 로더(저장소 밖)로 다시 돌렸다 |
 
 시험: `node --test packages/hwpx-engine/test/block-proto-from-fragment.test.ts`, `HWPX_CORPUS_DIR=<폴더> node --test packages/hwpx-engine/test/block-corpus.test.ts packages/viewer/test/block-preview-corpus.test.ts packages/hwpx-engine/test/value-types-corpus.test.ts`.
 
