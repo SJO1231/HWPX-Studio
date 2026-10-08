@@ -258,7 +258,7 @@ const REJECT: Row[] = [
   { name: "source에 파일 이름", code: "TPL_FIELD", make: A((t) => (t["source"].name = "a.hwpx")) },
   { name: "version이 글", code: "TPL_FIELD", make: A((t) => (t["version"] = "4")) },
   { name: "version 0", code: "TPL_FIELD", make: A((t) => (t["version"] = 0)) },
-  { name: "값 형식이 date", code: "TPL_FIELD", make: A((t) => (t["values"][0].format = "date")) },
+  { name: "값 형식이 7종이 아님(phone)", code: "TPL_FIELD", make: A((t) => (t["values"][0].format = "phone")) },
   { name: "proto와 forkedFrom을 함께", code: "TPL_FIELD", make: A((t) => (t["blocks"][0].forkedFrom = { id: "k7d20a4e1", version: 1 })) },
   { name: "content에 fragment와 text를 함께", code: "TPL_FIELD", make: A((t) => (t["blocks"][1].content.fragment = SHA)) },
   { name: "content.fragment가 해시가 아님", code: "TPL_FIELD", make: A((t) => (t["blocks"][0].content = { fragment: "fragments/a.json" })) },
