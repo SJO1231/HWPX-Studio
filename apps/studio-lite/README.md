@@ -90,7 +90,7 @@ node --test --test-name-pattern='참고자료 공고서' test/studio.test.ts
 Remove-Item Env:HWPX_CORPUS_DIR
 ```
 
-하위 폴더의 `공고서*.hwpx`를 이름 중간 일치로 찾고 SHA-256으로 중복을 제외합니다. 일반값·0원·긴 문자열과 참가자격 Fragment 교체를 시험합니다. Grid 확정은 시험 코드에서 모의 수행하며 실제 업무 템플릿 승인이 아닙니다. 원본과 사용자 DB는 수정하지 않습니다. 최신 결과 폴더는 `artifacts/notice-simulation-latest.txt`, 파일별 결과는 해당 폴더의 `report.json`입니다. **passed / rejected / failed**를 따로 확인하세요. 생성 성공 0건·분석 실패·예상하지 않은 예외는 실패입니다. test/notice-baseline.json의 문서 해시별 차단 코드가 일치할 때만 rejected로 분류하며, 기존 참고자료가 식별되면 전체 106개 기준 사례의 누락과 기존 성공 감소도 실패로 판정합니다. 별도 출력 폴더는 HWPX_CORPUS_OUT_DIR로 지정할 수 있으며 이때 최신 보고서 포인터는 바꾸지 않습니다.
+하위 폴더의 `공고서*.hwpx`를 이름 중간 일치로 찾고 SHA-256으로 중복을 제외합니다. 일반값·0원·긴 문자열과 참가자격 Fragment 교체를 시험합니다. Grid 확정은 시험 코드에서 모의 수행하며 실제 업무 템플릿 승인이 아닙니다. 원본과 사용자 DB는 수정하지 않습니다. 최신 결과 폴더는 `artifacts/notice-simulation-latest.txt`, 파일별 결과는 해당 폴더의 `report.json`입니다. **passed / rejected / failed**를 따로 확인하세요. 생성 성공 0건·분석 실패·예상하지 않은 예외는 실패입니다. test/notice-baseline.json의 문서 해시별 차단 코드가 일치할 때만 rejected로 분류하며, 모음에 있는 기준 문서의 사례 누락과 기존 성공 감소도 실패로 판정합니다(모음에 없는 기준 문서는 요구하지 않고 `baseline.present`로 알립니다). 모음의 기준 문서가 모두 차단으로 검토된 것이면 성공 0건이 기대 결과이며, 이때 생성 결과 검사는 돌지 않았다고 진단에 적습니다(#118). 별도 출력 폴더는 HWPX_CORPUS_OUT_DIR로 지정할 수 있으며 이때 최신 보고서 포인터는 바꾸지 않습니다.
 
 코드 구조는 `src/core.ts`(모델 흐름·비교·조건·매핑), `src/hwpx.ts`(두 엔진 연결), `src/server.ts`(HTTP·SQLite), `web/`(공통 UI), 저장소의 `packages/hwpx-engine/`(공통 Core)입니다.
 

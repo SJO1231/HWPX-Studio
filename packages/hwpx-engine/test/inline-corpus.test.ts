@@ -287,7 +287,9 @@ test("M1 실제 문서 표본: 누름틀·{{}}·낱말·문단·셀에 줄바꿈
   writeFileSync(join(OUT_DIR, "inline-corpus.json"), `${JSON.stringify(report, null, 2)}\n`);
   t.diagnostic(`문서 ${ids.length}건(시도 ${tried}, 읽을 수 없음 ${unreadable}, 자리 없음 ${noPlaces}), 건 ${records}, 통과 ${ok}, 자리 ${JSON.stringify(kinds)}, 건너뜀 ${JSON.stringify(skipped)}, 문제 ${JSON.stringify(problems)}`);
 
-  assert.ok(ids.length >= 30, `표본 문서가 30건 이상이어야 한다(${ids.length})`);
+  // 모음이 30건보다 작으면 모음 전부(3MB 이하)가 표본이어야 한다(#118: 지금 모음은 16건)
+  const want = Math.min(30, order.length);
+  assert.ok(ids.length >= want, `표본 문서가 ${want}건 이상이어야 한다(${ids.length})`);
   assert.ok(report.corpus.unchangedAfterRun, "읽기 전용: 문서 모음이 바뀌지 않았다");
   assert.deepEqual(failures, {}, "게이트 실패 코드");
   assert.deepEqual(problems, {}, "다시 읽은 글·문단 수(수량 예상)·검사기·결정성 문제");
