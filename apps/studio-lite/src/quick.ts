@@ -11,6 +11,7 @@ import {
   fieldRangeIn,
   findCandidates,
   findPlaceholders,
+  generate,
   generateBatch,
   isValidPath,
   lookupPath,
@@ -31,7 +32,7 @@ import {
   type Template,
 } from "@hwpx-studio/engine";
 import { HostError, isObj, parseJson } from "../../../packages/viewer/src/host/index.ts";
-import type { DataForm, DataKey, Match, MatchState, MissingPolicy, PlacesView, ReportEntry, ResultView, UnfillableShape } from "./quick-types.ts";
+import type { DataForm, DataKey, Leftover, Match, MatchState, MissingPolicy, PlacesView, ReportEntry, ResultView, UnfillableShape } from "./quick-types.ts";
 import { plainOf } from "./quick-messages.ts";
 
 /** 한 번에 만들 수 있는 건수 */
@@ -41,6 +42,60 @@ export const MAX_RESULT_BYTES = 512 * 1024 * 1024;
 export const MAX_KEYS = 1000;
 export const MAX_CANDIDATES = 200;
 const MAX_KEY_DEPTH = 8;
+
+// ── 남은 자리 ────────────────────────────────────────────────────
+
+/** 글 속의 `{{…}}` 하나(안쪽 글은 앞뒤 공백을 떼어 키로 본다). 엔진 `findPlaceholders`와 달리 키 꼴을 따지지 않는다 */
+const LEFTOVER = /\{\{([^{}]*)\}\}/g;
+/** 구간 표기 `{{#이름}}`·`{{/이름}}`(요구 문서 8.8의 4)는 자리가 아니다 */
+const isRangeMark = (key: string): boolean => key.startsWith("#") || key.startsWith("/");
+
+/** 글들에 남은 `{{…}}`를 키별로 센다(구간 표기 제외). 작업창과 빠른 생성이 함께 쓰는 판정이다 */
+export function findLeftovers(texts: Iterable<string>): Leftover {
+  const keys = new Map<string, number>();
+  let count = 0;
+  for (const text of texts) {
+    for (const m of text.matchAll(LEFTOVER)) {
+      const key = m[1]!.trim();
+      if (isRangeMark(key)) continue;
+      keys.set(key, (keys.get(key) ?? 0) + 1);
+      count++;
+    }
+  }
+  return { count, keys: [...keys].map(([key, n]) => ({ key, count: n })) };
+}
+
+/** HWPX 결과의 모든 문단(본문·표 칸·머리말·꼬리말·글상자)에 남은 `{{…}}` */
+export function leftoverIn(bytes: Uint8Array): Leftover {
+  const doc = parseDocument(openPackage(bytes));
+  return findLeftovers(doc.sections.flatMap((s) => [...walkParagraphs(s.paragraphs)].map((p) => p.logicalText)));
+}
+
+/** 값 속 중괄호를 전각 중괄호로 바꾼 데이터(키는 그대로). 값에서 온 `{{…}}`를 남은 자리로 세지 않으려고 같은 생성을 한 번 더 돌릴 때 쓴다 */
+function maskBraces(value: unknown): unknown {
+  if (typeof value === "string") return value.replace(/[{}]/g, (c) => (c === "{" ? "｛" : "｝"));
+  if (Array.isArray(value)) return value.map(maskBraces);
+  return isObj(value) ? Object.fromEntries(Object.entries(value).map(([k, v]) => [k, maskBraces(v)])) : value;
+}
+const hasBraces = (value: unknown): boolean =>
+  typeof value === "string" ? /[{}]/.test(value) : Array.isArray(value) ? value.some(hasBraces) : isObj(value) && Object.values(value).some(hasBraces);
+
+/**
+ * 결과에 남은 `{{…}}`. 데이터 값은 글 그대로 들어가므로 값에 중괄호가 있으면 그 글도 결과에 보인다. 그때만(결과에 `{{…}}`가 있고 값에 중괄호가 있을 때)
+ * 값의 중괄호를 가린 데이터로 같은 생성(`rerun`)을 한 번 더 돌려 그 결과에서 센다. 다시 돌린 생성이 실패하면 처음 센 것을 쓴다(덜 세지 않는다).
+ */
+export function leftoverOf(output: Uint8Array, dataset: Dataset | undefined, rerun: (masked: Dataset) => Uint8Array | undefined): Leftover {
+  const found = leftoverIn(output);
+  if (found.count === 0 || dataset === undefined || !hasBraces(dataset.data) && !hasBraces(dataset.derived)) return found;
+  const probe = rerun({ data: maskBraces(dataset.data) as Dataset["data"], derived: maskBraces(dataset.derived) as Dataset["derived"] });
+  return probe === undefined ? found : leftoverIn(probe);
+}
+
+/** 사람이 읽는 남은 자리 설명(키 이름과 곳 수만. 값 원문은 없다): `남은 자리 4곳: {{a}} 2곳, {{b (원)}} 2곳` */
+export function describeLeftover(left: Leftover): string {
+  const shown = left.keys.slice(0, 20).map((k) => `{{${k.key}}} ${k.count}곳`).join(", ");
+  return `남은 자리 ${left.count}곳: ${shown}${left.keys.length > 20 ? ` 외 ${left.keys.length - 20}개 키` : ""}`;
+}
 
 // ── 문서: 자리 목록 ──────────────────────────────────────────────
 
@@ -58,6 +113,7 @@ type FieldTally = { count: number; mailMerge: number; fillable: number; merging:
  * `crossBlocked`이고 엔진이 준 사유 문구를 `reasons`에 담는다. 나머지는 모양(`object`·`crossContainer`·`unpaired`)별로 센다.
  * `{{키}}`는 메일머지가 맡는 표시 글 안의 것을 세지 않는다(엔진 8.3: 키가 경로 꼴이고 채울 수 있는 메일머지는 표시 글 안 `{{}}`를 채우지 않고 필드가 값을 넣는다.
  * 구간은 엔진의 `fieldRangeIn`). 그 밖의 메일머지(키가 경로 꼴이 아니거나 채울 수 없는 모양) 표시 글 안 `{{키}}`는 엔진이 채우므로 센다.
+ * 키가 경로 꼴이 아닌 `{{…}}`(구간 표기 제외)는 `offRule`에 센다. 엔진이 채우지 않아 결과에 남는 자리다. 목록에 오른 필드의 표시 글 안의 것은 그 필드가 자리이므로 세지 않는다.
  */
 export function analyzePlaces(bytes: Uint8Array): PlacesView {
   const doc = parseDocument(openPackage(bytes));
@@ -65,10 +121,13 @@ export function analyzePlaces(bytes: Uint8Array): PlacesView {
   const tallies = new Map<string, FieldTally>();
   /** 표시 글을 맡는 메일머지 */
   const owners: FieldTarget[] = [];
+  /** 목록에 오르는 필드(이름 있는 누름틀·키 있는 메일머지) */
+  const listed: FieldTarget[] = [];
   for (const target of collectFields(doc)) {
     const f = target.info;
     const key = f.type === "CLICK_HERE" ? f.name : f.type === "MAILMERGE" ? f.mergeKey : undefined;
     if (key === undefined) continue;
+    listed.push(target);
     let tally = tallies.get(key);
     if (tally === undefined) {
       tally = { count: 0, mailMerge: 0, fillable: 0, merging: 0, unfillable: new Map() };
@@ -92,14 +151,20 @@ export function analyzePlaces(bytes: Uint8Array): PlacesView {
   }
 
   const placeholderCounts = new Map<string, number>();
+  const offRuleCounts = new Map<string, number>();
   for (const section of doc.sections) {
     for (const par of walkParagraphs(section.paragraphs)) {
+      const inside = (fields: readonly FieldTarget[], start: number, end: number): boolean => fields.some((t) => {
+        const r = fieldRangeIn(t, par);
+        return r !== undefined && start < r.until && end > r.from;
+      });
       for (const h of findPlaceholders(par.logicalText)) {
-        const owned = owners.some((t) => {
-          const r = fieldRangeIn(t, par);
-          return r !== undefined && h.start < r.until && h.end > r.from;
-        });
-        if (!owned) placeholderCounts.set(h.path, (placeholderCounts.get(h.path) ?? 0) + 1);
+        if (!inside(owners, h.start, h.end)) placeholderCounts.set(h.path, (placeholderCounts.get(h.path) ?? 0) + 1);
+      }
+      for (const m of par.logicalText.matchAll(LEFTOVER)) {
+        const key = m[1]!.trim();
+        if (isRangeMark(key) || isValidPath(key) || inside(listed, m.index, m.index + m[0].length)) continue;
+        offRuleCounts.set(key, (offRuleCounts.get(key) ?? 0) + 1);
       }
     }
   }
@@ -119,6 +184,7 @@ export function analyzePlaces(bytes: Uint8Array): PlacesView {
       }),
     })),
     placeholders: [...placeholderCounts].map(([key, count]) => ({ key, count })),
+    offRule: [...offRuleCounts].map(([key, count]) => ({ key, count })),
     candidates: candidates.slice(0, MAX_CANDIDATES).map((c) => ({ kind: c.kind as "emptyCell" | "labelColon" | "blankMark", evidence: c.evidence })),
     candidatesTruncated: candidates.length > MAX_CANDIDATES,
   };
@@ -128,9 +194,55 @@ export function analyzePlaces(bytes: Uint8Array): PlacesView {
 
 export type QuickData = { form: DataForm; records: BatchRecord[] };
 
+/** G2B Helper 내보내기 파일(`document-input.json`)의 꼴 이름. Helper가 `{ format, version: 1, source }`로 싸서 내보낸다 */
+const HELPER_FORMAT = "g2b-helper-document";
+
+const flat = (data: Record<string, unknown>): BatchRecord => ({ dataset: { data, derived: {} } });
+
+/**
+ * Helper 항목 하나(생성 요청의 `items[]`, 내보내기 DB 레코드)를 평평한 라벨–값 한 건으로 펼친다: `{ ...fields, ...userValues }`.
+ * `fields`가 객체가 아니면 그 건만 `DATA_SCHEMA`, 두 객체에 같은 이름이 있으면 그 건만 `QUICK_FIELD_COLLISION`이다(Helper 1판 다리의 `FIELD_COLLISION`과 같은 규칙).
+ * `children` 등 다른 칸은 쓰지 않는다.
+ */
+function helperItem(item: unknown, n: number): BatchRecord {
+  const user = isObj(item) ? item["userValues"] ?? {} : undefined;
+  if (!isObj(item) || !isObj(item["fields"]) || !isObj(user)) {
+    return { error: { code: "DATA_SCHEMA", message: `${n}번째 Helper 항목에 fields·userValues 객체가 없습니다.` } };
+  }
+  const fields = item["fields"];
+  const clash = Object.keys(user).filter((k) => Object.hasOwn(fields, k));
+  if (clash.length > 0) {
+    return { error: { code: "QUICK_FIELD_COLLISION", message: `${n}번째 Helper 항목의 원천 값(fields)과 사용자 입력(userValues)에 같은 이름이 있습니다: ${clash.join(", ")}` } };
+  }
+  return flat({ ...fields, ...user });
+}
+
+/**
+ * Helper 내보내기의 `source`를 건으로 나눈다. 배열이면 DB 레코드(`{ fields, userValues, … }`)마다 한 건(`helperItem`). 객체이면 화면 추출본
+ * (`{ pointInfo, tables }`, 여러 frame이면 `{ frames: [...] }`)이고 frame·표·행 순서대로 표의 행마다 한 건이다(행은 그대로 라벨–값). `pointInfo`는 화면 위치라 쓰지 않는다.
+ */
+function helperExport(source: unknown): BatchRecord[] {
+  if (Array.isArray(source)) return source.map((item, i) => helperItem(item, i + 1));
+  if (!isObj(source)) throw new HostError(400, "QUICK_BAD_DATA", "Helper 내보내기 파일의 source가 객체나 배열이 아닙니다.");
+  const frames = source["frames"];
+  const units = Array.isArray(frames) && frames.length > 0 ? frames : [source];
+  const records: BatchRecord[] = [];
+  for (const unit of units) {
+    const tables = isObj(unit) ? unit["tables"] : undefined;
+    if (!isObj(tables)) continue;
+    for (const rows of Object.values(tables)) {
+      if (!Array.isArray(rows)) continue;
+      for (const row of rows) records.push(isObj(row) ? flat(row) : { error: { code: "DATA_SCHEMA", message: `${records.length + 1}번째 건(표의 행)이 JSON 객체가 아닙니다.` } });
+    }
+  }
+  return records;
+}
+
 /**
  * 올린 JSON을 건으로 나눈다(엔진의 `readBatchRecords`): 최상위가 배열이면 원소마다 한 건, 묶음 형식(`hwpx-studio/dataset@1`)의 `data`가 배열이면
  * 원소마다 한 건(`derived`는 공유), 객체이면 한 건이다. 객체가 아닌 원소는 그 건만 `DATA_SCHEMA`로 실패한다.
+ * G2B Helper의 두 꼴은 먼저 알아본다(엔진 명세 8.8.14): 내보내기(`format: "g2b-helper-document"`. `version`이 1이 아니면 `QUICK_HELPER_VERSION`)와
+ * 생성 요청(`requestId` 글 + `items` 배열). 건마다 평평한 라벨–값이 된다(`helperExport`·`helperItem`).
  * JSON이 아니면 `BAD_JSON`(400), 그 밖의 모양이면 `QUICK_BAD_DATA`, 건이 없거나 너무 많으면 `QUICK_NO_RECORDS`·`QUICK_TOO_MANY_RECORDS`다.
  * 묶음 형식의 `data`·`derived`가 틀리면 엔진의 `DATA_SCHEMA`(`HwpxError`)가 올라온다.
  */
@@ -138,18 +250,28 @@ export function parseQuickData(body: Uint8Array): QuickData {
   const raw = parseJson(body);
   // 글자 하나(JSON 문자열)를 엔진에 넘기면 JSON 본문으로 다시 읽으므로, 객체나 배열이 아니면 여기서 거절한다
   if (!Array.isArray(raw) && !isObj(raw)) throw new HostError(400, "QUICK_BAD_DATA", "데이터는 JSON 객체 하나이거나 객체의 배열이어야 합니다.");
-  const batch = readBatchRecords(raw);
   let form: DataForm;
   let records: BatchRecord[];
-  if (batch !== undefined) {
-    form = Array.isArray(raw) ? "array" : "bundleArray";
-    records = batch;
+  const items = isObj(raw) && typeof raw["requestId"] === "string" ? raw["items"] : undefined;
+  if (isObj(raw) && raw["format"] === HELPER_FORMAT) {
+    if (raw["version"] !== 1) throw new HostError(400, "QUICK_HELPER_VERSION", `이 Helper 내보내기 판(version ${JSON.stringify(raw["version"] ?? null)})은 읽지 못합니다. version 1만 받습니다.`);
+    form = "helperExport";
+    records = helperExport(raw["source"]);
+  } else if (Array.isArray(items)) {
+    form = "helperRequest";
+    records = items.map((item, i) => helperItem(item, i + 1));
   } else {
-    // 배열이면 위에서 건으로 나뉘었으므로 객체 하나다
-    form = (raw as Record<string, unknown>)["schema"] === DATASET_SCHEMA ? "bundle" : "object";
-    records = [{ dataset: readDataset(raw) }];
+    const batch = readBatchRecords(raw);
+    if (batch !== undefined) {
+      form = Array.isArray(raw) ? "array" : "bundleArray";
+      records = batch;
+    } else {
+      // 배열이면 위에서 건으로 나뉘었으므로 객체 하나다
+      form = (raw as Record<string, unknown>)["schema"] === DATASET_SCHEMA ? "bundle" : "object";
+      records = [{ dataset: readDataset(raw) }];
+    }
   }
-  if (records.length === 0) throw new HostError(400, "QUICK_NO_RECORDS", "데이터에 만들 건이 없습니다.");
+  if (records.length === 0) throw new HostError(400, "QUICK_NO_RECORDS", form === "helperExport" ? "Helper 내보내기 파일의 표에 행이 없습니다." : "데이터에 만들 건이 없습니다.");
   if (records.length > MAX_RECORDS) throw new HostError(400, "QUICK_TOO_MANY_RECORDS", `한 번에 ${MAX_RECORDS}건까지 만들 수 있습니다(올린 데이터는 ${records.length}건).`);
   return { form, records };
 }
@@ -215,7 +337,7 @@ export function judge(dataset: Dataset, key: string): Judged {
 export const countInvalidRecords = (records: readonly BatchRecord[]): number => records.filter((r) => !("dataset" in r)).length;
 
 /**
- * 자리(누름틀 이름·`{{키}}`)마다 모든 건에서 데이터와 맞는지 센다. 키로 쓸 수 없는 누름틀 이름(엔진이 채우지 않는 것)은 `badKey`,
+ * 자리(누름틀 이름·`{{키}}`)마다 모든 건에서 데이터와 맞는지 센다. 키로 쓸 수 없는 누름틀 이름과 규칙 밖 `{{…}}`(`offRule`. 엔진이 채우지 않는 것)는 `badKey`,
  * 그 이름의 곳이 전부 엔진이 채울 수 없는 누름틀은 `unfillable`이다(둘 다 건수 판정을 하지 않는다. 일부 곳만 채울 수 없는 누름틀은 데이터로 판정한다).
  * 객체가 아닌 건은 판정하지 않고 건수에서 뺀다. 판정할 건이 하나도 없으면 `missing`이다.
  */
@@ -241,6 +363,7 @@ export function matchPlaces(places: PlacesView, records: readonly BatchRecord[])
   return [
     ...places.fields.map((f) => one("field", f.name, !f.usable ? "badKey" : f.fillable === 0 ? "unfillable" : undefined)),
     ...places.placeholders.map((p) => one("placeholder", p.key)),
+    ...places.offRule.map((p) => one("placeholder", p.key, "badKey")),
   ];
 }
 
@@ -310,7 +433,19 @@ function toGenerated(item: BatchItem, multiline: () => ReportEntry[]): Generated
 }
 
 /**
+ * 결과에 남은 `{{…}}`에 누락 정책을 적용한다: `error`면 그 건을 실패(`QUICK_LEFTOVER`, 파일 없음)로 바꾸고, 그 밖이면 성공에 알림(`QUICK_LEFTOVER_KEPT`)을 단다.
+ * 어느 쪽이든 `leftover`에 키별 곳 수를 남긴다. 채운 곳 수·건너뜀은 그대로 둔다(무엇을 채웠고 왜 남았는지 함께 보이게).
+ */
+export function applyLeftover(g: Generated, left: Leftover, missing: MissingPolicy): Generated {
+  if (left.count === 0 || g.output === undefined) return g;
+  const detail = describeLeftover(left);
+  if (missing === "error") return { view: { ...g.view, ok: false, notes: [], errors: [entry("QUICK_LEFTOVER", detail)], leftover: left } };
+  return { view: { ...g.view, notes: [...g.view.notes, entry("QUICK_LEFTOVER_KEPT", detail)], leftover: left }, output: g.output };
+}
+
+/**
  * 모든 건을 차례로 만든다(엔진의 `generateBatch`: 템플릿 없이 `{{키}}`·누름틀·메일머지를 채우고, 한 건이 실패해도 나머지는 만든다. 이름은 엔진의 `planBatchNames`).
+ * 성공한 건은 결과에 남은 `{{…}}`를 세어 누락 정책을 적용한다(`applyLeftover`).
  * 실제 성공 출력 바이트를 누적한다. 한도를 넘는 건부터 실패로 보고하고 이후 엔진 생성을 중단한다.
  */
 export function generateAll(source: Uint8Array, places: PlacesView, data: QuickData, fileName: string, missing: MissingPolicy, template: Template = emptyTemplate()): Generated[] {
@@ -325,7 +460,17 @@ export function generateAll(source: Uint8Array, places: PlacesView, data: QuickD
   let doc: HwpxDocument | undefined;
   const planOf = (dataset: Dataset): PlanReport => buildFillPlan((doc ??= parseDocument(openPackage(source))), template, dataset, { missing }).report;
   for (const item of generateBatch(source, template, data.records, { baseName: fileName, missing })) {
-    const bytes = item.ok ? item.output?.byteLength ?? 0 : 0;
+    const record = data.records[item.index - 1] as BatchRecord;
+    const dataset = "dataset" in record ? record.dataset : undefined;
+    let g = toGenerated(item, () => multilineNotes(record, keys, planOf, template));
+    if (g.output !== undefined) {
+      const rerun = (masked: Dataset): Uint8Array | undefined => {
+        const probe = generate(source, template, masked, { missing });
+        return probe.ok && !probe.dryRun ? probe.output : undefined;
+      };
+      g = applyLeftover(g, leftoverOf(g.output, dataset, rerun), missing);
+    }
+    const bytes = g.output?.byteLength ?? 0;
     if (resultBytes + bytes > MAX_RESULT_BYTES) {
       const names = planBatchNames(data.records, fileName);
       for (let index = item.index - 1; index < data.records.length; index++) {
@@ -335,8 +480,7 @@ export function generateAll(source: Uint8Array, places: PlacesView, data: QuickD
       break;
     }
     resultBytes += bytes;
-    const record = data.records[item.index - 1] as BatchRecord;
-    out.push(toGenerated(item, () => multilineNotes(record, keys, planOf, template)));
+    out.push(g);
   }
   return out;
 }

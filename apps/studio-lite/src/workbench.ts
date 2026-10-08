@@ -9,7 +9,7 @@ import { HostError, isObj, locate, markOf, resolveDrafts } from '../../../packag
 import { toRhwpPosition, type RhwpPosition } from '../../../packages/viewer/src/map/index.ts';
 import { extractBlockDraft, type BlockDraft, type BlockLibrary } from './block-library.ts';
 import { parseCsv } from './core.ts';
-import { analyzePlaces, listKeys, parseQuickData, type QuickData } from './quick.ts';
+import { analyzePlaces, describeLeftover, findLeftovers, leftoverOf, listKeys, parseQuickData, type QuickData } from './quick.ts';
 
 import { plainOf as plainBlock } from '../../studio/src/messages.ts';
 const MAX_SOURCE = 10 * 1024 * 1024;
@@ -53,7 +53,7 @@ function inputsOf(s: Session): Input[] {
   }
   for (const r of s.rows) for (const m of r.text.matchAll(/\{\{([^{}#/]+)\}\}/g)) {
     if ((spans.get(r.id) ?? []).some(x => m.index < x.end && m.index + m[0].length > x.start)) continue;
-    out.push({ kind: 'placeholder', name: m[1]!, row: r.id, start: m.index, end: m.index + m[0].length });
+    out.push({ kind: 'placeholder', name: m[1]!, row: r.id, start: m.index, end: m.index + m[0].length, usable: isValidPath(m[1]!.trim()) });
   }
   const order = new Map(s.rows.map((r, i) => [r.id, i]));
   return out.sort((a, b) => (order.get(a.row) ?? 0) - (order.get(b.row) ?? 0) || a.start - b.start);
@@ -204,10 +204,14 @@ function changedRange(doc: HwpxDocument, row: Row, text: string) {
   return { start: draft.start, end: draft.end, text: row.text.slice(draft.start, start) + text.slice(start, nextEnd) + row.text.slice(end, draft.end) };
 }
 
-function build(s: Session, work: Work, makeTemplate = false, library?: BlockLibrary) {
+/** 생성 막기: 데이터에 없는 키(엔진 보고의 `missingPaths`) 또는 결과에 남은 `{{…}}`. 키 이름과 곳 수만 적는다(값 원문 없음) */
+const unlinked = (what: string): never => fail('WORKBENCH_UNLINKED', `연결 안 된 입력 자리가 있어 생성을 막았습니다. ${what}. 데이터를 연결하거나 데이터 메뉴의 '연결 안 된 입력 자리'에서 '자리 유지'를 고르세요.`);
+
+// `dataset`을 주면 그 데이터로 만든다(남은 자리를 셀 때 값의 중괄호를 가린 데이터로 다시 만드는 용도)
+function build(s: Session, work: Work, makeTemplate = false, library?: BlockLibrary, override?: Dataset) {
   need(s.doc, 'WORKBENCH_SOURCE');
   const record = s.data?.records[work.index];
-  const dataset = !makeTemplate && record && 'dataset' in record ? record.dataset : undefined;
+  const dataset = makeTemplate ? undefined : override ?? (record && 'dataset' in record ? record.dataset : undefined);
   const compositionData=work.placements.length?undefined:dataset;
   const template = emptyTemplate();
   const formats: { row: Row; text: string; spans: { start: number; end: number }[]; block: boolean; keys: ReturnType<typeof findPlaceholders> }[] = [];
@@ -239,8 +243,11 @@ function build(s: Session, work: Work, makeTemplate = false, library?: BlockLibr
     const anchor=makeRangeAnchor(s.doc,a.sectionIndex,a.path.slice(0,-1),a.path.at(-1)!,z.path.at(-1)!);need(anchor,'WORKBENCH_RANGE');
     template.anchors.push({...anchor,id});template.rules.push({id,do:{type:'inject',anchor:id,position:'replace',fragment:stored.fragment as unknown as Record<string,unknown>}});
   }
-  const result = generate(s.source, readTemplate(template), compositionData ?? readDataset({}), { missing: compositionData ? 'error' : 'keep', mode: 'baseline', allowNothingApplied: !template.rules.length && (!dataset || formats.some(f => f.spans.length)) });
-  if (!result.ok || !('output' in result)) return fail(result.report.issues.find(i => i.severity === 'error')?.code ?? 'WORKBENCH_GENERATE', '문서 생성 검사를 통과하지 못했습니다.');
+  const result = generate(s.source, readTemplate(template), compositionData ?? readDataset({}), { missing: compositionData ? work.missing : 'keep', mode: 'baseline', allowNothingApplied: !template.rules.length && (!dataset || formats.some(f => f.spans.length)) });
+  if (!result.ok || !('output' in result)) {
+    if (result.report.plan.missingPaths.length) unlinked(`데이터에 없는 키 ${result.report.plan.missingPaths.length}개: ${result.report.plan.missingPaths.slice(0, 20).join(', ')}`);
+    return fail(result.report.issues.find(i => i.severity === 'error')?.code ?? 'WORKBENCH_GENERATE', '문서 생성 검사를 통과하지 못했습니다.');
+  }
   need(!result.report.plan.skipped.some(x => x.ruleId !== 'implicit'), 'WORKBENCH_SKIPPED');
   let output = result.output;
   let filled=result.report.plan.actions.filter(a=>a.type==='fill').reduce((n,a)=>n+a.targets,0);
@@ -282,8 +289,11 @@ function build(s: Session, work: Work, makeTemplate = false, library?: BlockLibr
     output = compiled.output;
   }
   if(work.placements.length&&dataset){
-    const values=generate(output,emptyTemplate(),dataset,{missing:'error',mode:'baseline',allowNothingApplied:true});
-    if(!values.ok||!('output' in values))return fail(values.report.issues.find(i=>i.severity==='error')?.code??'WORKBENCH_GENERATE','블록의 입력 값을 채우지 못했습니다. 데이터 항목을 확인하세요.');
+    const values=generate(output,emptyTemplate(),dataset,{missing:work.missing,mode:'baseline',allowNothingApplied:true});
+    if(!values.ok||!('output' in values)){
+      if(values.report.plan.missingPaths.length)unlinked(`데이터에 없는 키 ${values.report.plan.missingPaths.length}개: ${values.report.plan.missingPaths.slice(0,20).join(', ')}`);
+      return fail(values.report.issues.find(i=>i.severity==='error')?.code??'WORKBENCH_GENERATE','블록의 입력 값을 채우지 못했습니다. 데이터 항목을 확인하세요.');
+    }
     output=values.output;filled+=values.report.plan.actions.filter(a=>a.type==='fill').reduce((n,a)=>n+a.targets,0);
   }
   const outputDoc = parseDocument(openPackage(output));
@@ -297,7 +307,8 @@ function buildText(s: Session, work: Work) {
   const record = s.data?.records[work.index], dataset = record && 'dataset' in record ? record.dataset : undefined;
   const separators = [...s.sourceText!.matchAll(/\r\n|\r|\n/g)].map(m => m[0]);
   const edits = new Map(work.edits.filter(e => e.text !== s.rows.find(r => r.id === e.id)!.text).map(e => [e.id, e]));
-  let text = '', filled = 0, unresolved = 0, ranges = 0;
+  let text = '', filled = 0, ranges = 0;
+  const left: string[] = [];
   for (let i = 0; i < s.rows.length; i++) {
     const row = s.rows[i]!, block = work.blocks.find(b => b.from === row.id), edit = edits.get(row.id);
     const content = (block ? block.text : edit ? edit.text : row.text).replace(/\{\{([^{}]*)\}\}/g, (token, key: string) => {
@@ -305,13 +316,15 @@ function buildText(s: Session, work: Work) {
       if (/^[#/]/.test(path)) { ranges++; return token; }
       const value = dataset && isValidPath(path) ? resolvePathValue(dataset, path, 'error') : undefined;
       if (value?.kind === 'text') { filled++; return value.text; }
-      unresolved++; return token;
+      left.push(token); return token;
     });
     if (block) i = s.rows.findIndex(r => r.id === block.to);
     if (!block || content !== '') text += content + (separators[i] ?? '');
     need(Buffer.byteLength(text) <= MAX_SOURCE, 'WORKBENCH_RESULT_LIMIT');
   }
-  if (unresolved && work.missing === 'error') return fail('WORKBENCH_UNLINKED', `연결 안 된 입력 자리 ${unresolved}곳입니다. 데이터를 연결하거나 데이터 메뉴에서 ‘자리 유지’를 선택하세요.`);
+  // 남은 자리는 원문·편집 글의 표기만 센다(값은 다시 읽지 않는다). 설명은 HWPX·빠른 생성과 같은 꼴
+  const unresolved = left.length;
+  if (unresolved && work.missing === 'error') unlinked(describeLeftover(findLeftovers(left)));
   need(checkValueText(text) === undefined, 'WORKBENCH_TEXT');
   return { output: new TextEncoder().encode(text), text, filled, changed: edits.size + work.blocks.length,
     ...(unresolved ? { template: true as const, unresolved } : {}),
@@ -435,8 +448,17 @@ export function createWorkbench(library?: BlockLibrary) {
             library?.saveWorkspace(s.workspaceId!,s.name,work.placements);
             return { name: `${sanitizeFileStem(s.name.replace(/\.txt$/i, ''))}.workspace.json`, workspace: JSON.stringify({ schema, workspaceId:s.workspaceId, kind: s.kind, name: s.name, source: Buffer.from(s.source).toString('base64'), sha256: hash(s.source), ...(s.dataContent === undefined ? {} : { data: s.dataContent }), ...work }) };
           }
-          const result = s.kind === 'text' ? buildText(s, work) : build(s, work, makeTemplate, library); s.output = result.output;
-          return { ok: true, kind: s.kind, text: result.text, outputUrl: `/api/workbench/result?session=${input.session}`, filled: result.filled, changed: result.changed, bytes: result.output.length, notes: result.notes, ...('template' in result && result.template ? { template: true } : {}), ...('promoted' in result ? { promoted: result.promoted } : {}), ...('unresolved' in result ? { unresolved: result.unresolved } : {}) };
+          const result = s.kind === 'text' ? buildText(s, work) : build(s, work, makeTemplate, library);
+          let notes = result.notes, unresolved = 'unresolved' in result ? result.unresolved : undefined;
+          if (s.kind === 'hwpx' && !makeTemplate) {
+            // 결과에 남은 {{…}}(혼합 서식·이름 규칙 밖·자리 유지 등): 기본 정책은 생성 막기, 자리 유지면 알림(빠른 생성과 같은 판정)
+            const record = s.data?.records[work.index], dataset = record && 'dataset' in record ? record.dataset : undefined;
+            const left = leftoverOf(result.output, dataset, masked => { try { return build(s, work, false, library, masked).output; } catch { return undefined; } });
+            if (left.count && work.missing === 'error') unlinked(describeLeftover(left));
+            if (left.count) { unresolved = left.count; notes = [...notes, `채우지 못한 {{…}} 자리가 결과에 그대로 남았습니다(${describeLeftover(left)})`]; }
+          }
+          s.output = result.output;
+          return { ok: true, kind: s.kind, text: result.text, outputUrl: `/api/workbench/result?session=${input.session}`, filled: result.filled, changed: result.changed, bytes: result.output.length, notes, ...('template' in result && result.template ? { template: true } : {}), ...('promoted' in result ? { promoted: result.promoted } : {}), ...(unresolved === undefined ? {} : { unresolved }) };
         }
         throw new HostError(404, 'WORKBENCH_ROUTE', '없는 작업 요청입니다.');
       } catch (error) {

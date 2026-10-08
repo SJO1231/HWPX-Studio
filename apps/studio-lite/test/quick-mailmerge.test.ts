@@ -63,6 +63,9 @@ test('빠른 생성 MAILMERGE: 같은 키의 클릭·메일머지 곳 수 병합
   assert.deepEqual(visible.find(f=>f.name==='bad key'),{name:'bad key',count:1,usable:false,fillable:1,merging:0,unfillable:[],mailMerge:1});
 });
 
+// 이름 규칙 밖 메일머지 가운데 표시 글이 `{{키}}`인 2곳은 채우지 않아 결과에 남는다(#126): 실패 처리면 건마다 실패, 원래 글 유지면 41곳 채움 + 알림
+const FIXTURE_LEFTOVER={count:2,keys:[{key:'참고 사항',count:1},{key:'계약 방법(수의)',count:1}]};
+
 test('빠른 생성 MAILMERGE: seeded50행×2회, 41곳 채움·공개 엔진 동치·필드표식 보존·새 오류0',t=>{
   const bytes=source(),before=Buffer.from(bytes),doc=docOf(bytes),fieldsBefore=listFields(doc),places=analyzePlaces(bytes);
   const next=rng(0x2400c0de),rows=Array.from({length:50},(_,index)=>{
@@ -71,7 +74,10 @@ test('빠른 생성 MAILMERGE: seeded50행×2회, 41곳 채움·공개 엔진 �
   });
   assert(rows.every(row=>typeof row['사업명']==='string'&&row['사업명'].length>400));
   const input=encode(rows),inputBefore=Buffer.from(input),data=parseQuickData(input),dataBefore=JSON.stringify(data);
-  const first=generateAll(bytes,places,data,'synthetic.hwpx','error'),second=generateAll(bytes,places,data,'synthetic.hwpx','error');
+  const blocked=generateAll(bytes,places,data,'synthetic.hwpx','error');
+  assert(blocked.every(r=>!r.view.ok&&r.output===undefined&&r.view.filled===41&&r.view.errors.length===1&&r.view.errors[0]!.code==='QUICK_LEFTOVER'));
+  assert(blocked.every(r=>JSON.stringify(r.view.leftover)===JSON.stringify(FIXTURE_LEFTOVER)&&r.view.errors[0]!.detail==='남은 자리 2곳: {{참고 사항}} 1곳, {{계약 방법(수의)}} 1곳'));
+  const first=generateAll(bytes,places,data,'synthetic.hwpx','keep'),second=generateAll(bytes,places,data,'synthetic.hwpx','keep');
   assert.equal(first.length,50);assert.equal(second.length,50);
   const baseline=validateDocument(bytes),begins=controls(bytes,'begin'),ends=controls(bytes,'end');
   let gates=0,filled=0,engineComparisons=0,pairs=0,controlChecks=0,newErrors=0;
@@ -79,7 +85,8 @@ test('빠른 생성 MAILMERGE: seeded50행×2회, 41곳 채움·공개 엔진 �
     const a=first[index]!,b=second[index]!,record=data.records[index]!;assert('dataset' in record);
     assert(a.view.ok&&a.output,JSON.stringify(a.view.errors));assert(b.view.ok&&b.output,JSON.stringify(b.view.errors));
     assert.deepEqual(a.output,b.output);assert.deepEqual(a.view,b.view);pairs++;
-    const expected=generate(bytes,emptyTemplate(),record.dataset,{mode:'baseline',missing:'error'});
+    assert.deepEqual(a.view.leftover,FIXTURE_LEFTOVER);assert.deepEqual(a.view.notes.filter(n=>n.code==='QUICK_LEFTOVER_KEPT').length,1);
+    const expected=generate(bytes,emptyTemplate(),record.dataset,{mode:'baseline',missing:'keep'});
     assert(expected.ok&&!expected.dryRun);assert.deepEqual(a.output,expected.output);engineComparisons++;
     assert.equal(expected.report.plan.actions.filter(action=>action.anchor.startsWith('{{')).reduce((n,action)=>n+action.targets,0),8,'공개 fixture의 독립 표식8곳 기준');
     for(const result of [a,b]) {
@@ -176,6 +183,7 @@ test('빠른 생성 MAILMERGE: 표시 글이 {{키}}인 메일머지 30곳을 {{
   assert.deepEqual(bad.map(f=>f.name).sort(),['계약 방법','금액(원)','납품 장소','담당 부서']);
   const listed=places.fields.filter(f=>f.usable).reduce((n,f)=>n+f.fillable,0)+places.placeholders.reduce((n,p)=>n+p.count,0);
   assert.equal(listed,28);
+  assert.deepEqual(places.offRule,[],'이름 규칙 밖 메일머지의 표시 글 {{키}}는 그 필드가 자리이므로 규칙 밖 {{…}}로 따로 세지 않는다');
 
   const next=rng(0x24f1e1d5),keys=places.fields.filter(f=>f.usable).map(f=>f.name);
   const rows=Array.from({length:50},(_,i)=>{
@@ -188,13 +196,19 @@ test('빠른 생성 MAILMERGE: 표시 글이 {{키}}인 메일머지 30곳을 {{
   const matches=matchPlaces(places,data.records);
   assert.equal(matches.filter(m=>m.kind==='field'&&m.state==='ok').length,keys.length);
   assert.equal(matches.filter(m=>m.kind==='field'&&m.state==='badKey').length,4);
-  const first=generateAll(bytes,places,data,'shaped.hwpx','error'),second=generateAll(bytes,places,data,'shaped.hwpx','error');
+  // 이름 규칙 밖 4곳은 표시 글 `{{키}}`가 결과에 남는다(#126): 실패 처리면 건마다 실패(26곳 채운 뒤 남은 4곳), 원래 글 유지면 성공 + 알림
+  const shapedLeftover={count:4,keys:['담당 부서','계약 방법','납품 장소','금액(원)'].map(key=>({key,count:1}))};
+  const blocked=generateAll(bytes,places,data,'shaped.hwpx','error');
+  assert(blocked.every(r=>!r.view.ok&&r.output===undefined&&r.view.errors.map(e=>e.code).join()==='QUICK_LEFTOVER'));
+  assert(blocked.every(r=>JSON.stringify(r.view.leftover)===JSON.stringify(shapedLeftover)),JSON.stringify(blocked[0]?.view.leftover));
+  const first=generateAll(bytes,places,data,'shaped.hwpx','keep'),second=generateAll(bytes,places,data,'shaped.hwpx','keep');
   let filled=0,skips=0,newErrors=0,direct=0;
   for(let i=0;i<rows.length;i++){
     const a=first[i]!,b=second[i]!,record=data.records[i]!;assert('dataset' in record);
     assert(a.view.ok&&a.output,JSON.stringify(a.view.errors));
     assert.deepEqual(a.output,b.output);assert.deepEqual(a.view,b.view);
-    const expected=generate(bytes,emptyTemplate(),record.dataset,{mode:'baseline',missing:'error'});
+    assert.deepEqual(a.view.leftover,shapedLeftover);
+    const expected=generate(bytes,emptyTemplate(),record.dataset,{mode:'baseline',missing:'keep'});
     assert(expected.ok&&!expected.dryRun);assert.deepEqual(a.output,expected.output);direct++;
     assert.equal(a.view.filled,listed,'목록의 채울 곳 수 = 실제 채운 곳 수');
     const notPath=a.view.skipped.filter(s=>s.code==='MERGE_KEY_NOT_PATH');

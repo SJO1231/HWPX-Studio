@@ -12,10 +12,13 @@ test('Lite 결과 용량: 실제 512 MiB 전·동일·초과와 초과 이후 �
     import {mock} from 'node:test';
     const engine=await import('@hwpx-studio/engine');
     let batch;
-    mock.module('@hwpx-studio/engine',{namedExports:{...engine,generateBatch:function*(){yield*batch();}}});
+    // 가짜 결과(ZIP이 아닌 0 바이트 배열)는 남은 자리 검사(#126)가 빈 문서로 읽는다. 진짜 HWPX(서식 올리기)는 엔진 그대로 읽는다
+    const fake={fake:true},zip=b=>b[0]===0x50&&b[1]===0x4b;
+    mock.module('@hwpx-studio/engine',{namedExports:{...engine,generateBatch:function*(){yield*batch();},
+      openPackage:b=>zip(b)?engine.openPackage(b):fake,parseDocument:p=>p===fake?{sections:[]}:engine.parseDocument(p)}});
     const {generateAll,MAX_RESULT_BYTES}=await import(${JSON.stringify(new URL('../src/quick.ts',import.meta.url).href)});
     assert.equal(MAX_RESULT_BYTES,512*1024*1024);
-    const places={fields:[],placeholders:[],candidates:[],candidatesTruncated:false};
+    const places={fields:[],placeholders:[],offRule:[],candidates:[],candidatesTruncated:false};
     const records=n=>({form:'array',records:Array.from({length:n},()=>({dataset:{data:{},derived:{}}}))});
     const item=(i,output)=>({index:i,name:'limit-'+String(i).padStart(3,'0')+'.hwpx',ok:true,output,filled:1,skipped:[],warnings:[],errorCodes:[],errors:[]});
     let calls=0;

@@ -70,12 +70,18 @@ test('Lite 빠른 생성: 공용 뷰어 클릭 초안이 선택한 낱말만 채
   assert.deepEqual(Buffer.from(source),before,'클릭 지정은 원본 내용 수정이 아니다');
 });
 
-test('Lite 빠른 생성: 혼합 서식 자리만 건너뛰고 정상 자리 채움·경고 기준 유지',()=>{
+test('Lite 빠른 생성: 혼합 서식 자리는 건너뛰고 결과에 남으므로 실패 처리면 실패(#126), 원래 글 유지면 정상 자리만 채우고 알림',()=>{
   const source=synth([P(R(T('{{broken.'))+R(T('value}}'),'1')),P(R(T('정상 {{ok}}')))]);
   const data=parseQuickData(enc({broken:{value:'주입 금지'},ok:'새 값'}));
-  const result=generateAll(source,analyzePlaces(source),data,'혼합.hwpx','error')[0];
+  const blocked=generateAll(source,analyzePlaces(source),data,'혼합.hwpx','error')[0];
+  assert(blocked&&!blocked.view.ok);assert.equal(blocked.output,undefined);
+  assert.deepEqual(blocked.view.leftover,{count:1,keys:[{key:'broken.value',count:1}]});
+  assert.deepEqual(blocked.view.errors.map(e=>[e.code,e.detail]),[['QUICK_LEFTOVER','남은 자리 1곳: {{broken.value}} 1곳']]);
+  assert(blocked.view.skipped.some(s=>s.code==='FILL_MIXED_FORMAT'),'왜 남았는지(건너뜀)는 실패에도 남긴다');
+  const result=generateAll(source,analyzePlaces(source),data,'혼합.hwpx','keep')[0];
   assert(result?.view.ok&&result.output);assert.equal(result.view.filled,1);
   assert(result.view.skipped.some(s=>s.code==='FILL_MIXED_FORMAT'));
+  assert.deepEqual(result.view.notes.filter(n=>n.code==='QUICK_LEFTOVER_KEPT').map(n=>n.detail),['남은 자리 1곳: {{broken.value}} 1곳']);
   assert.equal(lines(result.output)[1],'{{broken.value}}');assert.equal(lines(result.output)[2],'정상 새 값');
   assert(!lines(result.output).join('\n').includes('주입 금지'));
 });

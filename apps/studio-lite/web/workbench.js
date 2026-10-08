@@ -417,7 +417,9 @@ async function generate(asTemplate = false) {
     $('#download-label').textContent = asTemplate ? '서식 HWPX 저장' : textTemplate ? '서식 TXT 저장' : state.kind === 'text' ? 'TXT 저장' : 'HWPX 저장';
     $('#body-text').value = result.text ?? ''; $('#body-result-panel').hidden = true;
     $('#body-result').open = state.kind === 'text';
-    $('#output-info').textContent = asTemplate ? '누름틀 ' + result.promoted + '개 생성' : textTemplate ? '서식 반영 · 미연결 ' + result.unresolved + '곳' : result.changed + '개 편집 · ' + result.filled + '곳 채움';
+    // HWPX를 '자리 유지'로 만들어 채우지 못한 {{…}}가 남으면 남은 곳 수를 함께 보인다(#126)
+    const left = !asTemplate && !textTemplate && result.unresolved ? ' · 남은 자리 ' + result.unresolved + '곳' : '';
+    $('#output-info').textContent = asTemplate ? '누름틀 ' + result.promoted + '개 생성' : textTemplate ? '서식 반영 · 미연결 ' + result.unresolved + '곳' : result.changed + '개 편집 · ' + result.filled + '곳 채움' + left;
     try {
       if (state.kind === 'text') {renderTextDocument('result');}
       else await openViewer(result.outputUrl, 'result', state.openTicket);
@@ -427,7 +429,7 @@ async function generate(asTemplate = false) {
       status('생성은 완료됐지만 화면 표시가 어렵습니다. 내려받기로 확인해주세요. ' + errorMessage(error), 'error'); return;
     }
     const notes = Array.isArray(result.notes) && result.notes.length ? ' · ' + result.notes.join(' · ') : '';
-    status(asTemplate ? '누름틀 ' + result.promoted + '개를 만들었습니다. 서식 HWPX 저장을 누르세요.' : textTemplate ? '글을 반영했습니다. 미연결 ' + result.unresolved + '곳은 {{키}}로 남겼습니다. 데이터를 연결하면 값을 채울 수 있습니다.' + notes : '생성 완료 · ' + result.changed + '개 편집, ' + result.filled + '곳 채움' + notes, 'success');
+    status(asTemplate ? '누름틀 ' + result.promoted + '개를 만들었습니다. 서식 HWPX 저장을 누르세요.' : textTemplate ? '글을 반영했습니다. 미연결 ' + result.unresolved + '곳은 {{키}}로 남겼습니다. 데이터를 연결하면 값을 채울 수 있습니다.' + notes : '생성 완료 · ' + result.changed + '개 편집, ' + result.filled + '곳 채움' + notes, left ? 'warn' : 'success');
   } catch (error) {
     state.output = undefined; disposeResult(); $('#output-info').textContent = ''; status(errorMessage(error), 'error');
   } finally { setBusy(false); }
