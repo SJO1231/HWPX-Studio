@@ -2,12 +2,13 @@ import {viewerLines, lineAt} from '/viewer-lines.js';
 import { installBlockLibrary } from '/block-library.js';
 import {editorLayout, editorSelection, unitAt, replaceEditorText, groupEditorSelection, editorChange} from '/editor-model.js';
 import { createPageView, createLatest, toPagePoint } from '/packages/viewer/src/dom/index.ts';
+import {STATUS_LABEL, TYPE_LABEL, validKey, isField, keptStatus, suggestType, autoKey, repsOf, samePlaceholder, confirmText, changedSpan, toOriginal, spanNow, contextOf, mergeSaved, keyFor} from '/input-table.js';
 import { loadRhwp, openDocument, runPosition, sameParagraph } from '/packages/viewer/src/rhwp/index.ts';
 
 const $ = (selector) => document.querySelector(selector);
 const state = {
   placements: [], placementNames: {}, placementWarnings: {},
-  outline: [], recommendations: [], reviewHistory: [], labels: [], detailDrafts: new Map(), detailId: undefined, pointer: undefined,
+  outline: [], recommendations: [], reviewHistory: [], samples: {}, tableOpen: false, tableRow: undefined, detailDrafts: new Map(), detailId: undefined, pointer: undefined,
   session: undefined, kind: 'hwpx', sourceText: '', name: '', paragraphs: [], edits: new Map(), headings: new Map(), blocks: [],
   keys: [], records: 0, index: 0, chosen: undefined, selection: undefined,
   sourceDoc: undefined, resultDoc: undefined, view: undefined, viewMode: 'source', output: undefined,
@@ -16,7 +17,7 @@ const state = {
   marks: new Map(), invalidations: Promise.resolve(), revision: 0, openTicket: 0,
 };
 const opens = createLatest(), picks = createLatest(), views = createLatest(), dataLoads = createLatest();
-const keyCopies = createLatest(), bodyCopies = createLatest();
+const keyCopies = createLatest(), bodyCopies = createLatest(), samples = createLatest();
 let resizeFrame, contextRequest = 0;
 const blockLibraryUI = installBlockLibrary({selection: blockSelection, session: () => state.session, api, status, beforeOpen: hideMenu, previewPlacement, currentUsage:item=>state.placements.some(p=>p.id===item.protoId||p.id===item.id)?'현재 작업에서 사용 중입니다. 배치를 취소한 뒤 다시 확인하세요.':undefined, onSaved:()=>{const r=state.activeRecommendation;if(r?.kind==='block'){r.status='confirmed';renderRecommendations();}void renderLibraryTab();}});
 
@@ -55,6 +56,8 @@ function controls() {
   }
   for(const check of document.querySelectorAll('.rec-line input'))check.disabled=state.busy||check.dataset.confirmed==='true';
   $('#save-checked-blocks').disabled=state.busy||!state.recommendations.some(r=>r.kind==='block'&&r.status==='recommended');
+  $('#open-input-table').disabled=!state.session||state.busy;$('#confirm-all').disabled=state.busy;for(const id of ['designate-input','remote-designate'])$('#'+id).disabled=!available;
+  for(const b of document.querySelectorAll('#input-rows .ok-button'))b.disabled=state.busy||b.dataset.locked==='true';
   blockLibraryUI.refresh();
   if(state.kind==='text')for(const b of document.querySelectorAll('[data-action=bold],[data-action=group]'))b.disabled=true;
   for(const b of document.querySelectorAll('[data-action="branchDetail"]')){b.disabled=true;b.title='분기점 만들기는 다음 구현 단계에서 지원합니다.';}
@@ -108,7 +111,7 @@ function invalidateOutput() {
 }
 function changed() { state.dirty = true; invalidateOutput(); }
 function editorWork() { return {edits:[...state.edits].map(([id,text])=>({id,text})),blocks:state.blocks.map(b=>({...b}))}; }
-function historyEntry() { return {...editorWork(),placements:state.placements.map(p=>({...p})),headings:[...state.headings],labels:state.labels.map(l=>({...l})),caret:state.caret?{...state.caret}:undefined}; }
+function historyEntry() { return {...editorWork(),placements:state.placements.map(p=>({...p})),headings:[...state.headings],recs:state.recommendations.map(r=>({...r})),caret:state.caret?{...state.caret}:undefined}; }
 function remember() { state.history.push(historyEntry()); if(state.history.length>100)state.history.shift();state.future=[]; }
 function setWork(work) {state.edits=new Map(work.edits.map(e=>[e.id,e.text]));state.blocks=work.blocks;if(work.placements)state.placements=work.placements;}
 function renderEditor() {
@@ -311,6 +314,7 @@ function updateData(info) {
     }
     preview.hidden = false;
   } else preview.hidden = true;
+  state.samples = {}; applyAutoKeys(); renderInputs(); void loadSample();
   controls();
 }
 async function installWorkspace(result, ticket) {
@@ -326,7 +330,7 @@ async function installWorkspace(result, ticket) {
   state.edits = new Map((result.edits ?? []).map((item) => [item.id, item.text]));
   state.headings = new Map((result.headings ?? []).map((item) => [item.id, item.level]));
   state.blockPick = undefined;
-  state.outline=result.outline??[];state.recommendations=[];state.labels=[];state.detailDrafts.clear();state.detailId=undefined;state.reviewHistory=[];
+  state.outline=result.outline??[];state.recommendations=[];state.detailDrafts.clear();state.detailId=undefined;state.reviewHistory=[];closeTable();
   state.blocks = (result.blocks ?? []).map((item) => ({...item}));
   state.placements=(result.placements??[]).map(p=>({...p}));state.placementNames=result.placementNames??{};state.placementWarnings=result.placementWarnings??{};
   state.marks.clear();
@@ -349,7 +353,7 @@ async function installWorkspace(result, ticket) {
       status('문단은 불러왔지만 원본을 표시하지 못했습니다.', 'error'); return;
     }
   }
-  if (opens.current(ticket)) {buildReview(result);renderHeadingTree();renderRecommendations();status(result.notice ?? '', result.notice ? 'error' : '');}
+  if (opens.current(ticket)) {const dropped=buildReview(result);applyAutoKeys();renderHeadingTree();renderInputs();void loadSample();const notice=[result.notice,dropped?'저장한 입력 항목 '+dropped+'개를 문서에서 찾지 못해 뺐습니다.':''].filter(Boolean).join(' ');status(notice, notice ? 'error' : '');}
 }
 function base64(bytes) {
   const chunk = 0x8000; let binary = '';
@@ -387,7 +391,8 @@ async function loadData(name, content, expected = {}) {
 }
 function snapshot() {
   return {session: state.session, index: state.index, missing: $('#txt-missing').value, edits: [...state.edits].map(([id, text]) => ({id, text})),
-    headings: [...state.headings].map(([id, level]) => ({id, level})), blocks: state.blocks.map((block) => ({...block})),placements:state.placements.map(p=>({...p}))};
+    headings: [...state.headings].map(([id, level]) => ({id, level})), blocks: state.blocks.map((block) => ({...block})),placements:state.placements.map(p=>({...p})),
+    inputItems: inputItems().map(r=>({row:r.row,start:r.start,end:r.end,name:r.name,key:r.key,type:r.type,status:r.status,origin:r.origin}))};
 }
 function saveBlob(content, name) {
   const url = URL.createObjectURL(new Blob([content], {type: 'application/json;charset=utf-8'}));
@@ -470,7 +475,7 @@ function resetSelection() {
 }
 function undo(redo=false) {
   const from=redo?state.future:state.history,to=redo?state.history:state.future;if(state.busy||!from.length)return;
-  to.push(historyEntry());const previous=from.pop();setWork(previous);state.headings=new Map(previous.headings);state.labels=previous.labels??[];renderSourceTags();state.caret=previous.caret;changed();renderEditor();renderOutline();
+  to.push(historyEntry());const previous=from.pop();setWork(previous);state.headings=new Map(previous.headings);if(previous.recs){state.recommendations=previous.recs;state.activeRecommendation=undefined;}state.caret=previous.caret;changed();renderEditor();renderOutline();renderInputs();
   const input=$('#document-editor');input.focus();if(state.caret)input.setSelectionRange(state.caret.start,state.caret.end);status('');
 }
 function useHeading(id,level){remember();state.headings.set(id,level);changed();renderEditor();renderOutline();}
@@ -571,7 +576,7 @@ $('#key-select').addEventListener('input', () => { $('#copy-fallback').hidden = 
 $('#key-select').addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); insertKey(); } });
 $('#txt-missing').addEventListener('change',()=>{if(!state.busy)changed();});
 $('#record-select').addEventListener('change', () => {
-  if (state.busy) return; state.index = Number($('#record-select').value); changed();
+  if (state.busy) return; state.index = Number($('#record-select').value); changed(); void loadSample();
   status((state.index + 1) + '행을 선택했습니다. 적용하면 해당 행의 값으로 채웁니다.');
 });
 $('#source-view').addEventListener('click', () => {
@@ -592,7 +597,8 @@ $('#zoom-out').addEventListener('click', () => zoom(-1));
 $('#zoom-in').addEventListener('click', () => zoom(1));
 for (const menu of document.querySelectorAll('details.menu')) menu.addEventListener('toggle', () => { if (menu.open) closeMenus(menu); });
 document.addEventListener('pointerdown', (event) => {
-  if (!$('#context-menu').contains(event.target)) hideMenu();
+  // 리모컨 안을 누르면 닫지 않는다(닫으면 누른 단추의 click이 오지 않는다)
+  if (!$('#context-menu').contains(event.target) && !$('#selection-remote').contains(event.target)) hideMenu();
   if (!(event.target instanceof Element) || !event.target.closest('details.menu')) closeMenus();
 });
 document.addEventListener('keydown', (event) => {
@@ -780,32 +786,53 @@ function followHeading(){
 }
 /** 입력 항목이 문서에 있는 모양(추천 목록의 보조 표지). 종류 약자(입력·블록·분기·위치)는 그대로 둔다 */
 const FORMS={clickHere:'누름틀',mailMerge:'메일머지'};
+const inputItems=()=>state.recommendations.filter(r=>r.kind==='input');
+const rowOrder=()=>new Map(state.paragraphs.map((p,i)=>[p.id,i]));
+/** 입력 항목 한 줄(추천 목록·표 보기·꼬리표가 같은 객체를 본다). 위치는 원문 줄 글 기준 [start, end) */
+function itemRec(x,unusable=false){
+  const text=paragraph(x.row)?.text??'';
+  return {...x,id:x.origin+':'+x.row+':'+x.start+':'+x.end,kind:'input',keyAuto:false,...(isField(x.origin)?{form:x.origin}:{}),...(unusable?{unusable:true}:{}),
+    excerpt:(unusable?'이름 규칙 밖 · ':'')+text.slice(Math.max(0,x.start-8),x.end+20).replaceAll('\uFFFC','')};
+}
+function sortRecs(){const order=rowOrder(),inputs=inputItems().sort((a,b)=>(order.get(a.row)??0)-(order.get(b.row)??0)||a.start-b.start||a.end-b.end);state.recommendations=[...inputs,...state.recommendations.filter(r=>r.kind!=='input')];}
 function buildReview(opened){
   // 입력 항목 후보는 서버가 문서 순서로 준다: 누름틀·메일머지(form)와 그 표시 글 밖의 {{키}}. 표시 글 안 {{키}}는 필드가 맡아 따로 오르지 않는다
-  state.recommendations=(opened.inputs??[]).map(x=>{const text=paragraph(x.row)?.text??'';return {id:x.row+':'+x.start+':'+x.kind,row:x.row,name:x.name,start:x.start,end:x.end,kind:'input',...(x.kind==='placeholder'?{}:{form:x.kind}),...(x.usable===false?{unusable:true}:{}),status:'recommended',excerpt:(x.usable===false?'이름 규칙 밖 · ':'')+text.slice(Math.max(0,x.start-8),x.end+20).replaceAll('\uFFFC','')};});
+  const candidates=(opened.inputs??[]).map(x=>{const name=x.kind==='placeholder'?x.name.trim():x.name;return itemRec({row:x.row,start:x.start,end:x.end,name,key:x.usable===false?'':name,type:suggestType(name,''),status:'recommended',origin:x.kind},x.usable===false);});
+  // 다시 연 작업: 저장한 이름·키·타입·상태를 같은 자리의 후보에 얹고, 사용자가 지정한 것은 새 줄로 더한다
+  const {items,dropped}=mergeSaved(candidates,opened.inputItems??[],saved=>itemRec(saved));
+  state.recommendations=items;
   state.recommendations.push(...(opened.blockCandidates??[]).map((c,i)=>({id:'block:'+i,row:c.from,to:c.to,name:c.name,kind:'block',status:'recommended',excerpt:c.paragraphCount+'문단 · '+(state.paragraphs.slice(state.paragraphs.findIndex(p=>p.id===c.from)+1,state.paragraphs.findIndex(p=>p.id===c.to)+1).find(p=>p.text.trim())?.text.slice(0,60)??'본문 없음')})));
+  sortRecs();return dropped;
 }
 function renderRecommendations(){
   const root=$('#recommendations');root.replaceChildren();const groups=new Map();
   for(const r of state.recommendations){const h=headingOf(r.row),key=h?.id??'document';if(!groups.has(key))groups.set(key,{name:h?.name??'문서',items:[]});groups.get(key).items.push(r);}
   for(const {name,items} of groups.values()){const d=uiNode('details',undefined,'rec-group');d.open=true;d.append(uiNode('summary',name+' · '+items.length));
-    for(const r of items){const line=uiNode('div',undefined,'rec-line'+(r.status==='excluded'?' excluded':''));line.dataset.review=r.id;const check=uiNode('input');check.type='checkbox';check.checked=r.status!=='excluded';check.disabled=state.busy||r.status==='confirmed';check.dataset.confirmed=String(r.status==='confirmed');check.setAttribute('aria-label',r.name+' 유지');check.onchange=()=>reviewChange([r],check.checked?'recommended':'excluded');
-      const kind=({input:'입력',block:'블록',branch:'분기',place:'위치'})[r.kind],button=uiNode('button',r.name,r.unusable?'rec-unusable':undefined);button.type='button';button.title=r.name+' · '+(r.unusable?'이름이 데이터 키 규칙 밖이라 자동으로 채우지 않습니다 · ':'')+r.excerpt;button.onclick=()=>selectRecommendation(r);
-      const excerpt=uiNode('span',r.excerpt,'rec-excerpt');excerpt.title=r.excerpt;const form=r.form?[uiNode('span',FORMS[r.form],'form-tag')]:[];line.append(check,uiNode('span',kind,'kind-tag kind-'+r.kind),...form,button,excerpt,uiNode('small',r.status==='confirmed'?'확정':r.status==='excluded'?'제외':'추천'));d.append(line);}
-    const actions=uiNode('div',undefined,'group-actions');for(const [label,status] of [['묶음 제외','excluded'],['묶음 되돌리기','recommended']]){const b=uiNode('button',label);b.type='button';b.onclick=()=>reviewChange(items,status);actions.append(b);}d.append(actions);root.append(d);
+    for(const r of items){const label=r.name||'(이름 없음)',line=uiNode('div',undefined,'rec-line'+(r.status==='excluded'?' excluded':''));line.dataset.review=r.id;const check=uiNode('input');check.type='checkbox';check.checked=r.status!=='excluded';check.disabled=state.busy||r.status==='confirmed';check.dataset.confirmed=String(r.status==='confirmed');check.setAttribute('aria-label',label+' 유지');check.onchange=()=>reviewChange([r],check.checked?'keep':'excluded');
+      const kind=({input:'입력',block:'블록',branch:'분기',place:'위치'})[r.kind],button=uiNode('button',label,r.unusable?'rec-unusable':undefined);button.type='button';button.title=label+' · '+(r.unusable?'이름이 데이터 키 규칙 밖이라 자동으로 채우지 않습니다 · ':'')+r.excerpt;button.onclick=()=>selectRecommendation(r);
+      const excerpt=uiNode('span',r.excerpt,'rec-excerpt');excerpt.title=r.excerpt;const form=r.form?[uiNode('span',FORMS[r.form],'form-tag')]:[];line.append(check,uiNode('span',kind,'kind-tag kind-'+r.kind),...form,button,excerpt,uiNode('small',STATUS_LABEL[r.status]));d.append(line);}
+    const actions=uiNode('div',undefined,'group-actions');for(const [label,status] of [['묶음 제외','excluded'],['묶음 되돌리기','keep']]){const b=uiNode('button',label);b.type='button';b.onclick=()=>reviewChange(items,status);actions.append(b);}d.append(actions);root.append(d);
   }
   if(!groups.size)root.append(uiNode('p',state.session?'추천 없음 · 원문에서 직접 고를 수 있습니다.':'문서를 열면 추천이 표시됩니다.','rail-empty'));
   $('#review-undo').disabled=state.busy||!state.reviewHistory.length;
   const blocks=state.recommendations.filter(r=>r.kind==='block'),checked=blocks.filter(r=>r.status==='recommended');const save=$('#save-checked-blocks');save.hidden=!blocks.length;save.disabled=state.busy||!checked.length;save.textContent='체크한 블록 '+checked.length+'개 저장';
 }
-function reviewChange(items,status){if(state.busy)return;state.reviewHistory.push(state.recommendations.map(r=>r.status));for(const r of items)if(r.status!=='confirmed')r.status=status;renderRecommendations();controls();}
+/** 유지/제외 바꾸기. 유지로 되돌리면 사용자가 지정한 것은 지정, 문서에서 찾은 것은 추천이다. 확정한 줄은 바꾸지 않는다 */
+function reviewChange(items,next){if(state.busy)return;state.reviewHistory.push(new Map(state.recommendations.map(r=>[r.id,r.status])));for(const r of items)if(r.status!=='confirmed')r.status=next==='keep'?(r.kind==='input'?keptStatus(r.origin):'recommended'):next;if(items.some(r=>r.kind==='input'))touched();renderInputs();controls();}
+/** 항목 자리를 편집 글(숨은 편집 창) 위의 선택으로 옮긴다. 확정한 항목은 그 {{키}} 자리다 */
+function caretToItem(r){
+  const unit=state.layout.units.find(u=>u.id===r.row),row=paragraph(r.row);if(!unit||!row||r.start===undefined)return;
+  let at;
+  if(r.kind==='input'&&row.editable)at=spanNow(row.text,textOf(row),repsOf(inputItems(),row.id,row.text),r.start,r.end);
+  else {const text=row.text,clean=o=>text.slice(0,o).replaceAll('\uFFFC','').length;at={start:clean(r.start),end:clean(r.end)};}
+  if(!at)return;state.caret={start:unit.start+at.start,end:unit.start+at.end};$('#document-editor').setSelectionRange(state.caret.start,state.caret.end);markEditorSelection();
+}
 async function selectRecommendation(r){
   selectRow(r.row);await showRowInSource(r.row);const unit=state.layout.units.find(u=>u.id===r.row);
-  // 후보 위치는 원문 줄 글 기준이다. 읽기 전용 줄의 편집 글은 개체 자리(\uFFFC)를 뺀 글이므로 그만큼 당긴다
-  if(unit&&r.start!==undefined){const text=paragraph(r.row)?.text??'',at=o=>text.slice(0,o).replaceAll('\uFFFC','').length;state.caret={start:unit.start+at(r.start),end:unit.start+at(r.end)};$('#document-editor').setSelectionRange(state.caret.start,state.caret.end);}
+  if(r.kind==='input')caretToItem(r);
   if(r.kind==='block'&&unit){const end=state.layout.units.find(u=>u.id===r.to);if(end){state.caret={start:unit.start,end:end.end};$('#document-editor').setSelectionRange(unit.start,end.end);state.blockPick={...state.caret,from:r.row,to:r.to,blocked:false};
     const rows=state.paragraphs.slice(state.paragraphs.findIndex(p=>p.id===r.row),state.paragraphs.findIndex(p=>p.id===r.to)+1);state.view?.setMarks(rows.filter(p=>p.position).map(p=>({id:p.id,kind:'selection',position:p.position,endOffset:p.text.length})));}}
-  state.activeRecommendation=r;$('#detail-name').value=r.name;state.detailDrafts.set(r.row,{name:r.name,key:r.name});renderSelectionDetail(true);if(r.kind==='block'){$('#detail-title').textContent='블록 후보';$('#detail-excerpt').textContent=r.excerpt;$('#confirm-input').hidden=true;}else $('#confirm-input').hidden=false;controls();showRemote();
+  state.activeRecommendation=r;$('#detail-name').value=r.name;state.detailDrafts.set(r.row,{name:r.name,key:r.key??''});renderSelectionDetail(true);if(r.kind==='block'){$('#detail-title').textContent='블록 후보';$('#detail-excerpt').textContent=r.excerpt;$('#confirm-input').hidden=true;}else $('#confirm-input').hidden=false;controls();showRemote();
 }
 function renderSelectionDetail(force=false){
   if(state.detailLibrary)return;
@@ -813,29 +840,154 @@ function renderSelectionDetail(force=false){
   const row=paragraph(state.chosen);$('#detail-content').dataset.kind=state.activeRecommendation?.kind??'input';$('#detail-form').hidden=!row;$('#confirm-input').hidden=state.activeRecommendation?.kind==='block';
   if(!row){$('#detail-title').textContent='선택 상세';$('#detail-location').textContent='먼저 부분을 고르세요';$('#detail-excerpt').textContent='';return;}
   const detailId=row.id+':'+state.caret?.start+':'+state.caret?.end;if(state.detailId===detailId&&!force)return;
-  state.detailId=detailId;const h=headingOf(row.id);$('#detail-title').textContent='입력 항목 편집';$('#detail-location').textContent=(state.kind==='text'?'줄 '+(state.paragraphs.indexOf(row)+1):'쪽 미확인')+' · '+(h?.name??'문서');$('#detail-excerpt').textContent=(state.caret?state.layout.text.slice(state.caret.start,state.caret.end):row.text).slice(0,160);$('#confirm-input').disabled=!row.editable||state.busy;
-  const draft=state.detailDrafts.get(row.id)??{name:state.activeRecommendation?.row===row.id?state.activeRecommendation.name:'',key:''};$('#detail-name').value=draft.name;
-  const select=$('#detail-key');select.replaceChildren();const empty=uiNode('option',state.keys.length?'연결할 데이터 항목 선택':'데이터를 먼저 올리세요');empty.value='';select.append(empty);for(const key of state.keys){const option=uiNode('option',key);option.value=key;select.append(option);}select.value=draft.key;$('#detail-value').textContent=draft.key?'연결 후보 · 확정 뒤 적용':'연결 전';
+  state.detailId=detailId;const h=headingOf(row.id),active=state.activeRecommendation?.row===row.id?state.activeRecommendation:undefined;$('#detail-title').textContent='입력 항목 편집';$('#detail-location').textContent=(state.kind==='text'?'줄 '+(state.paragraphs.indexOf(row)+1):'쪽 미확인')+' · '+(h?.name??'문서')+(active?.kind==='input'?' · '+STATUS_LABEL[active.status]:'');$('#detail-excerpt').textContent=(state.caret?state.layout.text.slice(state.caret.start,state.caret.end):row.text).slice(0,160);$('#confirm-input').disabled=!(row.editable||active?.kind==='input'&&active.origin!=='user')||state.busy;
+  const draft=state.detailDrafts.get(row.id)??{name:active?.name??'',key:active?.key??''};$('#detail-name').value=draft.name;
+  // 데이터 키 목록(쓸 수 있는 경로). 항목에 이미 있는 키가 데이터에 없으면 그 키도 고를 수 있게 둔다
+  const select=$('#detail-key');select.replaceChildren();const empty=uiNode('option',state.keys.length?'연결할 데이터 항목 선택':'데이터를 먼저 올리세요');empty.value='';select.append(empty);const paths=state.keys.filter(k=>k.usable).map(k=>k.path);for(const key of draft.key&&!paths.includes(draft.key)?[draft.key,...paths]:paths){const option=uiNode('option',key);option.value=key;select.append(option);}select.value=draft.key;$('#detail-value').textContent=draft.key?'연결 후보 · 확정 뒤 적용':'연결 전';
 }
 function openInputDetail(data=false){document.body.classList.remove('detail-collapsed');$('#detail-toggle').textContent='접기';$('#detail-toggle').setAttribute('aria-expanded','true');renderSelectionDetail(true);if(data&&!state.keys.length){$('#data-menu').open=true;$('#load-data-text').focus();}else $(data?'#detail-key':'#detail-name').focus();}
-function confirmInput(name,key){
-  if(!name.trim()||!state.caret)return;
-  const row=state.chosen,marks=(state.marks.get(row)??[]).map(m=>({...m}));$('#key-select').value=key||name;const old=state.revision;insertKey();if(state.revision===old)return;
-  state.labels.push({row,name,key:key||name,marks});state.detailDrafts.set(row,{name,key:key||name});
-  const r=state.activeRecommendation?.row===row?state.activeRecommendation:undefined;if(r)r.status='confirmed';else state.recommendations.push({id:crypto.randomUUID(),row,name,kind:'input',status:'confirmed',excerpt:paragraph(row).text.slice(0,40)});
-  renderRecommendations();displaySourceMarks();hideMenu();status(name+' 입력 항목을 확정했습니다. 원문은 그대로입니다.');
+/** 저장할 것이 바뀌었지만 생성 결과는 그대로인 변경(지정·이름·상태) */
+function touched(){state.dirty=true;$('#dirty-state').hidden=false;}
+function dataPaths(){return state.keys.filter(k=>k.usable).map(k=>k.path);}
+/** 이름 = 데이터 키면 키 칸을 자동으로 채운다(확정 전 항목만. 누름틀·메일머지는 필드 이름이 키) */
+function applyAutoKeys(){const paths=dataPaths();for(const r of inputItems())if(r.status!=='confirmed'&&!isField(r.origin)){const a=autoKey(r.name,r.key,r.keyAuto,paths);r.key=a.key;r.keyAuto=a.auto;}}
+function inRange(list,id){const order=rowOrder(),i=order.get(id);return list.some(b=>i>=order.get(b.from)&&i<=order.get(b.to));}
+/** 지금 선택(편집 글 위치)을 원문 줄의 자리로. 한 문단 안, 직접 편집할 수 있는 줄, 확정한 {{키}}·고친 글에 걸치지 않아야 한다 */
+function itemSpanFromCaret(){
+  const c=state.caret;if(!c)throw Error('원문에서 입력 항목으로 쓸 글을 고르세요.');
+  const units=editorSelection(state.layout,c.start,c.end),u=units[0];
+  if(units.length!==1||u.block||u.from!==u.to)throw Error('입력 항목은 한 문단 안에서 고르세요.');
+  const row=state.paragraphs[u.from];if(!row.editable)throw Error(reasonOf(row.reason));
+  const at=toOriginal(row.text,textOf(row),repsOf(inputItems(),row.id,row.text),c.start-u.start,c.end-u.start);
+  if(!at)throw Error('이미 확정한 입력 항목이나 고친 글과 겹칩니다. 원문 그대로인 글을 고르세요.');
+  return {row:row.id,...at};
 }
-function displaySourceMarks(marks=[]){state.view?.setMarks([...state.labels.flatMap(l=>l.marks),...marks]);renderSourceTags();}
+const MIXED='글자 모양이 다른 글에 걸쳐 있어 이 자리에는 넣을 수 없습니다. 같은 모양의 값 부분만 끌어 고르세요.';
+/** 글자 모양이 섞인 줄(HWPX)은 바뀌는 구간이 한 모양 안이어야 생성된다. 서버의 같은 판정으로 미리 본다 */
+async function rangeProblem(row,span){
+  if(state.kind!=='hwpx'||row.rangeEditable)return;
+  const result=await api('check-input',{session:state.session,row:row.id,...span});
+  return result.ok?undefined:result.code==='WORKBENCH_STRUCTURE_READONLY'?reasonOf(result.code):MIXED;
+}
+/** 이름 없이도 지정한다(상태 "지정"). 고른 자리가 이미 목록에 있으면 그 줄을 쓴다 */
+async function designate(name=''){
+  if(state.busy||!state.session)return;
+  let r=state.activeRecommendation?.kind==='input'?state.activeRecommendation:undefined;
+  if(!r){const at=itemSpanFromCaret();r=inputItems().find(x=>x.row===at.row&&x.start===at.start&&x.end===at.end);
+    if(!r&&inputItems().some(x=>x.row===at.row&&x.status!=='excluded'&&(x.start<at.end&&at.start<x.end||x.start===at.start)))throw Error('이미 지정한 자리와 겹칩니다. 목록에서 그 줄을 고르세요.');
+    if(!r){const session=state.session,revision=state.revision,problem=await rangeProblem(paragraph(at.row),{start:at.start,end:at.end});
+      if(session!==state.session||revision!==state.revision)return;if(problem)throw Error(problem);
+      remember();const text=paragraph(at.row).text.slice(at.start,at.end);r=itemRec({...at,name:'',key:'',type:suggestType(name,text),status:'designated',origin:'user'});state.recommendations.push(r);sortRecs();}
+    else remember();}
+  else remember();
+  if(name.trim()){r.name=name.trim();if(r.origin==='user'&&!r.typeSet)r.type=suggestType(r.name,paragraph(r.row).text.slice(r.start,r.end));}
+  if(r.status!=='confirmed')r.status=r.status==='excluded'?keptStatus(r.origin):r.origin==='user'?'designated':r.status;
+  if(!isField(r.origin)&&r.status!=='confirmed'){const a=autoKey(r.name,r.key,r.keyAuto,dataPaths());r.key=a.key;r.keyAuto=a.auto;}
+  state.activeRecommendation=r;touched();renderInputs();controls();return r;
+}
+/**
+ * 확정(✓): 이름과 데이터 키를 정하고, 누름틀·메일머지·같은 키의 {{키}}가 아니면 그 자리 글을 {{키}}로 바꾼 편집을 만든다(원문 탭은 그대로, 생성 결과에만 반영).
+ * 줄마다 한꺼번에 바꾸며, 고친 글·블록 범위·서로 다른 글자 모양에 걸치거나 겹치는 줄은 확정하지 않고 이유를 돌려준다. 실행 취소는 한 번에 되돌린다.
+ */
+async function confirmItems(list){
+  const failed=[],ready=[];if(state.busy||!state.session)return {done:0,failed};
+  for(const x of list){const r=x.item,name=(x.name??'').trim(),key=keyFor(r,name,x.key??'');
+    if(r.status==='excluded')failed.push([r,'제외한 항목입니다.']);else if(!name)failed.push([r,'이름을 적으세요.']);
+    else if(!isField(r.origin)&&!validKey(key))failed.push([r,'데이터 키에는 글자·숫자·밑줄을 쓰고 하위 항목은 점으로 구분하세요.']);
+    else if(r.status==='confirmed'&&key!==r.key)failed.push([r,'확정한 키는 실행 취소(Ctrl+Z)로 확정을 되돌린 뒤 바꾸세요.']);else ready.push({r,name,key});}
+  const byRow=new Map();
+  for(const x of ready)if(x.r.status!=='confirmed'&&!isField(x.r.origin)&&!samePlaceholder(paragraph(x.r.row).text.slice(x.r.start,x.r.end),x.key)){if(!byRow.has(x.r.row))byRow.set(x.r.row,[]);byRow.get(x.r.row).push(x);}
+  const texts=new Map(),drop=(xs,why)=>{for(const x of xs){failed.push([x.r,why]);ready.splice(ready.indexOf(x),1);}};
+  for(const [id,xs] of byRow){const row=paragraph(id);
+    if(!row.editable){drop(xs,reasonOf(row.reason));continue;}
+    if(inRange(state.blocks,id)||inRange(state.placements,id)){drop(xs,'블록으로 바꾼 범위입니다. 블록을 풀거나 배치를 취소한 뒤 확정하세요.');continue;}
+    const targets=new Set(xs.map(x=>x.r)),result=confirmText(row.text,textOf(row),repsOf(inputItems().filter(i=>!targets.has(i)),id,row.text),xs.map(x=>({start:x.r.start,end:x.r.end,key:x.key})));
+    if('fail' in result){drop(xs,result.fail==='overlap'?'이미 확정한 입력 항목과 겹칩니다.':'고친 글에 걸쳐 원문 위치를 찾을 수 없습니다.');continue;}
+    texts.set(id,result.text);}
+  // 글자 모양이 섞인 줄: 생성 때와 같이 원문과 새 글의 바뀐 한 구간을 서버에서 검사한다
+  const session=state.session,revision=state.revision;
+  const problems=await Promise.all([...texts].map(async([id,text])=>{const span=changedSpan(paragraph(id).text,text);return [id,span?await rangeProblem(paragraph(id),span):undefined];}));
+  if(session!==state.session||revision!==state.revision)return {done:0,failed:[...failed,...ready.map(x=>[x.r,'문서가 바뀌었습니다. 다시 확정하세요.'])]};
+  for(const [id,problem] of problems)if(problem){texts.delete(id);drop(byRow.get(id),problem);}
+  if(!ready.length)return {done:0,failed};
+  remember();
+  for(const [id,text] of texts){if(text===paragraph(id).text)state.edits.delete(id);else state.edits.set(id,text);}
+  for(const x of ready){Object.assign(x.r,{name:x.name,key:x.key,keyAuto:false,status:'confirmed'});state.detailDrafts.set(x.r.row,{name:x.name,key:x.key});}
+  if(texts.size){changed();renderEditor();}else touched();
+  renderInputs();controls();return {done:ready.length,failed};
+}
+function reportConfirm(result,one){
+  if(one&&result.done)status(one+' 입력 항목을 확정했습니다. 원문은 그대로입니다.','success');
+  else if(!result.failed.length)status('입력 항목 '+result.done+'개를 확정했습니다. 원문은 그대로입니다.','success');
+  else status((result.done?'확정 '+result.done+'개 · ':'')+'남김 '+result.failed.length+'개 · '+result.failed.slice(0,3).map(([r,why])=>(r.name||'이름 없음')+': '+why).join(' / '),'error');
+}
+async function confirmInput(name,key){
+  try{const r=await designate(name);if(!r)return;const result=await confirmItems([{item:r,name,key:key||r.key}]);reportConfirm(result,result.done?r.name:'');if(result.done)hideMenu();}
+  catch(error){status(errorMessage(error),'error');}
+}
+async function designateOnly(name){
+  try{const r=await designate(name);if(!r)return;hideMenu();status(r.status==='confirmed'?'이미 확정한 입력 항목입니다.':(r.name||'이름 없는')+' 입력 항목을 지정했습니다. 원문은 그대로입니다.');if(state.tableOpen)focusTableRow(r,'name');}
+  catch(error){status(errorMessage(error),'error');}
+}
+/** 꼬리표·강조: 지정·확정한 항목. 강조는 원문 글자 구간이 맞을 때만 그린다(글이 다르면 그리지 않는 뷰어 표식) */
+const tagged=()=>inputItems().filter(r=>r.status==='confirmed'||r.status==='designated');
+function itemMarks(){return tagged().flatMap(r=>{const row=paragraph(r.row),p=row?.position,text=row?.text.slice(r.start,r.end)??'';if(!p||!text||text.includes('\uFFFC'))return [];const at=p.charOffset??0;return [{id:'item:'+r.id,kind:r.status==='confirmed'?'chosen':'range',position:{...p,charOffset:at+r.start},endOffset:at+r.end,text}];});}
+function displaySourceMarks(marks=[]){state.view?.setMarks([...itemMarks(),...marks]);renderSourceTags();}
 function renderSourceTags(){
   for(const el of $('#pages').querySelectorAll('.source-tag,.confirmed-overlay'))el.remove();
   if(state.kind!=='hwpx'||state.viewMode!=='source'||!state.sourceDoc)return;const scale=Number($('#scale').value);
   for(const page of $('#pages').querySelectorAll('.page')){const runs=state.sourceDoc.pageLayout(Number(page.dataset.page)).runs,used=[];
-    for(const label of state.labels){const pos=label.marks[0]?.position;if(!pos)continue;const run=runs.find(r=>{const p=runPosition(r);return p&&sameParagraph(p,pos);});if(!run)continue;
-      const tag=uiNode('button',label.name+' · 확정','source-tag');tag.type='button';tag.title=label.name+' · 확정';tag.style.left=run.x*scale+'px';tag.style.top=Math.max(0,run.y*scale-18)+'px';tag.onclick=()=>selectRow(label.row);page.append(tag);
+    for(const item of tagged()){const pos=paragraph(item.row)?.position;if(!pos)continue;const run=runs.find(r=>{const p=runPosition(r);return p&&sameParagraph(p,pos);});if(!run)continue;
+      const label=(item.name||'이름 없음')+' · '+STATUS_LABEL[item.status],tag=uiNode('button',label,'source-tag'+(item.status==='designated'?' designated-tag':''));tag.type='button';tag.title=label;tag.style.left=run.x*scale+'px';tag.style.top=Math.max(0,run.y*scale-18)+'px';tag.onclick=()=>state.tableOpen?focusTableRow(item,'name'):void selectRecommendation(item);page.append(tag);
       const rect=tag.getBoundingClientRect();if(used.some(r=>r.left<rect.right&&r.right>rect.left&&r.top<rect.bottom&&r.bottom>rect.top)){tag.classList.add('margin-tag');tag.textContent='입력';}used.push(tag.getBoundingClientRect());
     }
   }
 }
+/** 추천 목록·표 보기·원문 꼬리표를 같은 상태로 다시 그린다 */
+function renderInputs(){renderRecommendations();renderInputTable();displaySourceMarks(state.chosen?state.marks.get(state.chosen)??[]:[]);}
+let listFrame;
+function scheduleList(){cancelAnimationFrame(listFrame);listFrame=requestAnimationFrame(()=>{renderRecommendations();renderSourceTags();});}
+async function loadSample(){
+  const session=state.session,index=state.index,ticket=samples.begin();
+  if(!session||!state.records){state.samples={};renderInputTable();return;}
+  try{const result=await api('sample',{session,index});if(!samples.current(ticket)||session!==state.session||index!==state.index)return;state.samples=result.values??{};renderInputTable();}
+  catch{if(samples.current(ticket)&&session===state.session){state.samples={};renderInputTable();}}
+}
+/* 표 보기(크게 보기): 입력 항목 한 줄씩. 이름·키는 바로 적고 Enter/↓로 다음 줄, ✓로 확정. 줄에 들어가면 원문 그 자리로 이동·강조 */
+function openTable(){if(!state.session)return;hideMenu();state.tableOpen=true;state.tableRow=undefined;document.body.classList.add('table-open');$('#input-table').hidden=false;renderInputTable();const first=inputItems().find(r=>r.status!=='confirmed'&&r.status!=='excluded')??inputItems()[0];if(first)focusTableRow(first,'name');}
+function closeTable(){state.tableOpen=false;state.tableRow=undefined;document.body.classList.remove('table-open');$('#input-table').hidden=true;renderRecommendations();}
+function focusTableRow(r,field){const tr=$('#input-rows').querySelector('tr[data-item="'+CSS.escape(r.id)+'"]');const el=tr?.querySelector('[data-field="'+field+'"]');if(el){el.focus();el.scrollIntoView({block:'nearest'});showItem(r);}}
+function showItem(r){
+  if(state.tableRow===r.id)return;state.tableRow=r.id;
+  for(const tr of $('#input-rows').querySelectorAll('tr'))tr.classList.toggle('current',tr.dataset.item===r.id);
+  if(!selectRow(r.row))return;caretToItem(r);state.activeRecommendation=r;
+}
+function renderInputTable(){
+  if(!state.tableOpen)return;
+  const body=$('#input-rows'),active=document.activeElement,focus=body.contains(active)?{id:active.closest('tr')?.dataset.item,field:active.dataset.field,start:active.selectionStart,end:active.selectionEnd}:undefined;
+  body.replaceChildren();const items=inputItems(),paths=dataPaths();
+  for(const r of items){
+    const row=paragraph(r.row),tr=uiNode('tr',undefined,'status-row-'+r.status+(r.id===state.tableRow?' current':''));tr.dataset.item=r.id;
+    const keep=uiNode('input',undefined,'item-keep');keep.type='checkbox';keep.checked=r.status!=='excluded';keep.disabled=state.busy||r.status==='confirmed';keep.setAttribute('aria-label',(r.name||'이름 없는 항목')+' 유지');keep.onchange=()=>reviewChange([r],keep.checked?'keep':'excluded');
+    const ctx=contextOf(row?.text??'',r.start,r.end),source=uiNode('span',undefined,'ctx');source.append(ctx.before,uiNode('b',ctx.target||'(빈 자리)'),ctx.after);source.title=(row?.text??'').replaceAll('\uFFFC','').slice(0,300);
+    const name=uiNode('input');name.type='text';name.dataset.field='name';name.value=r.name;name.autocomplete='off';name.setAttribute('aria-label','이름');
+    const key=uiNode('input',undefined,r.keyAuto?'auto':undefined);key.type='text';key.dataset.field='key';key.value=r.key;key.autocomplete='off';key.spellcheck=false;key.setAttribute('list','data-keys');key.setAttribute('aria-label','데이터 키');
+    key.readOnly=r.status==='confirmed'||isField(r.origin)||r.origin==='placeholder'&&!row?.editable;if(r.keyAuto)key.title='이름과 같은 데이터 키 · 연결 후보';else if(isField(r.origin))key.title=FORMS[r.origin]+' 이름';
+    name.oninput=()=>{r.name=name.value;if(r.origin==='user'&&!r.typeSet){r.type=suggestType(r.name,row?.text.slice(r.start,r.end)??'');type.value=r.type;}if(!isField(r.origin)&&r.status!=='confirmed'){const a=autoKey(r.name,r.key,r.keyAuto,paths);if(a.key!==r.key||a.auto!==r.keyAuto){r.key=a.key;r.keyAuto=a.auto;key.value=a.key;key.classList.toggle('auto',a.auto);key.title=a.auto?'이름과 같은 데이터 키 · 연결 후보':'';sample.textContent=sampleText(r);}}touched();scheduleList();};
+    key.oninput=()=>{r.key=key.value.trim();r.keyAuto=false;key.classList.remove('auto');key.title='';sample.textContent=sampleText(r);touched();};
+    const sample=uiNode('span',sampleText(r),'sample');sample.title=sample.textContent;
+    const type=uiNode('select');type.dataset.field='type';type.setAttribute('aria-label','타입');for(const [value,text] of Object.entries(TYPE_LABEL)){const o=uiNode('option',text);o.value=value;type.append(o);}type.value=r.type;type.onchange=()=>{r.type=type.value;r.typeSet=true;touched();};
+    const ok=uiNode('button','✓','ok-button');ok.type='button';ok.dataset.locked=String(r.status==='confirmed'||r.status==='excluded');ok.disabled=state.busy||ok.dataset.locked==='true';ok.title=r.status==='confirmed'?'확정됨':'확정';ok.setAttribute('aria-label',(r.name||'이 줄')+' 확정');
+    ok.onclick=async()=>{const result=await confirmItems([{item:r,name:r.name,key:r.key}]);reportConfirm(result,result.done?r.name:'');const rows=inputItems(),next=rows.slice(rows.indexOf(r)+1).find(x=>x.status!=='confirmed'&&x.status!=='excluded');if(result.done&&next)focusTableRow(next,'name');};
+    const cells=[keep,source,name,key,sample,type,uiNode('span',STATUS_LABEL[r.status],'status-'+r.status),ok];
+    for(const cell of cells){const td=uiNode('td');td.append(cell);tr.append(td);}
+    body.append(tr);
+  }
+  if(!items.length){const tr=uiNode('tr'),td=uiNode('td','원문에서 글을 고르고 리모컨의 "지정"을 누르면 여기에 한 줄씩 생깁니다.','rail-empty');td.colSpan=8;tr.append(td);body.append(tr);}
+  const count=s=>items.filter(r=>r.status===s).length;$('#input-table-count').textContent=items.length+'개 · 확정 '+count('confirmed')+' · 지정 '+count('designated');
+  if(focus?.id){const el=body.querySelector('tr[data-item="'+CSS.escape(focus.id)+'"] [data-field="'+focus.field+'"]');if(el){el.focus({preventScroll:true});if(focus.start!=null&&'setSelectionRange' in el&&el.type==='text')el.setSelectionRange(focus.start,focus.end);}}
+}
+function sampleText(r){if(!state.records||!r.key)return '';return state.samples[r.key]??'—';}
 function showRemote(){if(!state.chosen||state.busy)return;const el=$('#selection-remote');el.hidden=false;$('#remote-name').value=$('#detail-name').value;const p=state.pointer??{x:$('.original-pane').getBoundingClientRect().left+30,y:150};const r=el.getBoundingClientRect();el.style.left=Math.max(8,Math.min(p.x,innerWidth-r.width-8))+'px';el.style.top=Math.max(55,Math.min(p.y+8,innerHeight-r.height-35))+'px';}
 let libraryRequest=0;
 async function renderLibraryTab(){
@@ -851,9 +1003,18 @@ document.addEventListener('block-library-change',()=>void renderLibraryTab());
 $('#detail-toggle').onclick=()=>{const collapsed=document.body.classList.toggle('detail-collapsed');$('#detail-toggle').textContent=collapsed?'상세':'접기';$('#detail-toggle').setAttribute('aria-expanded',String(!collapsed));};
 for(const name of ['name','key'])$('#detail-'+name).addEventListener('input',()=>{if(state.chosen)state.detailDrafts.set(state.chosen,{name:$('#detail-name').value,key:$('#detail-key').value});});
 $('#confirm-input').onclick=()=>confirmInput($('#detail-name').value,$('#detail-key').value);
-$('#remote-form').onsubmit=e=>{e.preventDefault();confirmInput($('#remote-name').value,$('#detail-key').value);};
+$('#designate-input').onclick=()=>designateOnly($('#detail-name').value);
+// 리모컨: 이름을 치고 Enter면 확정, 이름 없이 Enter나 "지정"이면 지정만(이름은 표 보기에서 한꺼번에)
+$('#remote-form').onsubmit=e=>{e.preventDefault();const name=$('#remote-name').value;if(name.trim())confirmInput(name,$('#detail-key').value);else designateOnly('');};
+$('#remote-designate').onclick=()=>designateOnly($('#remote-name').value);
 $('#remote-close').onclick=hideMenu;
-$('#review-undo').onclick=()=>{const old=state.reviewHistory.pop();if(old)state.recommendations.forEach((r,i)=>{if(r.status!=='confirmed')r.status=old[i]??r.status;});renderRecommendations();controls();};
+$('#review-undo').onclick=()=>{const old=state.reviewHistory.pop();if(old)for(const r of state.recommendations)if(r.status!=='confirmed'&&old.has(r.id))r.status=old.get(r.id);touched();renderInputs();controls();};
+$('#open-input-table').onclick=openTable;$('#close-input-table').onclick=closeTable;
+$('#confirm-all').onclick=async()=>{const list=inputItems().filter(r=>r.status==='recommended'||r.status==='designated'),named=list.filter(r=>r.name.trim());if(!list.length){status('확정할 줄이 없습니다.');return;}const result=await confirmItems(named.map(r=>({item:r,name:r.name,key:r.key})));const unnamed=list.length-named.length;reportConfirm({done:result.done,failed:[...result.failed,...(unnamed?[[{name:'이름 없는 줄 '+unnamed+'개'},'이름을 적으면 확정할 수 있습니다.']]:[])]});};
+// 표 보기 키보드: 이름·키 칸에서 Enter/↓는 다음 줄 같은 칸, ↑는 윗줄(한글 조합 중에는 넘기지 않는다)
+$('#input-rows').addEventListener('keydown',e=>{const field=e.target.dataset?.field;if(!field||e.isComposing||e.keyCode===229)return;const down=e.key==='ArrowDown'||e.key==='Enter'&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.shiftKey,up=e.key==='ArrowUp';if(!down&&!up||field==='type'&&e.key!=='Enter')return;e.preventDefault();e.stopPropagation();const rows=[...$('#input-rows').querySelectorAll('tr[data-item]')],i=rows.indexOf(e.target.closest('tr')),next=rows[i+(up?-1:1)];const el=next?.querySelector('[data-field="'+field+'"]'),r=el&&inputItems().find(x=>x.id===next.dataset.item);if(el){el.focus();el.scrollIntoView({block:'nearest'});if(el.select)el.select();if(r)showItem(r);}});
+$('#input-rows').addEventListener('focusin',e=>{const id=e.target.closest('tr')?.dataset.item,r=id&&inputItems().find(x=>x.id===id);if(r)showItem(r);});
+$('#input-rows').addEventListener('click',e=>{if(e.target.closest('input,select,button'))return;const id=e.target.closest('tr')?.dataset.item,r=id&&inputItems().find(x=>x.id===id);if(r)focusTableRow(r,'name');});
 for(const name of ['document','library'])$('#'+name+'-tab').onclick=()=>{for(const n of ['document','library']){$('#'+n+'-tab').setAttribute('aria-selected',String(n===name));$('#'+n+'-list').hidden=n!==name;}if(name==='library')void renderLibraryTab();};
 $('#pages').addEventListener('pointerup',e=>{state.pointer={x:e.clientX,y:e.clientY};});
 $('#document-editor').addEventListener('mouseup',e=>{state.pointer={x:e.clientX,y:e.clientY};if(state.caret?.start!==state.caret?.end)showRemote();});
