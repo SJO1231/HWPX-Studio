@@ -10,6 +10,7 @@ import { toRhwpPosition, type RhwpPosition } from '../../../packages/viewer/src/
 import { extractBlockDraft, type BlockDraft, type BlockLibrary } from './block-library.ts';
 import { parseCsv } from './core.ts';
 import { analyzePlaces, describeLeftover, findLeftovers, leftoverOf, listKeys, parseQuickData, type QuickData } from './quick.ts';
+import { ITEM_KEYS, isField, validKey, type InputItem } from './input-table.ts';
 
 import { plainOf as plainBlock } from '../../studio/src/messages.ts';
 const MAX_SOURCE = 10 * 1024 * 1024;
@@ -23,7 +24,7 @@ type Edit = { id: string; text: string };
 type Heading = { id: string; level: 1 | 2 };
 type Block = { id: string; from: string; to: string; text: string; alias: string };
 type Placement = {id:string;version:number;from:string;to:string};
-type Work = { edits: Edit[]; headings: Heading[]; blocks: Block[]; placements: Placement[]; index: number; missing: "error" | "keep" };
+type Work = { edits: Edit[]; headings: Heading[]; blocks: Block[]; placements: Placement[]; inputItems: InputItem[]; index: number; missing: "error" | "keep" };
 type Session = { workspaceId?: string; kind: 'hwpx' | 'text'; name: string; source: Uint8Array; doc?: HwpxDocument; sourceText?: string; rows: Row[]; data?: QuickData; dataContent?: string; output?: Uint8Array; blockPreviews?: Map<string, BlockDraft>; pins?: Set<string> };
 const rowId = (section: number, path: number[]) => `p:${section}:${path.join('.')}`;
 const sameParent = (a: Row, b: Row) => a.sectionIndex === b.sectionIndex && a.path.length === b.path.length && a.path.slice(0, -1).every((n, i) => n === b.path[i]);
@@ -148,8 +149,41 @@ function workOf(s: Session, input: Record<string, unknown>): Work {
     for(const r of covered){need(!occupied.has(r.id),'WORKBENCH_OVERLAP');occupied.add(r.id);if(placements.includes(b as Placement))need(!edits.some(e=>e.id===r.id),'WORKBENCH_OVERLAP');}
   }
   need(input.missing === undefined || input.missing === "error" || input.missing === "keep");
-  return { edits, headings, blocks, placements, index, missing: input.missing ?? "error" };
+  return { edits, headings, blocks, placements, inputItems: inputItemsOf(input.inputItems, row), index, missing: input.missing ?? "error" };
 
+}
+
+/**
+ * 표 보기의 입력 항목(#146). 생성에는 쓰지 않고(확정한 항목은 이미 편집 글의 `{{키}}`다) 작업 파일에 남겼다 되살린다.
+ * 위치는 원문 줄 글 기준이고, 확정한 항목은 이름이 있고 키가 규칙에 맞아야 한다(누름틀·메일머지는 필드 이름이 키).
+ */
+function inputItemsOf(value: unknown, row: (id: unknown) => Row): InputItem[] {
+  need(value === undefined || Array.isArray(value) && value.length <= 3000);
+  const seen = new Set<string>();
+  return ((value as unknown[] | undefined) ?? []).map(x => {
+    need(isObj(x) && Object.keys(x).every(k => (ITEM_KEYS as readonly string[]).includes(k)));
+    const r = row(x.row), { start, end, name, key, type, status, origin } = x;
+    need(Number.isInteger(start) && Number.isInteger(end) && (start as number) >= 0 && (start as number) <= (end as number) && (end as number) <= r.text.length, 'WORKBENCH_POSITION');
+    need(typeof name === 'string' && name.length <= 500 && checkValueText(name) === undefined && typeof key === 'string' && key.length <= 500 && checkValueText(key) === undefined);
+    need((type === 'text' || type === 'amount') && ['recommended', 'designated', 'confirmed', 'excluded'].includes(status as string) && ['user', 'placeholder', 'clickHere', 'mailMerge'].includes(origin as string));
+    const item = { row: r.id, start, end, name, key, type, status, origin } as InputItem;
+    need(item.status !== 'confirmed' || item.name.trim() !== '' && (isField(item.origin) || validKey(item.key)), 'WORKBENCH_FIELD_NAME');
+    const id = `${item.row}:${item.start}:${item.end}:${item.origin}`;
+    need(!seen.has(id), 'WORKBENCH_DUPLICATE'); seen.add(id);
+    return item;
+  });
+}
+
+/** 표 보기 견본 값: 고른 데이터 행에서 쓸 수 있는 키의 값(글로 바꾼 것, 200자까지) */
+function sampleOf(s: Session, index: unknown) {
+  need(Number.isInteger(index) && (index as number) >= 0 && (index as number) < (s.data?.records.length ?? 0), 'WORKBENCH_RECORD');
+  const record = s.data!.records[index as number]!, values: Record<string, string> = {};
+  if ('dataset' in record) for (const k of listKeys([record]).keys) {
+    if (!k.usable) continue;
+    const value = resolvePathValue(record.dataset, k.path, 'error');
+    if (value.kind === 'text') values[k.path] = value.text.slice(0, 200);
+  }
+  return { index, values };
 }
 
 // ponytail: this projection only supports **bold** and {{path}}, not Markdown round trips.
@@ -369,7 +403,7 @@ export function createWorkbench(library?: BlockLibrary) {
         if (path === '/api/workbench/restore') {
           need(typeof input.workspace !== 'string' || Buffer.byteLength(input.workspace) <= 20 * 1024 * 1024, 'WORKBENCH_WORKSPACE');
           const raw: unknown = typeof input.workspace === 'string' ? JSON.parse(input.workspace) : input.workspace;
-          need(isObj(raw) && raw.schema === schema && (raw.kind === 'text' || raw.kind === 'hwpx') && Object.keys(raw).every(k => ['schema', 'kind', 'name', 'source', 'sha256', 'data', 'edits', 'headings', 'blocks', 'placements', 'index', 'missing', 'workspaceId'].includes(k)), 'WORKBENCH_WORKSPACE');
+          need(isObj(raw) && raw.schema === schema && (raw.kind === 'text' || raw.kind === 'hwpx') && Object.keys(raw).every(k => ['schema', 'kind', 'name', 'source', 'sha256', 'data', 'edits', 'headings', 'blocks', 'placements', 'inputItems', 'index', 'missing', 'workspaceId'].includes(k)), 'WORKBENCH_WORKSPACE');
           const s = open(raw.name, raw.source); need(raw.kind === s.kind, 'WORKBENCH_WORKSPACE'); need(raw.sha256 === hash(s.source), 'WORKBENCH_SOURCE_HASH');
           if (raw.data !== undefined) { const parsed = parseData(raw.data, 'data.json'); s.data = parsed.data; s.dataContent = parsed.content; }
           need(raw.workspaceId===undefined||typeof raw.workspaceId==='string'&&/^[0-9a-f-]{36}$/.test(raw.workspaceId),'WORKBENCH_WORKSPACE');
@@ -431,6 +465,18 @@ export function createWorkbench(library?: BlockLibrary) {
           }
           need(s.doc, 'WORKBENCH_SOURCE'); const location = locate(s.doc, input.request), address = location.address;
           return { ...(address ? { id: rowId(address.sectionIndex, address.path) } : {}), location };
+        }
+        if (path === '/api/workbench/sample') return sampleOf(s, input.index);
+        if (path === '/api/workbench/check-input') {
+          // 표 보기 확정 전 검사: 글자 모양이 섞인 줄은 바뀐 구간이 한 모양 안이어야 생성된다(changedRange와 같은 판정)
+          const row = s.rows.find(r => r.id === input.row); need(row, 'WORKBENCH_POSITION');
+          const start = input.start as number, end = input.end as number;
+          need(Number.isInteger(start) && Number.isInteger(end) && start >= 0 && start <= end && end <= row.text.length, 'WORKBENCH_POSITION');
+          if (!row.editable) return { ok: false, code: row.reason ?? 'WORKBENCH_READONLY' };
+          if (s.kind === 'text' || row.rangeEditable) return { ok: true };
+          const at = start === end && end === row.text.length ? start - 1 : start, until = start === end && end < row.text.length ? end + 1 : end;
+          const draft = at < 0 ? undefined : draftAnchors(s.doc!, { sectionIndex: row.sectionIndex, path: row.path, start: at, end: until }).find(d => d.kind === 'word');
+          return draft?.kind === 'word' && !draft.blocked ? { ok: true } : { ok: false, code: draft?.blocked ?? 'WORKBENCH_PARTIAL_EDIT' };
         }
         if (path === '/api/workbench/data') {
           delete s.output; delete s.data; delete s.dataContent;
