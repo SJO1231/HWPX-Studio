@@ -67,12 +67,12 @@ function typedDoc(): Uint8Array {
 
 type Def = { format: ValueFormat; display?: ValueDisplay };
 const DEFS: Record<string, Def> = {
-  "추정가격": { format: "money" },
+  "추정가격": { format: "money", display: { unit: "원" } },
   "예정가격": { format: "money", display: { negative: "△" } },
   "보증금": { format: "money", display: { unit: "" } },
-  "수수료": { format: "money" },
+  "수수료": { format: "money", display: { unit: "원" } },
   "부가세": { format: "money" },
-  "단가": { format: "money", display: { grouping: false } },
+  "단가": { format: "money", display: { grouping: false, unit: "원" } },
   "하한율": { format: "percent" },
   "수량": { format: "number" },
   "공고일": { format: "date" },
@@ -137,7 +137,7 @@ function record(t: StudioTemplate, next: () => number): Record<string, unknown> 
 const UNIT_AFTER: Partial<Record<ValueFormat, RegExp>> = { money: /^[ \t 　]*원/, percent: /^[ \t 　]*%/ };
 function expectedAt(text: string, def: Def, after: string): { text: string; dropped: boolean } {
   const re = UNIT_AFTER[def.format];
-  const unit = def.format === "money" ? (def.display?.unit ?? "원") : def.format === "percent" ? (def.display?.unit ?? "%") : "";
+  const unit = def.format === "money" ? (def.display?.unit ?? "") : def.format === "percent" ? (def.display?.unit ?? "%") : "";
   if (re !== undefined && unit !== "" && text.endsWith(unit) && re.test(after)) return { text: text.slice(0, -unit.length), dropped: true };
   return { text, dropped: false };
 }
@@ -205,7 +205,7 @@ test("#131 2단계 생성: 자리 수십 개(본문·표 칸·머리말·메일�
   const texts = paragraphs(reparse(out(r))).map((p) => p.logicalText);
   for (const s of [
     "1. 추정가격: 금 1,234,000원정(부가세 포함)",
-    "2. 추정가격 1,234,000원, 예정가격 △1,234원",
+    "2. 추정가격 1,234,000원, 예정가격 △1,234",
     "3. 예정가격은 △1,234 원입니다.",
     "11. 금 1,234,000원 / 12.5%％ / 2026. 10. 09. / △1,234　원",
     "1,234,000원",
@@ -267,7 +267,7 @@ test("#131 md 생성: {{키}} 뒤 원·%·낱말 자리 뒤 원은 단위를 떼
     anchors: [{ id: "a1", kind: "word", at: { sectionIndex: 0, path: [blockIndex] }, start, end: start + 5, print: { text: "1,000", before: "총액 ", after: "원 입니다." } }],
     values: [
       { id: "v1", name: "금액", format: "money" }, { id: "v2", name: "율", format: "percent" }, { id: "v3", name: "일자", format: "date", display: { pattern: "YYYY년 M월 D일" } },
-      { id: "v4", name: "여부", format: "boolean" }, { id: "v5", name: "총액", format: "money", display: { negative: "△" } },
+      { id: "v4", name: "여부", format: "boolean" }, { id: "v5", name: "총액", format: "money", display: { negative: "△", unit: "원" } },
     ],
     bindings: [{ value: "v1", key: "금액" }, { value: "v2", key: "율" }, { value: "v3", key: "일자" }, { value: "v4", key: "여부" }, { value: "v5", key: "총액" }],
     places: [
@@ -279,5 +279,5 @@ test("#131 md 생성: {{키}} 뒤 원·%·낱말 자리 뒤 원은 단위를 떼
   const t = readStudioTemplate(JSON.stringify(raw));
   assert.ok(t.schema === "hwpx-studio/template@2");
   const r = ok(generateFromTemplate(bytes, t, { "금액": "1,234,000", "율": 12.5, "일자": "20261009", "여부": "n", "총액": "-₩2,000" }, undefined, () => undefined));
-  assert.equal(r.output, "# 공고\n\n금 1,234,000원정, 다시 1,234,000원.\n\n하한율 12.5% / 12.5%\n\n일자 2026년 10월 9일 여부 아니오\n\n총액 △2,000원 입니다.\n");
+  assert.equal(r.output, "# 공고\n\n금 1,234,000원정, 다시 1,234,000.\n\n하한율 12.5% / 12.5%\n\n일자 2026년 10월 9일 여부 아니오\n\n총액 △2,000원 입니다.\n");
 });

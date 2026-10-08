@@ -1,7 +1,7 @@
 // 값 타입 7종의 읽기와 표시(엔진 명세 8.8.4, #131). 형식 중립이다(문서 모델을 모른다).
 // 읽기: 데이터의 원래 값(글·수·참거짓)을 타입 규칙으로 읽어 정규 꼴(normalized)을 만든다. 수는 십진 글 그대로 다룬다
 // (JavaScript 수로 바꿔 표시하지 않는다. 조건 비교용 수만 따로 만든다).
-// 표시: 정규 꼴을 표시 설정(display)으로 글로 만든다. 금액·백분율의 단위(원·%)는 글 끝에 붙고, 자리 바로 뒤에 같은 단위가 있으면 생성이 뗀다(`placeText`).
+// 표시: 정규 꼴을 표시 설정(display)으로 글로 만든다. 단위(백분율 기본 %, 금액은 `display.unit`을 줄 때만)는 글 끝에 붙고, 자리 바로 뒤에 같은 단위가 있으면 생성이 뗀다(`placeText`).
 // 오류 사유에는 값 원문을 넣지 않는다.
 
 export const VALUE_FORMATS = ["text", "number", "money", "percent", "date", "datetime", "boolean"] as const;
@@ -13,7 +13,7 @@ export type ValueDisplay = {
   grouping?: boolean;
   /** number·money·percent: 음수 앞의 표시(기본 "-") */
   negative?: "-" | "△";
-  /** money·percent: 글 끝에 붙이는 단위(기본 money "원", percent "%"). 빈 글이면 붙이지 않는다 */
+  /** money·percent: 글 끝에 붙이는 단위(기본 money 없음, percent "%"). 빈 글이면 붙이지 않는다 */
   unit?: string;
   /** date·datetime: 표시 꼴(기본 date `YYYY. MM. DD.`, datetime `YYYY. MM. DD. HH:mm`, 입력에 초가 있으면 `:ss`를 더한다) */
   pattern?: string;
@@ -178,9 +178,9 @@ function decimalText(v: Decimal, display: ValueDisplay): string {
   return `${v.negative ? (display.negative ?? "-") : ""}${int}${v.frac === "" ? "" : `.${v.frac}`}`;
 }
 
-/** money·percent의 단위(표시 설정 또는 기본). 다른 형식이거나 빈 글이면 undefined */
+/** money·percent의 단위(표시 설정 또는 기본. money는 기본 단위가 없다, 8.8.14). 다른 형식이거나 없거나 빈 글이면 undefined */
 export function valueUnit(format: ValueFormat, display: ValueDisplay = {}): string | undefined {
-  const unit = format === "money" ? (display.unit ?? "원") : format === "percent" ? (display.unit ?? "%") : undefined;
+  const unit = format === "money" ? display.unit : format === "percent" ? (display.unit ?? "%") : undefined;
   return unit === "" ? undefined : unit;
 }
 
@@ -234,7 +234,7 @@ export function readTypedValue(format: ValueFormat, raw: unknown, display: Value
 }
 
 /**
- * 자리에 넣을 글(8.8.4·8.8.12): 값 글이 단위(money의 원, percent의 %)로 끝나고 자리 바로 뒤 글(스페이스·탭·NBSP·전각 공백을 건너뜀)이
+ * 자리에 넣을 글(8.8.4·8.8.12): 값 글이 단위(percent의 %, money의 display.unit)로 끝나고 자리 바로 뒤 글(스페이스·탭·NBSP·전각 공백을 건너뜀)이
  * 같은 단위로 시작하면 단위를 뗀 글, 아니면 값 글 그대로다. 줄·칸 자리처럼 뒤 글이 없으면 `after`는 빈 글이다.
  */
 export function placeText(text: string, unit: string | undefined, after: string): string {
