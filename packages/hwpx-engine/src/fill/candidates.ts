@@ -40,22 +40,32 @@ const SENTENCE_END = /[.!?。…]$|[다요]$/u;
 const strip = (text: string): string => text.replace(/￼/g, "").trim();
 const cellText = (cell: TableCell): string => (cell.subList?.paragraphs ?? []).map((p) => p.logicalText).join("\n");
 
+/** 라벨 글 규칙: 글(개체 자리 글자를 빼고 앞뒤 공백을 걷은 것)이 비지 않고 12자 이하이며 문장 끝맺음·빈칸 모양이 아니다. */
+export function isLabelText(text: string): boolean {
+  const t = strip(text);
+  return t !== "" && [...t].length <= LABEL_MAX && !SENTENCE_END.test(t) && !BLANK_CELL.test(t);
+}
+
 /**
- * 라벨 셀 규칙: 셀 글(개체 자리 글자를 빼고 앞뒤 공백을 걷은 것)이 12자 이하이고 문장 끝맺음·빈칸 모양이 아니며,
+ * 라벨 셀 규칙: 셀 글이 라벨 글 규칙(`isLabelText`)에 맞고,
  * 오른쪽 셀(같은 행, 열 + 열 병합)에 문단이 있고 그 글이 비었거나 밑줄·괄호뿐이면 그 오른쪽 셀을 돌려준다. 아니면 undefined.
  */
 export function labelCellRight(table: TableNode, label: TableCell): TableCell | undefined {
-  const text = strip(cellText(label));
-  if (text === "" || [...text].length > LABEL_MAX || SENTENCE_END.test(text) || BLANK_CELL.test(text)) return undefined;
+  if (!isLabelText(cellText(label))) return undefined;
   const right = table.cells.find((c) => c.row === label.row && c.col === label.col + label.colSpan);
   if (right?.subList?.paragraphs[0] === undefined) return undefined;
   return BLANK_CELL.test(cellText(right).replace(/\n/g, "")) ? right : undefined;
 }
 
-/** `라벨:` 규칙: 글이 `라벨:`(뒤는 공백뿐)이고 라벨이 12자 이하·문장 끝맺음 아님이며 문단에 내용 개체가 없다. */
+/** `라벨:` 글 규칙: 글이 `라벨:`(뒤는 공백뿐)이고 라벨이 12자 이하·문장 끝맺음 아니면 그 라벨(앞뒤 공백을 걷은 것). 아니면 undefined. */
+export function colonLabel(text: string): string | undefined {
+  const label = LABEL_COLON.exec(text)?.[1]?.trim();
+  return label !== undefined && [...label].length <= LABEL_MAX && !SENTENCE_END.test(label) ? label : undefined;
+}
+
+/** `라벨:` 규칙: 글이 `라벨:` 글 규칙(`colonLabel`)에 맞고 문단에 내용 개체가 없다. */
 export function isLabelColon(par: ParagraphNode): boolean {
-  const label = LABEL_COLON.exec(par.logicalText)?.[1]?.trim();
-  return label !== undefined && [...label].length <= LABEL_MAX && !SENTENCE_END.test(label) && contentObjects(par).length === 0;
+  return colonLabel(par.logicalText) !== undefined && contentObjects(par).length === 0;
 }
 
 function emptyCellCandidates(section: SectionModel, table: TableNode, out: Candidate[]): void {

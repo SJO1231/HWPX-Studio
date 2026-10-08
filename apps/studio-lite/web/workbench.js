@@ -2,13 +2,14 @@ import {viewerLines, lineAt} from '/viewer-lines.js';
 import { installBlockLibrary } from '/block-library.js';
 import {editorLayout, editorSelection, unitAt, replaceEditorText, groupEditorSelection, editorChange} from '/editor-model.js';
 import { createPageView, createLatest, toPagePoint } from '/packages/viewer/src/dom/index.ts';
-import {STATUS_LABEL, TYPE_LABEL, validKey, isField, keptStatus, suggestType, autoKey, repsOf, samePlaceholder, confirmText, changedSpan, toOriginal, spanNow, contextOf, mergeSaved, keyFor} from '/input-table.js';
+import {STATUS_LABEL, REL_LABEL, LABEL_MAX, isField, keptStatus, autoKey, repsOf, changedSpan, toOriginal, spanNow, contextOf, contextAround, mergeSaved, labelName, rankKeys, planConfirm, dropRow, commitConfirm, linkNote, rowAria, itemOf} from '/input-table.js';
+import {VALUE_TYPES, TYPE_LABEL, suggestType} from '/value-type.js';
 import { loadRhwp, openDocument, runPosition, sameParagraph } from '/packages/viewer/src/rhwp/index.ts';
 
 const $ = (selector) => document.querySelector(selector);
 const state = {
   placements: [], placementNames: {}, placementWarnings: {},
-  outline: [], recommendations: [], reviewHistory: [], samples: {}, tableOpen: false, tableRow: undefined, detailDrafts: new Map(), detailId: undefined, pointer: undefined,
+  outline: [], recommendations: [], reviewHistory: [], samples: {}, tableOpen: false, tableRow: undefined, detailDrafts: new Map(), detailId: undefined, pointer: undefined, currentItem: undefined,
   session: undefined, kind: 'hwpx', sourceText: '', name: '', paragraphs: [], edits: new Map(), headings: new Map(), blocks: [],
   keys: [], records: 0, index: 0, chosen: undefined, selection: undefined,
   sourceDoc: undefined, resultDoc: undefined, view: undefined, viewMode: 'source', output: undefined,
@@ -50,6 +51,8 @@ function controls() {
   $('#undo').disabled=!available||!state.history.length; $('#redo').disabled=!available||!state.future.length;
   for(const button of document.querySelectorAll('[data-action]')) {
     const name=button.dataset.action;
+    if(name==='labelPick'){const target=labelTarget();button.disabled=!available||!target;button.textContent='참고 글 지정'+(target?' · '+(target.name.trim()||'이름 없음').slice(0,10):'');
+      button.title=target?'선택한 글을 '+(target.name.trim()||'이름 없는')+' 항목의 라벨(참고 글)로 씁니다.':'입력 항목을 지정하거나 표에서 고른 뒤, 라벨로 쓸 다른 글을 고르세요.';continue;}
     button.disabled=name==='copyKey'?!available||!$('#key-select').value.trim():name==='importSelection'?!canEdit||!state.comparisonText:name==='copySelection'?!available:!canEdit;
     button.dataset.actionTitle??=button.title;
     button.title=button.disabled?(state.busy?'문서 처리가 끝난 뒤 사용하세요.':!state.session?'문서를 먼저 여세요.':!item?'문서에서 부분을 먼저 고르세요.':!item.editable?'표·개체 또는 보호된 서식이 있는 문단은 직접 편집할 수 없습니다.':name==='importSelection'?'비교 문서에서 가져올 글을 선택하세요.':'입력 항목 이름을 먼저 적으세요.'):button.dataset.actionTitle;
@@ -136,6 +139,8 @@ function markEditorSelection() {
 }
 function captureCaret(sync=true) {
   const input=$('#document-editor');state.caret={start:input.selectionStart,end:input.selectionEnd};
+  // 편집 창에서 다른 곳을 고르면 고른 입력 항목에서 벗어난다(지정은 새 자리에. 원문 고르기와 같다)
+  const active=state.activeRecommendation;if(active?.kind==='input'){const own=itemCaret(active);if(!own||own.start!==state.caret.start||own.end!==state.caret.end)state.activeRecommendation=undefined;}
   const unit=unitAt(state.layout.units,input.selectionStart),old=state.chosen;state.chosen=unit?.id;
   markEditorSelection();controls();if(sync&&state.chosen&&state.chosen!==old)void showRowInSource(state.chosen);
 }
@@ -330,7 +335,7 @@ async function installWorkspace(result, ticket) {
   state.edits = new Map((result.edits ?? []).map((item) => [item.id, item.text]));
   state.headings = new Map((result.headings ?? []).map((item) => [item.id, item.level]));
   state.blockPick = undefined;
-  state.outline=result.outline??[];state.recommendations=[];state.detailDrafts.clear();state.detailId=undefined;state.reviewHistory=[];closeTable();
+  state.outline=result.outline??[];state.recommendations=[];state.detailDrafts.clear();state.detailId=undefined;state.reviewHistory=[];state.currentItem=undefined;closeTable();
   state.blocks = (result.blocks ?? []).map((item) => ({...item}));
   state.placements=(result.placements??[]).map(p=>({...p}));state.placementNames=result.placementNames??{};state.placementWarnings=result.placementWarnings??{};
   state.marks.clear();
@@ -392,7 +397,7 @@ async function loadData(name, content, expected = {}) {
 function snapshot() {
   return {session: state.session, index: state.index, missing: $('#txt-missing').value, edits: [...state.edits].map(([id, text]) => ({id, text})),
     headings: [...state.headings].map(([id, level]) => ({id, level})), blocks: state.blocks.map((block) => ({...block})),placements:state.placements.map(p=>({...p})),
-    inputItems: inputItems().map(r=>({row:r.row,start:r.start,end:r.end,name:r.name,key:r.key,type:r.type,status:r.status,origin:r.origin}))};
+    inputItems: inputItems().map(itemOf)};
 }
 function saveBlob(content, name) {
   const url = URL.createObjectURL(new Blob([content], {type: 'application/json;charset=utf-8'}));
@@ -504,6 +509,7 @@ function action(name) {
   hideMenu();if(state.busy)return;
   try {
     if(name==='inputDetail'||name==='dataDetail'){openInputDetail(name==='dataDetail');return;}
+    if(name==='labelPick'){pickLabel();return;}
     if(name==='branchDetail')return;
     if(name==='saveBlock'){void blockLibraryUI.begin();return;}
     if(name==='copyKey'){void copyKey();return;}
@@ -791,13 +797,14 @@ const rowOrder=()=>new Map(state.paragraphs.map((p,i)=>[p.id,i]));
 /** 입력 항목 한 줄(추천 목록·표 보기·꼬리표가 같은 객체를 본다). 위치는 원문 줄 글 기준 [start, end) */
 function itemRec(x,unusable=false){
   const text=paragraph(x.row)?.text??'';
-  return {...x,id:x.origin+':'+x.row+':'+x.start+':'+x.end,kind:'input',keyAuto:false,...(isField(x.origin)?{form:x.origin}:{}),...(unusable?{unusable:true}:{}),
+  // 앞뒤 글(#148)은 지정할 때 담는다. 저장한 항목은 저장한 것을 쓴다
+  return {...contextAround(text,x.start,x.end),...x,id:x.origin+':'+x.row+':'+x.start+':'+x.end,kind:'input',keyAuto:false,...(isField(x.origin)?{form:x.origin}:{}),...(unusable?{unusable:true}:{}),
     excerpt:(unusable?'이름 규칙 밖 · ':'')+text.slice(Math.max(0,x.start-8),x.end+20).replaceAll('\uFFFC','')};
 }
 function sortRecs(){const order=rowOrder(),inputs=inputItems().sort((a,b)=>(order.get(a.row)??0)-(order.get(b.row)??0)||a.start-b.start||a.end-b.end);state.recommendations=[...inputs,...state.recommendations.filter(r=>r.kind!=='input')];}
 function buildReview(opened){
   // 입력 항목 후보는 서버가 문서 순서로 준다: 누름틀·메일머지(form)와 그 표시 글 밖의 {{키}}. 표시 글 안 {{키}}는 필드가 맡아 따로 오르지 않는다
-  const candidates=(opened.inputs??[]).map(x=>{const name=x.kind==='placeholder'?x.name.trim():x.name;return itemRec({row:x.row,start:x.start,end:x.end,name,key:x.usable===false?'':name,type:suggestType(name,''),status:'recommended',origin:x.kind},x.usable===false);});
+  const candidates=(opened.inputs??[]).map(x=>{const name=x.kind==='placeholder'?x.name.trim():x.name,span=paragraph(x.row)?.text.slice(x.start,x.end)??'';return itemRec({row:x.row,start:x.start,end:x.end,name,key:x.usable===false?'':name,type:suggestType(span,name||x.label?.text).type,...(x.label?{label:x.label}:{}),status:'recommended',origin:x.kind},x.usable===false);});
   // 다시 연 작업: 저장한 이름·키·타입·상태를 같은 자리의 후보에 얹고, 사용자가 지정한 것은 새 줄로 더한다
   const {items,dropped}=mergeSaved(candidates,opened.inputItems??[],saved=>itemRec(saved));
   state.recommendations=items;
@@ -821,18 +828,15 @@ function renderRecommendations(){
 function reviewChange(items,next){if(state.busy)return;state.reviewHistory.push(new Map(state.recommendations.map(r=>[r.id,r.status])));for(const r of items)if(r.status!=='confirmed')r.status=next==='keep'?(r.kind==='input'?keptStatus(r.origin):'recommended'):next;if(items.some(r=>r.kind==='input'))touched();renderInputs();controls();}
 /** 항목 자리를 편집 글(숨은 편집 창) 위의 선택으로 옮긴다. 확정한 항목은 그 {{키}} 자리다 */
 function caretToItem(r){
-  const unit=state.layout.units.find(u=>u.id===r.row),row=paragraph(r.row);if(!unit||!row||r.start===undefined)return;
-  let at;
-  if(r.kind==='input'&&row.editable)at=spanNow(row.text,textOf(row),repsOf(inputItems(),row.id,row.text),r.start,r.end);
-  else {const text=row.text,clean=o=>text.slice(0,o).replaceAll('\uFFFC','').length;at={start:clean(r.start),end:clean(r.end)};}
-  if(!at)return;state.caret={start:unit.start+at.start,end:unit.start+at.end};$('#document-editor').setSelectionRange(state.caret.start,state.caret.end);markEditorSelection();
+  const at=r.start===undefined?undefined:itemCaret(r);if(!at)return;
+  state.caret=at;$('#document-editor').setSelectionRange(at.start,at.end);markEditorSelection();
 }
 async function selectRecommendation(r){
   selectRow(r.row);await showRowInSource(r.row);const unit=state.layout.units.find(u=>u.id===r.row);
   if(r.kind==='input')caretToItem(r);
   if(r.kind==='block'&&unit){const end=state.layout.units.find(u=>u.id===r.to);if(end){state.caret={start:unit.start,end:end.end};$('#document-editor').setSelectionRange(unit.start,end.end);state.blockPick={...state.caret,from:r.row,to:r.to,blocked:false};
     const rows=state.paragraphs.slice(state.paragraphs.findIndex(p=>p.id===r.row),state.paragraphs.findIndex(p=>p.id===r.to)+1);state.view?.setMarks(rows.filter(p=>p.position).map(p=>({id:p.id,kind:'selection',position:p.position,endOffset:p.text.length})));}}
-  state.activeRecommendation=r;$('#detail-name').value=r.name;state.detailDrafts.set(r.row,{name:r.name,key:r.key??''});renderSelectionDetail(true);if(r.kind==='block'){$('#detail-title').textContent='블록 후보';$('#detail-excerpt').textContent=r.excerpt;$('#confirm-input').hidden=true;}else $('#confirm-input').hidden=false;controls();showRemote();
+  state.activeRecommendation=r;if(r.kind==='input')state.currentItem=r.id;$('#detail-name').value=r.name;state.detailDrafts.set(r.row,{name:r.name,key:r.key??''});renderSelectionDetail(true);if(r.kind==='block'){$('#detail-title').textContent='블록 후보';$('#detail-excerpt').textContent=r.excerpt;$('#confirm-input').hidden=true;}else $('#confirm-input').hidden=false;controls();showRemote();
 }
 function renderSelectionDetail(force=false){
   if(state.detailLibrary)return;
@@ -843,7 +847,7 @@ function renderSelectionDetail(force=false){
   state.detailId=detailId;const h=headingOf(row.id),active=state.activeRecommendation?.row===row.id?state.activeRecommendation:undefined;$('#detail-title').textContent='입력 항목 편집';$('#detail-location').textContent=(state.kind==='text'?'줄 '+(state.paragraphs.indexOf(row)+1):'쪽 미확인')+' · '+(h?.name??'문서')+(active?.kind==='input'?' · '+STATUS_LABEL[active.status]:'');$('#detail-excerpt').textContent=(state.caret?state.layout.text.slice(state.caret.start,state.caret.end):row.text).slice(0,160);$('#confirm-input').disabled=!(row.editable||active?.kind==='input'&&active.origin!=='user')||state.busy;
   const draft=state.detailDrafts.get(row.id)??{name:active?.name??'',key:active?.key??''};$('#detail-name').value=draft.name;
   // 데이터 키 목록(쓸 수 있는 경로). 항목에 이미 있는 키가 데이터에 없으면 그 키도 고를 수 있게 둔다
-  const select=$('#detail-key');select.replaceChildren();const empty=uiNode('option',state.keys.length?'연결할 데이터 항목 선택':'데이터를 먼저 올리세요');empty.value='';select.append(empty);const paths=state.keys.filter(k=>k.usable).map(k=>k.path);for(const key of draft.key&&!paths.includes(draft.key)?[draft.key,...paths]:paths){const option=uiNode('option',key);option.value=key;select.append(option);}select.value=draft.key;$('#detail-value').textContent=draft.key?'연결 후보 · 확정 뒤 적용':'연결 전';
+  const select=$('#detail-key');select.replaceChildren();const empty=uiNode('option',state.keys.length?'연결할 데이터 항목 선택':'데이터를 먼저 올리세요');empty.value='';select.append(empty);const paths=rankedKeys(active?.kind==='input'?active:undefined);for(const key of draft.key&&!paths.includes(draft.key)?[draft.key,...paths]:paths){const option=uiNode('option',key);option.value=key;select.append(option);}select.value=draft.key;$('#detail-value').textContent=linkNote(active?.kind==='input'?active.status:undefined,draft.key);
 }
 function openInputDetail(data=false){document.body.classList.remove('detail-collapsed');$('#detail-toggle').textContent='접기';$('#detail-toggle').setAttribute('aria-expanded','true');renderSelectionDetail(true);if(data&&!state.keys.length){$('#data-menu').open=true;$('#load-data-text').focus();}else $(data?'#detail-key':'#detail-name').focus();}
 /** 저장할 것이 바뀌었지만 생성 결과는 그대로인 변경(지정·이름·상태) */
@@ -875,46 +879,71 @@ async function designate(name=''){
   let r=state.activeRecommendation?.kind==='input'?state.activeRecommendation:undefined;
   if(!r){const at=itemSpanFromCaret();r=inputItems().find(x=>x.row===at.row&&x.start===at.start&&x.end===at.end);
     if(!r&&inputItems().some(x=>x.row===at.row&&x.status!=='excluded'&&(x.start<at.end&&at.start<x.end||x.start===at.start)))throw Error('이미 지정한 자리와 겹칩니다. 목록에서 그 줄을 고르세요.');
-    if(!r){const session=state.session,revision=state.revision,problem=await rangeProblem(paragraph(at.row),{start:at.start,end:at.end});
+    if(!r){const session=state.session,revision=state.revision;
+      // 글자 모양 검사와 가까운 라벨(#148: 같은 문단 앞 "라벨:" → 같은 표 행 왼쪽 라벨 칸 → 위 제목)을 함께 묻는다
+      const [problem,found]=await Promise.all([rangeProblem(paragraph(at.row),{start:at.start,end:at.end}),api('item-label',{session,...at}).catch(()=>({}))]);
       if(session!==state.session||revision!==state.revision)return;if(problem)throw Error(problem);
-      remember();const text=paragraph(at.row).text.slice(at.start,at.end);r=itemRec({...at,name:'',key:'',type:suggestType(name,text),status:'designated',origin:'user'});state.recommendations.push(r);sortRecs();}
+      remember();r=itemRec({...at,name:'',key:'',type:'text',...(found.label?{label:found.label}:{}),status:'designated',origin:'user'});nameFromLabel(r);retype(r);state.recommendations.push(r);sortRecs();}
     else remember();}
   else remember();
-  if(name.trim()){r.name=name.trim();if(r.origin==='user'&&!r.typeSet)r.type=suggestType(r.name,paragraph(r.row).text.slice(r.start,r.end));}
+  if(name.trim()){r.name=name.trim();r.nameAuto=false;retype(r);}
   if(r.status!=='confirmed')r.status=r.status==='excluded'?keptStatus(r.origin):r.origin==='user'?'designated':r.status;
   if(!isField(r.origin)&&r.status!=='confirmed'){const a=autoKey(r.name,r.key,r.keyAuto,dataPaths());r.key=a.key;r.keyAuto=a.auto;}
-  state.activeRecommendation=r;touched();renderInputs();controls();return r;
+  state.activeRecommendation=r;state.currentItem=r.id;touched();renderInputs();controls();return r;
+}
+/** 원문 그 자리의 글(항목 위치는 늘 원문 기준) */
+const spanText=r=>paragraph(r.row)?.text.slice(r.start,r.end)??'';
+/** 타입 다시 추천: 사용자가 고르지 않은 지정 항목만(고른 타입은 추천으로 덮지 않는다, #147) */
+function retype(r){if(r.origin==='user'&&!r.typeSet)r.type=suggestType(spanText(r),r.name||r.label?.text||'').type;}
+/** 라벨에서 이름 추천(#148): 이름이 비었거나 추천 이름일 때만. 제목 라벨은 여러 값이 같은 이름이 되므로 이름으로 쓰지 않는다. 확정은 ✓로 따로 */
+function nameFromLabel(r){
+  if(r.name.trim()&&!r.nameAuto||!r.label||r.label.rel==='heading'||isField(r.origin))return;
+  r.name=labelName(r.label.text);r.nameAuto=Boolean(r.name);
+}
+/** 데이터 키 후보를 이 항목에 맞게 정렬(#147·#148): 이름·라벨이 같은 키 먼저, 같은 순위면 타입이 맞는 키(견본 값·키 이름으로 본 타입) */
+function rankedKeys(r){const paths=dataPaths();return r?rankKeys(paths,{name:r.name,label:r.label?.text,type:r.type},p=>suggestType(state.samples[p]??'',p).type):paths;}
+function orderKeyList(r){$('#data-keys').replaceChildren(...rankedKeys(r).map(p=>{const o=uiNode('option',p);o.value=p;return o;}));}
+/** 항목이 지금 편집 글(숨은 편집 창)에서 차지하는 자리 */
+function itemCaret(r){
+  const unit=state.layout.units.find(u=>u.id===r.row),row=paragraph(r.row);if(!unit||!row)return;
+  const clean=o=>row.text.slice(0,o).replaceAll('\uFFFC','').length;
+  const at=row.editable?spanNow(row.text,textOf(row),repsOf(inputItems(),row.id,row.text),r.start,r.end):{start:clean(r.start),end:clean(r.end)};
+  return at&&{start:unit.start+at.start,end:unit.start+at.end};
+}
+/** "참고 글 지정" 대상: 지금 항목(마지막으로 지정·고른 입력 항목)이 있고, 고른 글이 그 항목 자기 자리가 아닐 때 */
+function labelTarget(){
+  const c=state.caret;if(!state.currentItem||!c||!state.chosen)return;const r=inputItems().find(x=>x.id===state.currentItem);if(!r)return;
+  const own=state.chosen===r.row?itemCaret(r):undefined;if(own&&own.start===c.start&&own.end===c.end)return;
+  return r;
+}
+/** 참고 글 지정(#148): 고른 글을 지금 항목의 라벨로(관계 "참고 글", 거리는 몇 문단 떨어졌는지). 이름이 비었거나 추천 이름이면 라벨에서 다시 추천 */
+function pickLabel(){
+  const r=labelTarget();if(!r||state.busy)return;const c=state.caret,flat=t=>t.replaceAll('\uFFFC','').replace(/\s+/g,' ').trim();
+  const text=(flat(state.layout.text.slice(c.start,c.end))||flat(paragraph(state.chosen)?.text??'')).slice(0,LABEL_MAX);if(!text)return;
+  const order=rowOrder();remember();r.label={text,rel:'manual',distance:Math.abs((order.get(state.chosen)??0)-(order.get(r.row)??0))};
+  nameFromLabel(r);retype(r);if(!isField(r.origin)&&r.status!=='confirmed'){const a=autoKey(r.name,r.key,r.keyAuto,dataPaths());r.key=a.key;r.keyAuto=a.auto;}
+  hideMenu();touched();renderInputs();controls();status('"'+text+'"을(를) '+(r.name||'이름 없는')+' 항목의 참고 글로 지정했습니다. 원문은 그대로입니다.');
 }
 /**
  * 확정(✓): 이름과 데이터 키를 정하고, 누름틀·메일머지·같은 키의 {{키}}가 아니면 그 자리 글을 {{키}}로 바꾼 편집을 만든다(원문 탭은 그대로, 생성 결과에만 반영).
  * 줄마다 한꺼번에 바꾸며, 고친 글·블록 범위·서로 다른 글자 모양에 걸치거나 겹치는 줄은 확정하지 않고 이유를 돌려준다. 실행 취소는 한 번에 되돌린다.
  */
 async function confirmItems(list){
-  const failed=[],ready=[];if(state.busy||!state.session)return {done:0,failed};
-  for(const x of list){const r=x.item,name=(x.name??'').trim(),key=keyFor(r,name,x.key??'');
-    if(r.status==='excluded')failed.push([r,'제외한 항목입니다.']);else if(!name)failed.push([r,'이름을 적으세요.']);
-    else if(!isField(r.origin)&&!validKey(key))failed.push([r,'데이터 키에는 글자·숫자·밑줄을 쓰고 하위 항목은 점으로 구분하세요.']);
-    else if(r.status==='confirmed'&&key!==r.key)failed.push([r,'확정한 키는 실행 취소(Ctrl+Z)로 확정을 되돌린 뒤 바꾸세요.']);else ready.push({r,name,key});}
-  const byRow=new Map();
-  for(const x of ready)if(x.r.status!=='confirmed'&&!isField(x.r.origin)&&!samePlaceholder(paragraph(x.r.row).text.slice(x.r.start,x.r.end),x.key)){if(!byRow.has(x.r.row))byRow.set(x.r.row,[]);byRow.get(x.r.row).push(x);}
-  const texts=new Map(),drop=(xs,why)=>{for(const x of xs){failed.push([x.r,why]);ready.splice(ready.indexOf(x),1);}};
-  for(const [id,xs] of byRow){const row=paragraph(id);
-    if(!row.editable){drop(xs,reasonOf(row.reason));continue;}
-    if(inRange(state.blocks,id)||inRange(state.placements,id)){drop(xs,'블록으로 바꾼 범위입니다. 블록을 풀거나 배치를 취소한 뒤 확정하세요.');continue;}
-    const targets=new Set(xs.map(x=>x.r)),result=confirmText(row.text,textOf(row),repsOf(inputItems().filter(i=>!targets.has(i)),id,row.text),xs.map(x=>({start:x.r.start,end:x.r.end,key:x.key})));
-    if('fail' in result){drop(xs,result.fail==='overlap'?'이미 확정한 입력 항목과 겹칩니다.':'고친 글에 걸쳐 원문 위치를 찾을 수 없습니다.');continue;}
-    texts.set(id,result.text);}
+  if(state.busy||!state.session)return {done:0,failed:[]};
+  // 계획(이름·키 검사, 줄마다 {{키}}로 바꾼 새 글)은 시험과 같은 코드(`planConfirm`)다. 직접 편집할 수 없는 줄·블록 범위는 이유와 함께 남긴다
+  const plan=planConfirm(inputItems(),list,id=>{const row=paragraph(id);
+    return {text:row.text,current:textOf(row),...(!row.editable?{blocked:reasonOf(row.reason)}:inRange(state.blocks,id)||inRange(state.placements,id)?{blocked:'블록으로 바꾼 범위입니다. 블록을 풀거나 배치를 취소한 뒤 확정하세요.'}:{})};});
   // 글자 모양이 섞인 줄: 생성 때와 같이 원문과 새 글의 바뀐 한 구간을 서버에서 검사한다
   const session=state.session,revision=state.revision;
-  const problems=await Promise.all([...texts].map(async([id,text])=>{const span=changedSpan(paragraph(id).text,text);return [id,span?await rangeProblem(paragraph(id),span):undefined];}));
-  if(session!==state.session||revision!==state.revision)return {done:0,failed:[...failed,...ready.map(x=>[x.r,'문서가 바뀌었습니다. 다시 확정하세요.'])]};
-  for(const [id,problem] of problems)if(problem){texts.delete(id);drop(byRow.get(id),problem);}
-  if(!ready.length)return {done:0,failed};
+  const problems=await Promise.all([...plan.texts].map(async([id,text])=>{const span=changedSpan(paragraph(id).text,text);return [id,span?await rangeProblem(paragraph(id),span):undefined];}));
+  if(session!==state.session||revision!==state.revision)return {done:0,failed:[...plan.failed,...plan.ready.map(x=>[x.item,'문서가 바뀌었습니다. 다시 확정하세요.'])]};
+  for(const [id,problem] of problems)if(problem)dropRow(plan,id,problem);
+  if(!plan.ready.length)return {done:0,failed:plan.failed};
   remember();
-  for(const [id,text] of texts){if(text===paragraph(id).text)state.edits.delete(id);else state.edits.set(id,text);}
-  for(const x of ready){Object.assign(x.r,{name:x.name,key:x.key,keyAuto:false,status:'confirmed'});state.detailDrafts.set(x.r.row,{name:x.name,key:x.key});}
-  if(texts.size){changed();renderEditor();}else touched();
-  renderInputs();controls();return {done:ready.length,failed};
+  for(const [id,text] of plan.texts){if(text===paragraph(id).text)state.edits.delete(id);else state.edits.set(id,text);}
+  commitConfirm(plan.ready);for(const x of plan.ready)state.detailDrafts.set(x.item.row,{name:x.name,key:x.key});
+  if(plan.texts.size){changed();renderEditor();}else touched();
+  renderInputs();controls();return {done:plan.ready.length,failed:plan.failed};
 }
 function reportConfirm(result,one){
   if(one&&result.done)status(one+' 입력 항목을 확정했습니다. 원문은 그대로입니다.','success');
@@ -960,7 +989,7 @@ function focusTableRow(r,field){const tr=$('#input-rows').querySelector('tr[data
 function showItem(r){
   if(state.tableRow===r.id)return;state.tableRow=r.id;
   for(const tr of $('#input-rows').querySelectorAll('tr'))tr.classList.toggle('current',tr.dataset.item===r.id);
-  if(!selectRow(r.row))return;caretToItem(r);state.activeRecommendation=r;
+  if(!selectRow(r.row))return;caretToItem(r);state.activeRecommendation=r;state.currentItem=r.id;controls();
 }
 function renderInputTable(){
   if(!state.tableOpen)return;
@@ -968,16 +997,26 @@ function renderInputTable(){
   body.replaceChildren();const items=inputItems(),paths=dataPaths();
   for(const r of items){
     const row=paragraph(r.row),tr=uiNode('tr',undefined,'status-row-'+r.status+(r.id===state.tableRow?' current':''));tr.dataset.item=r.id;
-    const keep=uiNode('input',undefined,'item-keep');keep.type='checkbox';keep.checked=r.status!=='excluded';keep.disabled=state.busy||r.status==='confirmed';keep.setAttribute('aria-label',(r.name||'이름 없는 항목')+' 유지');keep.onchange=()=>reviewChange([r],keep.checked?'keep':'excluded');
-    const ctx=contextOf(row?.text??'',r.start,r.end),source=uiNode('span',undefined,'ctx');source.append(ctx.before,uiNode('b',ctx.target||'(빈 자리)'),ctx.after);source.title=(row?.text??'').replaceAll('\uFFFC','').slice(0,300);
-    const name=uiNode('input');name.type='text';name.dataset.field='name';name.value=r.name;name.autocomplete='off';name.setAttribute('aria-label','이름');
+    const aria=rowAria(r.name),keep=uiNode('input',undefined,'item-keep');keep.type='checkbox';keep.checked=r.status!=='excluded';keep.disabled=state.busy||r.status==='confirmed';keep.setAttribute('aria-label',aria.keep);keep.onchange=()=>reviewChange([r],keep.checked?'keep':'excluded');
+    // 원문 글: 라벨(#148)과 지정할 때 담은 앞뒤 글(회색). 칸에는 앞뒤 일부만, 전체는 풍선 도움말에
+    const span=spanText(r),before=r.before??'',after=r.after??'',ctx=contextOf(before+span+after,before.length,before.length+span.length,16),source=uiNode('span',undefined,'ctx');
+    if(r.label){const tag=uiNode('span',(r.label.text.length>14?r.label.text.slice(0,13)+'…':r.label.text)+' · '+REL_LABEL[r.label.rel],'label-tag');tag.title=labelTitle(r.label);source.append(tag,' ');}
+    source.append(uiNode('span',ctx.before,'ctx-side'),uiNode('b',ctx.target||'(빈 자리)'),uiNode('span',ctx.after,'ctx-side'));
+    source.title=(r.label?labelTitle(r.label)+'\n':'')+before+'['+span.replaceAll('\uFFFC','')+']'+after;
+    const name=uiNode('input',undefined,r.nameAuto?'auto':undefined);name.type='text';name.dataset.field='name';name.value=r.name;name.autocomplete='off';name.setAttribute('aria-label','이름');if(r.nameAuto)name.title='라벨에서 온 이름 · 추천(✓로 확정)';
     const key=uiNode('input',undefined,r.keyAuto?'auto':undefined);key.type='text';key.dataset.field='key';key.value=r.key;key.autocomplete='off';key.spellcheck=false;key.setAttribute('list','data-keys');key.setAttribute('aria-label','데이터 키');
     key.readOnly=r.status==='confirmed'||isField(r.origin)||r.origin==='placeholder'&&!row?.editable;if(r.keyAuto)key.title='이름과 같은 데이터 키 · 연결 후보';else if(isField(r.origin))key.title=FORMS[r.origin]+' 이름';
-    name.oninput=()=>{r.name=name.value;if(r.origin==='user'&&!r.typeSet){r.type=suggestType(r.name,row?.text.slice(r.start,r.end)??'');type.value=r.type;}if(!isField(r.origin)&&r.status!=='confirmed'){const a=autoKey(r.name,r.key,r.keyAuto,paths);if(a.key!==r.key||a.auto!==r.keyAuto){r.key=a.key;r.keyAuto=a.auto;key.value=a.key;key.classList.toggle('auto',a.auto);key.title=a.auto?'이름과 같은 데이터 키 · 연결 후보':'';sample.textContent=sampleText(r);}}touched();scheduleList();};
+    key.onfocus=()=>orderKeyList(r);
+    name.oninput=()=>{r.name=name.value;r.nameAuto=false;name.classList.remove('auto');name.title='';const a2=rowAria(r.name);ok.setAttribute('aria-label',a2.ok);keep.setAttribute('aria-label',a2.keep);
+      retype(r);showType();if(!isField(r.origin)&&r.status!=='confirmed'){const a=autoKey(r.name,r.key,r.keyAuto,paths);if(a.key!==r.key||a.auto!==r.keyAuto){r.key=a.key;r.keyAuto=a.auto;key.value=a.key;key.classList.toggle('auto',a.auto);key.title=a.auto?'이름과 같은 데이터 키 · 연결 후보':'';sample.textContent=sampleText(r);}}touched();scheduleList();};
     key.oninput=()=>{r.key=key.value.trim();r.keyAuto=false;key.classList.remove('auto');key.title='';sample.textContent=sampleText(r);touched();};
     const sample=uiNode('span',sampleText(r),'sample');sample.title=sample.textContent;
-    const type=uiNode('select');type.dataset.field='type';type.setAttribute('aria-label','타입');for(const [value,text] of Object.entries(TYPE_LABEL)){const o=uiNode('option',text);o.value=value;type.append(o);}type.value=r.type;type.onchange=()=>{r.type=type.value;r.typeSet=true;touched();};
-    const ok=uiNode('button','✓','ok-button');ok.type='button';ok.dataset.locked=String(r.status==='confirmed'||r.status==='excluded');ok.disabled=state.busy||ok.dataset.locked==='true';ok.title=r.status==='confirmed'?'확정됨':'확정';ok.setAttribute('aria-label',(r.name||'이 줄')+' 확정');
+    // 타입(#147): 7종. 추천은 기울임(원문 모양에서), 고른 것은 보통 글씨이고 다시 추천으로 덮지 않는다. 수량은 원문 단위를 함께 보인다
+    const type=uiNode('select');type.dataset.field='type';type.setAttribute('aria-label','타입');
+    const showType=()=>{const unit=r.type==='quantity'?suggestType(span).unit:undefined;type.replaceChildren(...VALUE_TYPES.map(v=>{const o=uiNode('option',TYPE_LABEL[v]+(v==='quantity'&&unit?' · '+unit:''));o.value=v;return o;}));type.value=r.type;
+      type.classList.toggle('auto',!r.typeSet);type.title=(r.typeSet?'고른 타입':'추천 타입 · 원문 모양에서')+(unit?' · 단위 '+unit:'');};
+    showType();type.onchange=()=>{r.type=type.value;r.typeSet=true;showType();touched();};
+    const ok=uiNode('button','✓','ok-button');ok.type='button';ok.dataset.locked=String(r.status==='confirmed'||r.status==='excluded');ok.disabled=state.busy||ok.dataset.locked==='true';ok.title=r.status==='confirmed'?'확정됨':'확정';ok.setAttribute('aria-label',aria.ok);
     ok.onclick=async()=>{const result=await confirmItems([{item:r,name:r.name,key:r.key}]);reportConfirm(result,result.done?r.name:'');const rows=inputItems(),next=rows.slice(rows.indexOf(r)+1).find(x=>x.status!=='confirmed'&&x.status!=='excluded');if(result.done&&next)focusTableRow(next,'name');};
     const cells=[keep,source,name,key,sample,type,uiNode('span',STATUS_LABEL[r.status],'status-'+r.status),ok];
     for(const cell of cells){const td=uiNode('td');td.append(cell);tr.append(td);}
@@ -987,6 +1026,9 @@ function renderInputTable(){
   const count=s=>items.filter(r=>r.status===s).length;$('#input-table-count').textContent=items.length+'개 · 확정 '+count('confirmed')+' · 지정 '+count('designated');
   if(focus?.id){const el=body.querySelector('tr[data-item="'+CSS.escape(focus.id)+'"] [data-field="'+focus.field+'"]');if(el){el.focus({preventScroll:true});if(focus.start!=null&&'setSelectionRange' in el&&el.type==='text')el.setSelectionRange(focus.start,focus.end);}}
 }
+const DISTANCE_UNIT={rowHeader:'칸 왼쪽',colon:'자 뒤',heading:'문단 위',manual:'문단 떨어짐'};
+/** 라벨 풍선 도움말: 라벨 글 · 관계 · 거리 */
+function labelTitle(label){return '라벨 "'+label.text+'" · '+REL_LABEL[label.rel]+(label.distance?' · '+label.distance+DISTANCE_UNIT[label.rel]:'');}
 function sampleText(r){if(!state.records||!r.key)return '';return state.samples[r.key]??'—';}
 function showRemote(){if(!state.chosen||state.busy)return;const el=$('#selection-remote');el.hidden=false;$('#remote-name').value=$('#detail-name').value;const p=state.pointer??{x:$('.original-pane').getBoundingClientRect().left+30,y:150};const r=el.getBoundingClientRect();el.style.left=Math.max(8,Math.min(p.x,innerWidth-r.width-8))+'px';el.style.top=Math.max(55,Math.min(p.y+8,innerHeight-r.height-35))+'px';}
 let libraryRequest=0;
