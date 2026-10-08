@@ -69,6 +69,9 @@ test("block extract → list → insert: blocks/<id>/block.json(정규 JSON)과 
   const ins = await cli("block", "insert", p("hancom-blocks.hwpx"), "--store", s, "--block", "k0000beef", "--section", "0", "--index", "1", "-o", p("out1.hwpx"), "--report", p("out1.json"));
   assert.equal(ins.code, 0, ins.err);
   assert.ok(!ins.out.includes("BLOCK_FORMAT_DIFFERS"));
+  // 데이터 없이 넣으므로 블록·문서의 {{ }}가 있어도 '데이터에 없던 경로' 줄은 없다(#139)
+  assert.match(ins.out, /필요한 데이터 경로: /);
+  assert.doesNotMatch(ins.out, /데이터에 없던 경로/);
   assert.deepEqual(texts("out1.hwpx"), [...before.slice(0, 2), ...texts("merge-merge-fields.hwpx").slice(1, 12), ...before.slice(2)]);
   const report = JSON.parse(readFileSync(p("out1.json"), "utf8")) as { ok: boolean; block: { id: string; version: number; formatDiffs: unknown[] } };
   assert.deepEqual([report.ok, report.block.id, report.block.version, report.block.formatDiffs], [true, "k0000beef", 1, []]);
@@ -81,10 +84,14 @@ test("block insert: 서식이 다른 자리면 경고와 차이 목록만 내고
   assert.equal((await cli("block", "extract", p("D1.hwpx"), "--range", "0:2-4", "--name", "D1 조항", "--store", s, "--id", "k0000d001")).code, 0);
   const r = await cli("block", "insert", p("hancom-blocks.hwpx"), "--store", s, "--block", "k0000d001", "--range", "0:2-3", "-o", p("out2.hwpx"), "--report", p("out2.json"));
   assert.equal(r.code, 0, r.err);
-  assert.match(r.out, /서식 차이: 블록 문단 0의 문단 모양/);
+  assert.match(r.out, /서식 차이: 블록 문단 1의 문단 모양/);
   assert.match(r.out, /경고 \[BLOCK_FORMAT_DIFFERS\] 서식이 다릅니다, 확인하세요/);
   const report = JSON.parse(readFileSync(p("out2.json"), "utf8")) as { block: { formatDiffs: { paragraph: number; property: string }[] } };
   assert.ok(report.block.formatDiffs.length > 0);
+  // 출력 줄의 문단 번호는 1부터(화면과 같다, #139), 보고서는 0부터 그대로
+  const shown = [...r.out.matchAll(/서식 차이: 블록 문단 (\d+)의/g)].map((m) => Number(m[1]));
+  assert.deepEqual(shown, report.block.formatDiffs.map((d) => d.paragraph + 1));
+  assert.ok(report.block.formatDiffs.some((d) => d.paragraph === 0));
   const before = texts("hancom-blocks.hwpx");
   assert.deepEqual(texts("out2.hwpx"), [...before.slice(0, 2), ...texts("D1.hwpx").slice(2, 5), ...before.slice(4)]);
 });

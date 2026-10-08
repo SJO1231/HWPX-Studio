@@ -4,9 +4,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { findPlaceholders, HwpxError, parseFragment, type HwpxDocument } from "../src/index.ts";
-import { extractBlock, makeHeadingRangeAnchor, makeRangeAnchor, protoFromFragment, type BlockRange } from "../src/fill/index.ts";
+import { buildBlockPreviewDocument, extractBlock, generateFromTemplate, makeHeadingRangeAnchor, makeRangeAnchor, protoFromFragment, type BlockRange } from "../src/fill/index.ts";
 import { listAtParent, splitsField } from "../src/fill/range.ts";
-import { readBlockProto, writeBlockProto } from "../src/template/index.ts";
+import { readBlockProto, readStudioTemplate, sha256Hex, writeBlockProto } from "../src/template/index.ts";
 import { buildHwpx, bytesEqual, readFixture, reparse } from "./helpers.ts";
 import { at, HEADINGS, notice, rng } from "./range-helpers.ts";
 import { paragraph, tableParagraph, textPara, type TableSpec } from "./table-helpers.ts";
@@ -30,8 +30,10 @@ const nfd = (s: string): string => s.normalize("NFD");
 const nfc = (s: string): string => s.normalize("NFC");
 const clickBegin = (id: number, name: string): string => `<hp:ctrl><hp:fieldBegin id="${id}" type="CLICK_HERE" name="${name}" editable="1" dirty="0" zorder="-1" fieldid="627272811" metaTag=""/></hp:ctrl>`;
 const clickEnd = (id: number): string => `<hp:ctrl><hp:fieldEnd beginIDRef="${id}" fieldid="627272811"/></hp:ctrl>`;
-const merge = (id: number, key: string, shown: string): string =>
-  `<hp:ctrl><hp:fieldBegin id="${id}" type="MAILMERGE" name="" editable="0" dirty="0" zorder="-1" fieldid="627928423" metaTag=""><hp:parameters cnt="5" name=""><hp:booleanParam name="Fiexde">1</hp:booleanParam><hp:integerParam name="Prop">8</hp:integerParam><hp:stringParam name="Command">${key}</hp:stringParam><hp:stringParam name="FieldType">USER_DEFINE</hp:stringParam><hp:stringParam name="FieldValue">${key}</hp:stringParam></hp:parameters></hp:fieldBegin></hp:ctrl><hp:t>${shown}</hp:t><hp:ctrl><hp:fieldEnd beginIDRef="${id}" fieldid="627928423"/></hp:ctrl>`;
+const mergeBegin = (id: number, key: string): string =>
+  `<hp:ctrl><hp:fieldBegin id="${id}" type="MAILMERGE" name="" editable="0" dirty="0" zorder="-1" fieldid="627928423" metaTag=""><hp:parameters cnt="5" name=""><hp:booleanParam name="Fiexde">1</hp:booleanParam><hp:integerParam name="Prop">8</hp:integerParam><hp:stringParam name="Command">${key}</hp:stringParam><hp:stringParam name="FieldType">USER_DEFINE</hp:stringParam><hp:stringParam name="FieldValue">${key}</hp:stringParam></hp:parameters></hp:fieldBegin></hp:ctrl>`;
+const mergeEnd = (id: number): string => `<hp:ctrl><hp:fieldEnd beginIDRef="${id}" fieldid="627928423"/></hp:ctrl>`;
+const merge = (id: number, key: string, shown: string): string => `${mergeBegin(id, key)}<hp:t>${shown}</hp:t>${mergeEnd(id)}`;
 const link = (id: number, shown: string): string =>
   `<hp:ctrl><hp:fieldBegin id="${id}" type="HYPERLINK" name="" editable="0" dirty="0" zorder="-1" fieldid="${id}" metaTag=""><hp:parameters cnt="1" name=""><hp:stringParam name="Command">https\\://example.com/;1;0;0;</hp:stringParam></hp:parameters></hp:fieldBegin></hp:ctrl><hp:t>${shown}</hp:t><hp:ctrl><hp:fieldEnd beginIDRef="${id}" fieldid="${id}"/></hp:ctrl>`;
 const t = (s: string): string => `<hp:t>${s}</hp:t>`;
@@ -207,19 +209,50 @@ test("8.8.17 protoFromFragment = extractBlock(keys·내용 해시·덩어리): �
   assert.ok(noticeKeys > 0);
 });
 
-test("8.8.17 protoFromFragment: 여러 문단 누름틀의 사이 문단에 든 {{ }}도 extractBlock과 같은 결과", (ctx) => {
-  const doc = reparse(
-    buildHwpx([
-      textPara("앞 문단") +
-        paragraph(`${t("앞 {{ 앞 키 }} ")}${clickBegin(1, "긴 안내")}${t("{{ 안 첫 }}")}`) +
-        textPara("{{ 안 둘 }} 가운데") +
-        paragraph(`${t("{{ 안 셋 }}")}${clickEnd(1)}${t(" 밖 {{ 밖 키 }}")}`),
-    ]),
-  );
-  const range = makeRangeAnchor(doc, 0, [], 1, 3);
+test("#138 세 문단 넘게 걸친 누름틀·메일머지의 사이 문단(표 칸 포함) {{ }}는 키가 아니다: extractBlock·protoFromFragment keys, 2판 등록 판정, 블록 미리보기 자리", () => {
+  const cell: TableSpec = { id: "7138", rowCnt: 1, colCnt: 1, cells: [{ row: 0, col: 0, width: 9000, height: 1000, paragraphs: [textPara("칸 {{ 칸 사이 }}")] }] };
+  const bytes = buildHwpx([
+    textPara("앞 문단") +
+      paragraph(`${t("앞 {{ 앞 키 }} ")}${clickBegin(1, "긴 안내")}${t("{{ 안 첫 }}")}`) +
+      textPara(`{{ 안 둘 }} 가운데 ${LONG}`) +
+      paragraph(`${t("{{ 안 셋 }}")}${clickEnd(1)}${t(" 밖 {{ 밖 키 }}")}`) +
+      paragraph(`${t("머지 앞 ")}${mergeBegin(2, "머지")}${t("{{ 머지 첫 }}")}`) +
+      textPara("{{ 머지 사이 }} 하나") +
+      tableParagraph(cell) +
+      paragraph(`${t("{{ 머지 끝 }}")}${mergeEnd(2)}${t(" 뒤 {{ 끝 키 }}")}`),
+  ]);
+  const doc = reparse(bytes);
+  const outside = ["앞 키", "밖 키", "끝 키"];
+  // 떼기·조각에서 만들기
+  const range = makeRangeAnchor(doc, 0, [], 1, 7);
   assert.ok(range !== undefined);
-  const { keys } = compare(doc, range, "k0000f113");
-  ctx.diagnostic(`keys ${JSON.stringify(keys)}`);
+  assert.deepEqual(compare(doc, range, "k0000f138").keys, outside);
+  const block = extractBlock(doc, range, meta("k0000f138"));
+  // 블록 미리보기 자리
+  const preview = buildBlockPreviewDocument(block.proto, block.blob);
+  assert.deepEqual(
+    preview.fields.map((f) => `${f.kind}:${f.name}`),
+    ["placeholder:앞 키", "clickHere:긴 안내", "placeholder:밖 키", "mailMerge:머지", "placeholder:끝 키"],
+  );
+  // 2판 생성의 등록 판정: 표시 구간 밖 {{ }}와 두 필드만 등록해도 PLACE_UNREGISTERED 없이 만든다
+  const names = [...outside, "긴 안내", "머지"];
+  const raw = {
+    schema: "hwpx-studio/template@2",
+    id: "t0000f138",
+    version: 1,
+    source: { kind: "hwpx", sha256: sha256Hex(bytes) },
+    anchors: [],
+    values: names.map((name, i) => ({ id: `v${i}`, name, format: "text" })),
+    bindings: names.map((key, i) => ({ value: `v${i}`, key })),
+    places: names.map((key, i) => ({ id: `p${i}`, value: `v${i}`, ...(i < 3 ? { kind: "placeholder", key } : i === 3 ? { kind: "clickHere", name: key } : { kind: "mailMerge", key }) })),
+    slots: [],
+    blocks: [],
+  };
+  const tpl = readStudioTemplate(JSON.stringify(raw), { hasBlob: () => false });
+  assert.ok(tpl.schema === "hwpx-studio/template@2");
+  const r = generateFromTemplate(bytes, tpl, Object.fromEntries(names.map((k) => [k, `${k} 값`])), undefined, () => undefined);
+  assert.deepEqual(r.report.issues.filter((i) => i.severity === "error").map((i) => i.code), []);
+  assert.ok(r.ok);
 });
 
 test("8.8.17 protoFromFragment: 1판·출처·판 기록 없음·메모, 정규 JSON 왕복, 같은 입력 같은 결과, 그림 든 조각, 잘못된 meta는 TPL_ID·TPL_FIELD", () => {
