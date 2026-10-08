@@ -2,7 +2,7 @@ import {viewerLines, lineAt} from '/viewer-lines.js';
 import { installBlockLibrary } from '/block-library.js';
 import {editorLayout, editorSelection, unitAt, replaceEditorText, groupEditorSelection, editorChange} from '/editor-model.js';
 import { createPageView, createLatest, toPagePoint } from '/packages/viewer/src/dom/index.ts';
-import {STATUS_LABEL, REL_LABEL, LABEL_MAX, isField, keptStatus, autoKey, repsOf, changedSpan, toOriginal, spanNow, contextOf, contextAround, mergeSaved, labelName, rankKeys, planConfirm, dropRow, commitConfirm, linkNote, rowAria, itemOf} from '/input-table.js';
+import {STATUS_LABEL, REL_LABEL, LABEL_MAX, isField, keptStatus, autoKey, repsOf, changedSpan, toOriginal, spanNow, contextOf, contextAround, mergeSaved, nameFromLabel, designated, rankKeys, planConfirm, dropRow, commitConfirm, linkNote, rowAria, itemOf} from '/input-table.js';
 import {VALUE_TYPES, TYPE_LABEL, suggestType} from '/value-type.js';
 import { loadRhwp, openDocument, runPosition, sameParagraph } from '/packages/viewer/src/rhwp/index.ts';
 
@@ -883,7 +883,7 @@ async function designate(name=''){
       // 글자 모양 검사와 가까운 라벨(#148: 같은 문단 앞 "라벨:" → 같은 표 행 왼쪽 라벨 칸 → 위 제목)을 함께 묻는다
       const [problem,found]=await Promise.all([rangeProblem(paragraph(at.row),{start:at.start,end:at.end}),api('item-label',{session,...at}).catch(()=>({}))]);
       if(session!==state.session||revision!==state.revision)return;if(problem)throw Error(problem);
-      remember();r=itemRec({...at,name:'',key:'',type:'text',...(found.label?{label:found.label}:{}),status:'designated',origin:'user'});nameFromLabel(r);retype(r);state.recommendations.push(r);sortRecs();}
+      remember();r=itemRec(designated(at,found.label));retype(r);state.recommendations.push(r);sortRecs();}
     else remember();}
   else remember();
   if(name.trim()){r.name=name.trim();r.nameAuto=false;retype(r);}
@@ -895,11 +895,6 @@ async function designate(name=''){
 const spanText=r=>paragraph(r.row)?.text.slice(r.start,r.end)??'';
 /** 타입 다시 추천: 사용자가 고르지 않은 지정 항목만(고른 타입은 추천으로 덮지 않는다, #147) */
 function retype(r){if(r.origin==='user'&&!r.typeSet)r.type=suggestType(spanText(r),r.name||r.label?.text||'').type;}
-/** 라벨에서 이름 추천(#148): 이름이 비었거나 추천 이름일 때만. 제목 라벨은 여러 값이 같은 이름이 되므로 이름으로 쓰지 않는다. 확정은 ✓로 따로 */
-function nameFromLabel(r){
-  if(r.name.trim()&&!r.nameAuto||!r.label||r.label.rel==='heading'||isField(r.origin))return;
-  r.name=labelName(r.label.text);r.nameAuto=Boolean(r.name);
-}
 /** 데이터 키 후보를 이 항목에 맞게 정렬(#147·#148): 이름·라벨이 같은 키 먼저, 같은 순위면 타입이 맞는 키(견본 값·키 이름으로 본 타입) */
 function rankedKeys(r){const paths=dataPaths();return r?rankKeys(paths,{name:r.name,label:r.label?.text,type:r.type},p=>suggestType(state.samples[p]??'',p).type):paths;}
 function orderKeyList(r){$('#data-keys').replaceChildren(...rankedKeys(r).map(p=>{const o=uiNode('option',p);o.value=p;return o;}));}

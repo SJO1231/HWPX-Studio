@@ -5,7 +5,7 @@ import { gridTable, tableParagraph, textPara, type TableSpec } from '../../../pa
 import { createWorkbench } from '../src/workbench.ts';
 import { colonLabelBefore } from '../src/item-label.ts';
 import {
-  commitConfirm, contextAround, dropRow, itemOf, labelName, linkNote, planConfirm, rankKeys, refind, rowAria, type InputItem, type ItemLabel,
+  commitConfirm, contextAround, designated, dropRow, itemOf, labelName, linkNote, planConfirm, rankKeys, refind, rowAria, type InputItem, type ItemLabel,
 } from '../src/input-table.ts';
 
 type Row = { id: string; text: string; editable: boolean };
@@ -74,15 +74,17 @@ test('item labels: colon 12 · row header 10 (row span) · heading 13; nearest f
   t.diagnostic(`colon=${hits.colon}/12; rowHeader=${hits.rowHeader}/10; heading=${hits.heading}/13; misses=0`);
 });
 
-test('colon labels: the nearest label colon before the place (not a time colon), spaced labels, field marks, a reach of 40 characters', () => {
+test('colon labels: only the first place right after `label:` (spaces between), spaced labels, field marks', () => {
   const at = (text: string, value: string, from = 0) => colonLabelBefore(text, text.indexOf(value, from));
-  const range = '① 접수 기간: 2026. 1. 5. 09:00 ~ 2026. 1. 9. 18:00', gap = (v: string) => range.indexOf(v) - range.indexOf(':') - 1;
-  for (const v of ['2026. 1. 5.', '09:00', '2026. 1. 9.', '18:00']) assert.deepEqual(at(range, v), L('① 접수 기간', 'colon', gap(v)), v + ': a time colon is not a label colon');
-  assert.deepEqual([gap('2026. 1. 5.'), gap('18:00')], [1, 33]);
+  const range = '① 접수 기간: 2026. 1. 5. 09:00 ~ 2026. 1. 9. 18:00';
+  assert.deepEqual(at(range, '2026. 1. 5.'), L('① 접수 기간', 'colon', 1));
+  for (const v of ['09:00', '2026. 1. 9.', '18:00']) assert.equal(at(range, v), undefined, v + ': not the first place after the colon');
+  assert.equal(at('신청인: 홍길동 (예시 주식회사)', '예시 주식회사'), undefined, 'the second value of one label gets none');
   assert.deepEqual(at('개찰 10:00 ~ 마감 시각: 18:00', '18:00'), L('마감 시각', 'colon', 1), 'cut after ~');
   assert.deepEqual(at(' 신  청  기  관:  \uFFFC{{신청기관}}', '{{신청기관}}'), L('신 청 기 관', 'colon', 2), 'spaced label, field mark ignored');
-  assert.deepEqual(at(' 품 목 및 규 격:  \uFFFC{{품목}}\uFFFC\uFFFC{{규격}}', '{{규격}}'), L('품 목 및 규 격', 'colon', 8));
-  assert.equal(at('참고: ' + '가'.repeat(41) + ' 값', '값'), undefined, 'too far from the colon');
+  assert.deepEqual(at(' 품 목 및 규 격:  \uFFFC{{품목}}\uFFFC\uFFFC{{규격}}', '{{품목}}'), L('품 목 및 규 격', 'colon', 2));
+  assert.equal(at(' 품 목 및 규 격:  \uFFFC{{품목}}\uFFFC\uFFFC{{규격}}', '{{규격}}'), undefined);
+  assert.equal(at('참고: ' + '가'.repeat(41) + ' 값', '값'), undefined, 'text between the colon and the place');
   assert.equal(at('시작 10:00 끝 값', '값'), undefined, 'only time colons');
   assert.equal(at('이 문장은 길게 이어지는 설명입니다: 값', '값'), undefined, 'a sentence is not a label');
   assert.equal(labelName('신 청 기 관'), '신청기관'); assert.equal(labelName('품 목 및 규 격'), '품목및규격'); assert.equal(labelName('① 접수 기간'), '접수 기간');
@@ -126,6 +128,10 @@ test('item context and helpers: 60 chars each side within the paragraph, label n
   assert.equal(linkNote(undefined, ''), '연결 전');
   assert.deepEqual(rowAria(''), { ok: '이 줄 확정', keep: '이름 없는 항목 유지' });
   assert.deepEqual(rowAria(' 사업명 '), { ok: '사업명 확정', keep: '사업명 유지' });
+  // 화면에서 새로 지정한 항목(workbench.js의 지정): 서버가 찾은 라벨을 달고 라벨에서 이름을 추천(제목 라벨은 이름 없음)
+  const at = { row: 'p:0:1', start: 5, end: 9 };
+  assert.deepEqual(designated(at, L('가. 사업명', 'colon', 1)), { ...at, name: '사업명', nameAuto: true, key: '', type: 'text', label: L('가. 사업명', 'colon', 1), status: 'designated', origin: 'user' });
+  assert.deepEqual([designated(at, L('1. 개요', 'heading', 3)).name, designated(at).label, designated(at).name], ['', undefined, '']);
 });
 
 test('confirm plan (✓): state reflection on the items, edits per row, reasons for the rest; dropping a row after the server check', () => {

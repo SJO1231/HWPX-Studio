@@ -43,6 +43,7 @@ test('value type rules: 7 kinds by the shape of the original text (table: each k
     [{ type: 'money' }, { type: 'date' }, { type: 'time' }, { type: 'phone' }, { type: 'quantity', unit: '개' }]);
   // 모양이 없을 때만 이름·라벨 낱말을 본다(모양이 이긴다)
   assert.equal(suggestType('', '추정 가격').type, 'money');
+  assert.equal(suggestType('△5,000원').type, 'money', 'a △ negative amount');
   assert.equal(suggestType('{{계약일자}}', '계약일자').type, 'date');
   assert.equal(suggestType('미정', '담당자 연락처').type, 'phone');
   assert.equal(suggestType('', '납품 수량').type, 'quantity');
@@ -98,6 +99,10 @@ test('value decoration: amount commas and no doubled 원, date in the original s
   assert.equal(decorateValue('money', '12345678901234567890', '1원', ''), '12,345,678,901,234,567,890원', 'big numbers stay exact');
   assert.equal(decorateValue('money', '1234.5', '1원', ''), '1,234.5원');
   for (const v of ['미정', '', '1,000원 및 2,000원', '2026-10-07', '약 일천만원']) assert.equal(decorateValue('money', v, '1,000원', ''), v, v);
+  // 부호는 값의 것을 지킨다(원문 앞 글로 덮지 않음, 부호 뒤 빈칸은 붙인다)
+  assert.equal(decorateValue('money', '△1234', '1,000원', ''), '△1,234원');
+  assert.equal(decorateValue('money', '- 1234', '금 1,000원', ''), '금 -1,234원');
+  assert.equal(decorateValue('money', '1,2,3', '1,000원', ''), '1,2,3', 'commas that are not groups of three: left as given');
   // 날짜: 원문의 구분 글·공백·끝 글·0 채움·요일(새 날짜로 다시 셈)(확인 문장 5)
   const d = (value: string, original: string) => decorateValue('date', value, original, '');
   assert.equal(d('2026-11-02', '2026. 10. 7.'), '2026. 11. 2.');
@@ -108,6 +113,7 @@ test('value decoration: amount commas and no doubled 원, date in the original s
   assert.equal(d('2026-11-02', '2026년10월07일'), '2026년11월02일');
   assert.equal(d('2026-11-02', '2026. 10. 7.(수)'), '2026. 11. 2.(월)');
   assert.equal(d('2026-10-07', '2026/1/5'), '2026/10/7');
+  assert.equal(d('2026-11-02', ' 2026. 10. 7. '), ' 2026. 11. 2. ', 'spaces inside the chosen place stay');
   assert.equal(d('20261102', '2026. 10. 7.'), '2026. 11. 2.');
   assert.equal(d('2026년 11월 2일', '2026-10-07'), '2026-11-02');
   for (const [v, o] of [['2026-02-30', '2026. 10. 7.'], ['다음 달', '2026. 10. 7.'], ['2026-11-02 10:00', '2026. 10. 7.'], ['다음 달', '{{계약일}}']]) assert.equal(d(v!, o!), v, `${v} / ${o}`);

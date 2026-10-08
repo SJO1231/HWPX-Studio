@@ -1605,6 +1605,8 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | `range` 앵커와 `makeRangeAnchor`, 액션의 range 수용, 보고서의 `moves` | `src/fill/` | 7.10. 내부에서 이동표 변환과 느슨한 `{{ }}` 찾기 |
 | `checkAnchors(doc, t)`, `planRelocation(t, checks)`, `redraftAnchor(doc, old, draft)` | `src/fill/` | 8.8.13의 상태표·relocated 일괄 갱신 계획·재지정(id 유지). `resolveAnchors`(안에서 `locateRange`)를 재사용하고, `draftAnchors`의 초안을 입력으로 받는다 |
 | `patternOf(doc, at)`, `suggestSimilar(doc, pattern)` | `src/fill/` | 7.10(#20. #19의 탐지 규칙에 의존) |
+| `isLabelText(text)` | `src/fill/candidates.ts` | 8.3 후보 자리의 라벨 글 규칙(개체 자리 글자·앞뒤 공백을 뺀 글이 12자 이하이고 문장 끝맺음·빈칸 모양이 아님). `labelCellRight`가 쓴다(lite 행 머리 라벨, #148) |
+| `colonLabel(text)` | `src/fill/candidates.ts` | 8.3 후보 자리의 `라벨:` 글 규칙. 맞으면 라벨(앞뒤 공백 걷음), 아니면 undefined. `isLabelColon`이 쓴다(lite `라벨:` 라벨, #148) |
 | `listProtoUsage(templates, protoId, latest)`, `planProtoUpdate(t, proto)` | `src/template/` | 8.8.7(#21). 형식과 무관한 순수 함수 |
 | CLI `fill --template(@2) --case --blobs <폴더>` | `apps/cli` | 8.4. 앱과 같은 바이트 |
 | `extractBlock(doc, range, meta)`, `reextractBlock(resultDoc, range, proto, meta)` | `src/fill/block-store.ts` | 8.8.17. 범위에서 블록(원형 판 + 조각 덩어리)을 떼고, 결과 문서에서 다시 떼어 새 판 |

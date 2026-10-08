@@ -12,18 +12,14 @@ const clean = (text: string) => text.replaceAll('\uFFFC', '').replace(/\s+/g, ' 
  * 공백은 나눔이 아니다(공고서 라벨은 `신  청  기  관:`처럼 글자 사이를 띄운다).
  */
 const SEPARATOR = /[,，;；\t~∼～]/gu;
-/** 쌍점에서 자리까지 이 글자 수 안이면 그 `라벨:`의 값으로 본다(`접수 기간: 2026. 1. 5. 09:00 ~ 2026. 1. 9. 18:00`의 뒤 값까지) */
-const COLON_REACH = 40;
 
 /**
- * 자리 앞(같은 문단)의 가장 가까운 `라벨:`. 시각의 쌍점(`10:00`)은 라벨 쌍점이 아니고, 개체·필드 자리 표시(`\uFFFC`)는 빼고 본다.
- * 라벨은 그 쌍점 앞에서 앞 쌍점·나눔 뒤 글이고 엔진의 `라벨:` 글 규칙(`colonLabel`)에 맞아야 한다. 거리는 쌍점 뒤부터 자리까지 글자 수.
+ * 자리 바로 앞(같은 문단, 사이는 빈칸만)이 `라벨:`이면 그 라벨. 쌍점 뒤 첫 자리에만 달고 같은 `라벨:` 뒤 둘째 값에는 달지 않는다.
+ * 개체·필드 자리 표시(`\uFFFC`)는 빼고 본다. 라벨은 그 쌍점 앞에서 앞 쌍점·나눔 뒤 글이고 엔진의 `라벨:` 글 규칙(`colonLabel`)에 맞아야 한다. 거리는 쌍점 뒤 빈칸 수.
  */
 export function colonLabelBefore(text: string, start: number): ItemLabel | undefined {
-  const prefix = text.slice(0, start).replaceAll('\uFFFC', '');
-  const isTime = (i: number) => /\d/u.test(prefix[i - 1] ?? '') && /\d/u.test(prefix[i + 1] ?? '');
-  const colon = [...prefix.matchAll(/[:：]/gu)].map(m => m.index).filter(i => !isTime(i)).at(-1);
-  if (colon === undefined || prefix.length - colon - 1 > COLON_REACH) return undefined;
+  const prefix = text.slice(0, start).replaceAll('\uFFFC', ''), colon = prefix.trimEnd().length - 1;
+  if (!/[:：]/u.test(prefix[colon] ?? '')) return undefined;
   const before = prefix.slice(0, colon);
   const cut = Math.max(before.lastIndexOf(':'), before.lastIndexOf('：'), ...[...before.matchAll(SEPARATOR)].map(m => m.index));
   const label = colonLabel(prefix.slice(cut + 1, colon + 1));

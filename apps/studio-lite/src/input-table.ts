@@ -274,6 +274,18 @@ export function commitConfirm<T extends InputItem>(ready: ConfirmPlan<T>['ready'
   for (const x of ready) Object.assign(x.item, { name: x.name, key: x.key, keyAuto: false, nameAuto: false, status: 'confirmed' });
 }
 
+/** 라벨에서 이름 추천(#148): 이름이 비었거나 추천 이름일 때만. 제목 라벨은 여러 값이 같은 이름이 되므로 이름으로 쓰지 않는다. 확정은 ✓로 따로 */
+export function nameFromLabel(r: InputItem & { nameAuto?: boolean }): void {
+  if (r.name.trim() && !r.nameAuto || !r.label || r.label.rel === 'heading' || isField(r.origin)) return;
+  r.name = labelName(r.label.text); r.nameAuto = Boolean(r.name);
+}
+/** 화면에서 새로 지정한 항목: 이름 없이 지정 상태, 서버가 찾은 라벨을 달고 라벨에서 이름을 추천한다(타입은 화면이 원문 모양으로 다시 추천) */
+export function designated(at: Span & { row: string }, label?: ItemLabel): InputItem & { nameAuto?: boolean } {
+  const r: InputItem & { nameAuto?: boolean } = { ...at, name: '', key: '', type: 'text', ...(label ? { label } : {}), status: 'designated', origin: 'user' };
+  nameFromLabel(r);
+  return r;
+}
+
 /** 선택 상세의 연결 글: 확정한 항목은 확정한 키, 아니면 연결 후보·연결 전 */
 export const linkNote = (status: ItemStatus | undefined, key: string): string =>
   status === 'confirmed' ? '확정 · ' + key : key ? '연결 후보 · 확정 뒤 적용' : '연결 전';

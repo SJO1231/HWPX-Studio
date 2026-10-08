@@ -14,7 +14,7 @@ export type TypeGuess = { type: ValueType; unit?: string };
 
 /** 이 글자 수를 넘거나 줄바꿈이 있으면 긴 글 */
 const LONG = 40;
-const MONEY = /^(?:금)?[₩￦]?-?(?:\d{1,3}(?:,\d{3})+|\d+(?=원))(?:\.\d+)?(?:원정?)?$/u;
+const MONEY = /^(?:금)?[₩￦]?[-△]?(?:\d{1,3}(?:,\d{3})+|\d+(?=원))(?:\.\d+)?(?:원정?)?$/u;
 const DATE = /^(\d{4})(\s*(?:[.\-/]|년)\s*)(\d{1,2})(\s*(?:[.\-/]|월)\s*)(\d{1,2})(\s*(?:\.|일))?(\s*\(\s*[월화수목금토일]\s*\))?$/u;
 const TIME = /^(?:(?:오전|오후)\s*)?(?:[01]?\d|2[0-3])\s*(?::\s*[0-5]\d|시(?:\s*[0-5]?\d\s*분)?)$/u;
 const PHONE = /^(?:\(?0\d{1,2}\)?[-.\s)]*\d{3,4}[-.\s]\d{4}|01[016789][-.\s]?\d{3,4}[-.\s]?\d{4}|1[5-9]\d{2}-\d{4})$/u;
@@ -61,17 +61,17 @@ export function suggestType(text: string, hint = ''): TypeGuess {
   return { type: 'text' };
 }
 
-const NUMBER = /^(\D*?)(-?\d[\d,]*(?:\.\d+)?)(\D*)$/u;
-/** 앞 글 · 수(쉼표 뺀 것) · 뒤 글. 수가 하나가 아니면 undefined */
+const NUMBER = /^(\D*?)([-△]\s*)?(\d[\d,]*(?:\.\d+)?)(\D*)$/u;
+/** 앞 글 · 부호(`-`·`△`, 뒤 빈칸 허용) · 수(쉼표 뺀 것) · 뒤 글. 수가 하나가 아니거나 쉼표가 세 자리 묶음이 아니면(`1,2,3`) undefined */
 function numberParts(text: string) {
   const m = NUMBER.exec(text.replaceAll('\uFFFC', '').trim());
-  if (!m) return undefined;
-  return { prefix: m[1]!, number: m[2]!.replace(/,/g, ''), suffix: m[3]!, comma: m[2]!.includes(',') };
+  if (!m || m[3]!.includes(',') && !/^\d{1,3}(?:,\d{3})+(?:\.\d+)?$/.test(m[3]!)) return undefined;
+  return { prefix: m[1]!, sign: (m[2] ?? '').trim(), number: m[3]!.replace(/,/g, ''), suffix: m[4]!, comma: m[3]!.includes(',') };
 }
 /** 천 단위 쉼표(글로만 다룬다. 큰 수·앞자리 0도 안전하다) */
 function group(n: string) {
-  const negative = n.startsWith('-'), [int = '', frac] = n.replace(/^-/, '').split('.');
-  return (negative ? '-' : '') + int.replace(/^0+(?=\d)/, '').replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (frac === undefined ? '' : '.' + frac);
+  const [int = '', frac] = n.split('.');
+  return int.replace(/^0+(?=\d)/, '').replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (frac === undefined ? '' : '.' + frac);
 }
 const WEEKDAYS = '일월화수목금토';
 
@@ -89,9 +89,10 @@ export function decorateValue(type: ValueType, value: string, original: string, 
     const v = numberParts(value);
     if (!v) return value;
     const o = numberParts(original);
-    const number = type === 'money' || (o ? o.comma : v.comma) ? group(v.number) : v.number.replace(/^(-?)0+(?=\d)/, '$1');
+    const number = type === 'money' || (o ? o.comma : v.comma) ? group(v.number) : v.number.replace(/^0+(?=\d)/, '');
+    // 앞 글·뒤 글은 원문 모양, 부호는 값의 것(`△1234` → `△1,234`)
     const prefix = o ? o.prefix : v.prefix, suffix = o ? o.suffix : v.suffix;
-    return prefix + number + (suffix.trim() !== '' && following.trimStart().startsWith(suffix.trim()) ? '' : suffix);
+    return prefix + v.sign + number + (suffix.trim() !== '' && following.trimStart().startsWith(suffix.trim()) ? '' : suffix);
   }
   if (type === 'date') {
     const o = dateShape(original), v = dateShape(value) ?? (/^\d{8}$/.test(value.trim()) ? dateShape(value.trim().replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3')) : undefined);
@@ -101,7 +102,8 @@ export function decorateValue(type: ValueType, value: string, original: string, 
     const pad = zero(o.mo) || zero(o.d) ? true : short(o.mo) || short(o.d) ? false : !/\s|년/.test(o.sep1 + o.sep2);
     const two = (n: number) => pad ? String(n).padStart(2, '0') : String(n);
     const weekday = o.weekday.replace(/[월화수목금토일]/u, WEEKDAYS[new Date(Date.UTC(v.year, v.month - 1, v.day)).getUTCDay()]!);
-    return v.year + o.sep1 + two(v.month) + o.sep2 + two(v.day) + o.end + weekday;
+    // 고른 자리 안의 앞뒤 빈칸은 원문 그대로 둔다
+    return /^\s*/u.exec(original)![0] + v.year + o.sep1 + two(v.month) + o.sep2 + two(v.day) + o.end + weekday + /\s*$/u.exec(original)![0];
   }
   return value;
 }
