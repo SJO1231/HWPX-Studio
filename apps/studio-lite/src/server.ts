@@ -14,6 +14,7 @@ import { analyze, assert, checkProject, checkRecords, confirmFields, md, parseCs
 import { applyProject, markdownHwpx } from './hwpx.ts';
 import { demo, demoSources } from './demo.ts';
 import { createG2B, G2BRequestError } from './g2b.ts';
+import { createG2B2, G2B2Error, g2b2Body, STUDIO_GENERATE } from './g2b-v2.ts';
 import { parseDocument, openPackage } from '@hwpx-studio/engine';
 
 // Preview rejections: engine codes use the shared plain table; app/host codes already carry a plain sentence.
@@ -24,6 +25,7 @@ export function createApp(database=':memory:') {
   const db=new DatabaseSync(database);
   db.exec('CREATE TABLE IF NOT EXISTS project_revision (id INTEGER PRIMARY KEY, name TEXT NOT NULL, document TEXT NOT NULL, saved_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)');
   const g2b=createG2B(db);
+  const g2b2=createG2B2(db);
   const quick=createQuick();
   const blockLibrary=createBlockLibrary(db);
   const workbench=createWorkbench(blockLibrary);
@@ -50,7 +52,7 @@ export function createApp(database=':memory:') {
         if(path==='/api/block/usage'){const use=blockLibrary.usage(url.searchParams.get('id'));return send(200,{...use,openPlacement:workbench.inUse(use.proto)});}
         if(path==='/api/block')return send(200,blockLibrary.get(url.searchParams.get('id')));
         if(path==='/api/health')return send(200,{ok:true});
-        if(path==='/api/g2b/profiles')return send(200,{profiles:g2b.profiles()});
+        if(path==='/api/g2b/profiles')return send(200,{profiles:g2b2.profiles()});
         if(path==='/api/projects')return send(200,db.prepare('SELECT name, MAX(id) AS id, MAX(saved_at) AS saved_at FROM project_revision GROUP BY name ORDER BY id DESC').all());
         if(path==='/api/project') {
           const row=db.prepare('SELECT document FROM project_revision WHERE id=?').get(Number(url.searchParams.get('id'))) as any;
@@ -74,10 +76,15 @@ export function createApp(database=':memory:') {
         return send(404,{error:'없는 경로입니다.'});
       }
       if(req.method!=='POST' || !path.startsWith('/api/')) return send(405,{error:'지원하지 않는 요청입니다.'});
-      if(!req.headers['content-type']?.startsWith('application/json'))return send(415,{error:'JSON 요청만 받습니다.'});
+      // 생성 창구(2판 계약 8.8.14)는 본문을 읽기 전의 거절도 { code, message } 꼴이다(1판·2판을 본문 전에는 가릴 수 없다)
+      const generating=path==='/api/g2b/generate';
+      if(!req.headers['content-type']?.startsWith('application/json'))return send(415,generating?g2b2Body(new G2B2Error(415,'INVALID_REQUEST','JSON 요청만 받습니다.')):{error:'JSON 요청만 받습니다.'});
+      // 한도를 넘은 본문은 버리면서 끝까지 읽은 뒤 413을 보낸다(읽다 끊으면 보내는 쪽이 답장 대신 연결 끊김을 받는다)
       const chunks:Buffer[]=[];let size=0;
-      for await(const chunk of req){size+=chunk.length;if(size>32*1024*1024)return send(413,{error:'요청은 32MB 이내여야 합니다.'});chunks.push(chunk);}
-      const input=JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      for await(const chunk of req){size+=chunk.length;if(size<=32*1024*1024)chunks.push(chunk);}
+      if(size>32*1024*1024)return send(413,generating?g2b2Body(new G2B2Error(413,'INVALID_REQUEST','요청은 32MB 이내여야 합니다.')):{error:'요청은 32MB 이내여야 합니다.'});
+      let input;
+      try{input=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch(e){if(generating)throw new G2B2Error(400,'INVALID_REQUEST','요청 본문이 JSON이 아닙니다.');throw e;}
       if(path==='/api/block/rename')return send(200,blockLibrary.rename(input?.id,input?.name));
       if(path==='/api/block/delete'){
         // Placements not yet saved to a work file are known only to open workbench sessions.
@@ -88,9 +95,13 @@ export function createApp(database=':memory:') {
       if(path.startsWith('/api/workbench/'))return send(200,workbench.post(path,input));
       if(path==='/api/g2b/profiles') {
         if(!req.headers.origin)return send(403,{error:'생성 프로필은 Studio의 Helper 연결 화면에서 설정하세요.'});
-        return send(200,{profile:g2b.saveProfile(input)});
+        return send(200,{profile:input&&typeof input==='object'&&'templateId' in input?g2b2.saveProfile(input):g2b.saveProfile(input)});
       }
-      if(path==='/api/g2b/generate')return send(200,await g2b.generate(input));
+      if(path==='/api/g2b/templates') {
+        if(!req.headers.origin)return send(403,{error:'서식은 Studio 화면에서 저장하세요.'});
+        return send(200,g2b2.saveTemplate(input));
+      }
+      if(path==='/api/g2b/generate')return send(200,input?.format===STUDIO_GENERATE?await g2b2.generate(input):await g2b.generate(input));
       if(path==='/api/import-data') {
         assert(typeof input.content==='string' && typeof input.name==='string','파일 형식을 확인하세요.');
         const records=/\.xlsx$/i.test(input.name)?parseXlsx(Buffer.from(input.content,'base64')):/\.csv$/i.test(input.name)?parseCsv(input.content):JSON.parse(input.content);
@@ -116,7 +127,7 @@ export function createApp(database=':memory:') {
         return send(200,{id:Number(result.lastInsertRowid),saved:true});
       }
       send(404,{error:'없는 API입니다.'});
-    } catch(e) {send(e instanceof G2BRequestError || e instanceof HostError?e.status:400,{error:e instanceof Error?e.message:'요청 처리에 실패했습니다.',...(e instanceof G2BRequestError?{status:'error',code:e.code}:pathCode(e)),...(req.url?.split('?')[0]==='/api/block/preview'?{plain:previewPlain(e)}:{})});}
+    } catch(e) {if(e instanceof G2B2Error)return send(e.status,g2b2Body(e));send(e instanceof G2BRequestError || e instanceof HostError?e.status:400,{error:e instanceof Error?e.message:'요청 처리에 실패했습니다.',...(e instanceof G2BRequestError?{status:'error',code:e.code}:pathCode(e)),...(req.url?.split('?')[0]==='/api/block/preview'?{plain:previewPlain(e)}:{})});}
   });
   server.on('close',()=>db.close());
   return server;

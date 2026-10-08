@@ -115,10 +115,10 @@ JSON에서는 줄바꿈을 `\n`으로 적습니다. 예: `"주소": "서울시 �
 
 ### G2B Helper JSON으로 만들기
 
-G2B Helper의 **문서 연결 → JSON 전달 파일**로 받은 `document-input.json`을 그대로 올릴 수 있습니다. 시험용 예시: `examples/quick/template-mailmerge.hwpx`와 `data-helper-export.json`(Helper 내보내기 꼴), `data-helper-request.json`(Helper 생성 요청 꼴). 값은 전부 가짜입니다.
+G2B Helper가 내보낸 JSON 파일(생성 요청과 같은 꼴: `"format": "studio-generate"`, `"version": 2`)을 그대로 올릴 수 있습니다. 시험용 예시: `examples/quick/template-mailmerge.hwpx`와 `data-helper-export.json`. 값은 전부 가짜입니다. 예전 Helper 파일(`"format": "g2b-helper-document"`, `version` 1)과 예전 생성 요청 꼴(`fields`·`userValues`)은 더 알아보지 않습니다(한 건짜리 보통 JSON으로 읽혀 대부분 "데이터 없음"이 됩니다). Helper에서 새 꼴로 다시 내보내 주세요.
 
 1. `/quick`에서 서식(.hwpx)을 올립니다.
-2. **JSON 데이터 올리기**로 Helper가 준 .json을 고릅니다. 데이터 칸에 "Helper JSON 2건(Helper 내보내기)"처럼 나오고, 대조표 위 요약도 "Helper JSON 2건 · …"으로 시작합니다. Helper 화면 표의 **한 행이 한 건**(결과 파일 하나)이고, 열 이름이 데이터 키입니다. 생성 요청 꼴은 항목마다 원천 값(`fields`)과 사용자 입력(`userValues`)을 합쳐 한 건으로 봅니다. 두 곳에 같은 이름이 있으면 그 건만 실패합니다.
+2. **JSON 데이터 올리기**로 Helper가 준 .json을 고릅니다. 데이터 칸에 "Helper JSON 2건(Helper 내보내기)"처럼 나오고, 대조표 위 요약도 "Helper JSON 2건 · …"으로 시작합니다. 파일의 `items`에서 **항목 하나가 한 건**(결과 파일 하나)이고, 항목의 `values`의 열 이름이 데이터 키입니다. `values`가 없는 항목은 그 건만 실패합니다. `version`이 2가 아니면 파일을 받지 않습니다.
 3. 대조표에서 "데이터 없음"인 키를 봅니다. 문서의 `{{키}}`·누름틀 이름·메일머지 키가 Helper의 열 이름과 같아야 채웁니다.
 4. **연결 확인 후 HWPX 생성**을 누릅니다. 결과에 `{{…}}`가 남는 건은 기본 설정에서 실패로 나오고, 남은 키가 오류 칸에 적힙니다(5절).
 

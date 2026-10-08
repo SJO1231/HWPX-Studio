@@ -81,7 +81,7 @@ function renderAssignments(){
     clear.addEventListener('click',async()=>{state.busy=true;invalidate();cancelSelection();controls();try{const response=await api('clear',{session:state.session,id:a.id});state.assignments=response.assignments;renderAssignments();marks();status('지정을 해제했습니다. 원본 글은 그대로입니다.');}catch(e){failed(e);}finally{state.busy=false;controls();}});row.append(el('br'),clear);box.append(row);});
   controls();
 }
-const HELPER_FORMS={helperExport:'Helper 내보내기',helperRequest:'Helper 생성 요청'};
+const HELPER_FORMS={helperExport:'Helper 내보내기'};
 function renderData(d){
   $('data-info').textContent=`${HELPER_FORMS[d.form]?`Helper JSON ${d.records}건(${HELPER_FORMS[d.form]})`:`${d.records}건`} · 만들 수 없는 건 ${d.invalidRecords}건${d.truncated?' · 경로 앞 1,000개':''}`;
   const select=$('mapping');select.replaceChildren(el('option','연결할 경로 선택'));select.firstChild.value='';

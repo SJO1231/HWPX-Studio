@@ -1,4 +1,4 @@
-// #126: 채우지 못한 {{…}}가 결과에 남으면 누락 정책 error는 실패, keep·empty는 알림(작업창·/quick 같은 판정). Helper 내보내기·생성 요청 JSON을 건마다 라벨–값으로 펼친다.
+// #126: 채우지 못한 {{…}}가 결과에 남으면 누락 정책 error는 실패, keep·empty는 알림(작업창·/quick 같은 판정). #133: Helper 내보내기 파일(생성 요청 2판 꼴)은 항목의 values마다 한 건.
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
@@ -79,58 +79,46 @@ test('#126 /quick 합성 서식: 자리 목록의 규칙 밖 키, 정책 error=�
   assert.deepEqual(Buffer.from(bytes),before);
 });
 
-test('#126 Helper JSON 두 꼴: 건마다 평평한 라벨–값, 이름 충돌·판 거절, 배열 데이터와 같은 결과',()=>{
-  const bytes=synthetic(),places=analyzePlaces(bytes),next=rng(0x126b),rows=[rowOf(next,0),rowOf(next,1),rowOf(next,2)];
-  const split=(row:Record<string,unknown>)=>{const keys=Object.keys(row);return {fields:Object.fromEntries(keys.slice(0,9).map(k=>[k,row[k]])),userValues:Object.fromEntries(keys.slice(9).map(k=>[k,row[k]]))};};
-  const exported=parseQuickData(encode({format:'g2b-helper-document',version:1,source:{pointInfo:{areaCd:'00',depth1:'0',depth2:'0'},tables:{목록:rows.slice(0,2),빈표:[]}}}));
-  assert.equal(exported.form,'helperExport');assert.deepEqual(exported.records.map(r=>'dataset' in r&&r.dataset.data),rows.slice(0,2));
-  const frames=parseQuickData(encode({format:'g2b-helper-document',version:1,source:{frames:[{pointInfo:{},tables:{가:[rows[0]]}},{pointInfo:{},tables:{나:[rows[1],'행 아님']}}]}}));
-  assert.deepEqual(frames.records.map(r=>'dataset' in r?r.dataset.data:r.error.code),[rows[0],rows[1],'DATA_SCHEMA']);
-  const db=parseQuickData(encode({format:'g2b-helper-document',version:1,source:rows.map(r=>({stage:'contract',identity:['X'],recordId:'r',...split(r),children:[]}))}));
-  assert.deepEqual(db.records.map(r=>'dataset' in r&&r.dataset.data),rows);
-  const request=parseQuickData(encode({requestId:'synthetic-1',profileId:'p',sourceKind:'screen',items:[...rows.map(r=>({...split(r),children:[]})),{fields:{사업명:'SECRET_A'},userValues:{사업명:'SECRET_B',비고:'SECRET_C'},children:[]},{fields:'아님',userValues:{}}]}));
-  assert.equal(request.form,'helperRequest');assert.equal(request.records.length,5);
-  assert.deepEqual(request.records.slice(0,3).map(r=>'dataset' in r&&r.dataset.data),rows);
-  const clash=request.records[3]!;assert('error' in clash&&clash.error.code==='QUICK_FIELD_COLLISION'&&clash.error.message.includes('사업명')&&!clash.error.message.includes('SECRET'));
-  assert('error' in request.records[4]!&&request.records[4].error.code==='DATA_SCHEMA');
-  assert.throws(()=>parseQuickData(encode({format:'g2b-helper-document',version:2,source:[]})),(e:any)=>e.code==='QUICK_HELPER_VERSION');
-  assert.throws(()=>parseQuickData(encode({format:'g2b-helper-document',version:1,source:{pointInfo:{},tables:{빈표:[]}}})),(e:any)=>e.code==='QUICK_NO_RECORDS');
-  assert.equal(parseQuickData(encode({requestId:'x'})).form,'object','items가 없으면 생성 요청이 아니다(기존 동작)');
-  const plain=generateAll(bytes,places,parseQuickData(encode(rows)),'합성.hwpx','keep');
-  for(const data of [db,request]){
-    const results=generateAll(bytes,places,data,'합성.hwpx','keep');
-    for(let i=0;i<3;i++){assert(results[i]!.view.ok);assert.deepEqual(results[i]!.output,plain[i]!.output);assert.deepEqual(results[i]!.view,plain[i]!.view);}
-  }
-  const failed=generateAll(bytes,places,request,'합성.hwpx','keep').slice(3);
-  assert.deepEqual(failed.map(r=>[r.view.ok,r.view.errors[0]?.code]),[[false,'QUICK_FIELD_COLLISION'],[false,'DATA_SCHEMA']]);
+test('#133 Helper 내보내기 파일(생성 요청 2판 꼴): 항목의 values마다 한 건, values 없는 항목만 실패, 판·꼴 거절, 옛 두 꼴은 더 읽지 않음, 배열 데이터와 같은 결과',()=>{
+  const bytes=synthetic(),places=analyzePlaces(bytes),next=rng(0x133b),rows=[rowOf(next,0),rowOf(next,1),rowOf(next,2)];
+  const exported=(items:unknown[],extra:Record<string,unknown>={})=>encode({format:'studio-generate',version:2,requestId:'',profileId:'',types:{금액:'text'},items,columns:[{key:'사업명',label:'사업 이름',type:'text'}],...extra});
+  const data=parseQuickData(exported([...rows.map((values,i)=>({values,allowEmpty:[],selections:{},meta:{identity:['X',String(i)]}})),{allowEmpty:[]},'항목 아님']));
+  assert.equal(data.form,'helperExport');assert.equal(data.records.length,5);
+  assert.deepEqual(data.records.slice(0,3).map(r=>'dataset' in r&&r.dataset.data),rows);
+  assert.deepEqual(data.records.slice(3).map(r=>'error' in r&&r.error.code),['DATA_SCHEMA','DATA_SCHEMA']);
+  for(const bad of [{version:1},{version:3},{items:{}}])assert.throws(()=>parseQuickData(exported([{values:rows[0]}],bad)),(e:any)=>e.code==='QUICK_BAD_DATA');
+  assert.throws(()=>parseQuickData(exported([])),(e:any)=>e.code==='QUICK_NO_RECORDS');
+  // PR #143의 옛 두 꼴(g2b-helper-document v1, 1판 생성 요청)은 알아보지 않고 객체 하나(한 건)로 읽는다
+  const old=parseQuickData(encode({format:'g2b-helper-document',version:1,source:{pointInfo:{},tables:{목록:rows}}}));
+  assert.equal(old.form,'object');assert.equal(old.records.length,1);
+  const request=parseQuickData(encode({requestId:'r',profileId:'p',sourceKind:'db',items:rows.map(r=>({fields:r,userValues:{},children:[]}))}));
+  assert.equal(request.form,'object');assert.equal(request.records.length,1);
+  const plain=generateAll(bytes,places,parseQuickData(encode(rows)),'합성.hwpx','keep'),results=generateAll(bytes,places,data,'합성.hwpx','keep');
+  for(let i=0;i<3;i++){assert(results[i]!.view.ok);assert.deepEqual(results[i]!.output,plain[i]!.output);assert.deepEqual(results[i]!.view,plain[i]!.view);}
+  assert.deepEqual(results.slice(3).map(r=>[r.view.ok,r.view.errors[0]?.code]),[[false,'DATA_SCHEMA'],[false,'DATA_SCHEMA']]);
 });
 
-test('#126 Helper JSON 무작위 50건×2회: 두 꼴 결정성·엔진 직접 생성과 같음·남은 4곳 고정·검사기 새 오류 0',t=>{
+test('#133 Helper 내보내기 파일 무작위 50건×2회: 결정성·엔진 직접 생성과 같음·남은 4곳 고정·검사기 새 오류 0',t=>{
   const bytes=synthetic(),before=Buffer.from(bytes),baseline=validateDocument(bytes),places=analyzePlaces(bytes),next=rng(0x126c);
   const rows=Array.from({length:50},(_,i)=>rowOf(next,i));
-  const items=rows.map(row=>{const keys=Object.keys(row).sort(()=>next()-0.5),cut=Math.floor(next()*keys.length);return {fields:Object.fromEntries(keys.slice(0,cut).map(k=>[k,row[k]])),userValues:Object.fromEntries(keys.slice(cut).map(k=>[k,row[k]])),children:[]};});
-  const forms=[
-    parseQuickData(encode({format:'g2b-helper-document',version:1,source:{pointInfo:{},tables:{목록:rows}}})),
-    parseQuickData(encode({requestId:'seeded-126',profileId:'p',sourceKind:'db',items})),
-  ];
+  const data=parseQuickData(encode({format:'studio-generate',version:2,requestId:'seeded-133',profileId:'p',items:rows.map((values,i)=>({values,meta:{identity:[String(i)]}}))}));
+  assert.equal(data.form,'helperExport');
   let generated=0,direct=0,pairs=0,newErrors=0,blocked=0;
-  for(const data of forms){
-    const first=generateAll(bytes,places,data,'seeded.hwpx','keep'),second=generateAll(bytes,places,data,'seeded.hwpx','keep');
-    const strict=generateAll(bytes,places,data,'seeded.hwpx','error');
-    for(let i=0;i<50;i++){
-      const a=first[i]!,b=second[i]!,record=data.records[i]!;assert('dataset' in record);
-      assert(a.view.ok&&a.output,JSON.stringify(a.view.errors));assert.deepEqual(a.output,b.output);assert.deepEqual(a.view,b.view);pairs++;
-      assert.deepEqual(a.view.leftover,LEFT);assert.equal(a.view.filled,FILLED);
-      const expected=generate(bytes,emptyTemplate(),readDataset(rows[i]),{missing:'keep'});assert(expected.ok&&!expected.dryRun);assert.deepEqual(a.output,expected.output);direct++;
-      assert.equal(listFields(docOf(a.output)).find(f=>f.mergeKey==='기관명')?.valueText,rows[i]!['기관명']);
-      const errors=compareToBaseline(baseline,validateDocument(a.output)).newErrors;assert.deepEqual(errors,[]);newErrors+=errors.length;
-      assert(!strict[i]!.view.ok&&strict[i]!.output===undefined&&JSON.stringify(strict[i]!.view.leftover)===JSON.stringify(LEFT));blocked++;
-      generated+=2;
-    }
+  const first=generateAll(bytes,places,data,'seeded.hwpx','keep'),second=generateAll(bytes,places,data,'seeded.hwpx','keep');
+  const strict=generateAll(bytes,places,data,'seeded.hwpx','error');
+  for(let i=0;i<50;i++){
+    const a=first[i]!,b=second[i]!,record=data.records[i]!;assert('dataset' in record);
+    assert(a.view.ok&&a.output,JSON.stringify(a.view.errors));assert.deepEqual(a.output,b.output);assert.deepEqual(a.view,b.view);pairs++;
+    assert.deepEqual(a.view.leftover,LEFT);assert.equal(a.view.filled,FILLED);
+    const expected=generate(bytes,emptyTemplate(),readDataset(rows[i]),{missing:'keep'});assert(expected.ok&&!expected.dryRun);assert.deepEqual(a.output,expected.output);direct++;
+    assert.equal(listFields(docOf(a.output)).find(f=>f.mergeKey==='기관명')?.valueText,rows[i]!['기관명']);
+    const errors=compareToBaseline(baseline,validateDocument(a.output)).newErrors;assert.deepEqual(errors,[]);newErrors+=errors.length;
+    assert(!strict[i]!.view.ok&&strict[i]!.output===undefined&&JSON.stringify(strict[i]!.view.leftover)===JSON.stringify(LEFT));blocked++;
+    generated+=2;
   }
   assert.deepEqual(Buffer.from(bytes),before);
-  assert.equal(generated,200);assert.equal(direct,100);assert.equal(pairs,100);assert.equal(blocked,100);assert.equal(newErrors,0);
-  t.diagnostic('seed=0x126c; forms=2(export,request); rows=50; places=46(filled 42, leftover 4: mixed run 1, off-rule 2, bad-key mailmerge 1); keep_generations=200; deterministic_pairs=100; direct_equal=100; error_blocked=100; new_errors=0; brace_values_not_counted=true');
+  assert.equal(generated,100);assert.equal(direct,50);assert.equal(pairs,50);assert.equal(blocked,50);assert.equal(newErrors,0);
+  t.diagnostic('seed=0x126c; form=helperExport(studio-generate v2); rows=50; places=46(filled 42, leftover 4: mixed run 1, off-rule 2, bad-key mailmerge 1); keep_generations=100; deterministic_pairs=50; direct_equal=50; error_blocked=50; new_errors=0; brace_values_not_counted=true');
 });
 
 test('#126 작업창 HWPX: 같은 합성 서식에서 남은 자리는 기본 정책이면 막고 자리 유지면 알림, 데이터에 없는 키는 키 이름과 함께 막음',()=>{
@@ -139,7 +127,7 @@ test('#126 작업창 HWPX: 같은 합성 서식에서 남은 자리는 기본 �
   const work={session:opened.session,index:0,edits:[],headings:[],blocks:[]};
   assert.deepEqual(opened.inputs.filter((x:any)=>x.usable===false).map((x:any)=>x.name.trim()).sort(),['계약 방법(수의)','담당 부서','추정가격(원)'].sort());
   const next=rng(0x126d),row=rowOf(next,0);
-  app.post('/api/workbench/data',{session:opened.session,name:'helper.json',content:JSON.stringify({format:'g2b-helper-document',version:1,source:{pointInfo:{},tables:{목록:[row]}}})});
+  app.post('/api/workbench/data',{session:opened.session,name:'helper.json',content:JSON.stringify({format:'studio-generate',version:2,requestId:'',profileId:'',items:[{values:row}]})});
   assert.throws(()=>app.post('/api/workbench/generate',work),(e:any)=>e.code==='WORKBENCH_UNLINKED'&&e.message.includes('남은 자리 4곳: {{혼합.키}} 1곳, {{추정가격(원)}} 1곳, {{담당 부서}} 1곳, {{계약 방법(수의)}} 1곳')&&!e.message.includes('SYN_'));
   assert.throws(()=>app.get('/api/workbench/result',new URLSearchParams({session:opened.session})),(e:any)=>e.code==='WORKBENCH_RESULT');
   const kept=app.post('/api/workbench/generate',{...work,missing:'keep'}) as any;
@@ -153,15 +141,18 @@ test('#126 작업창 HWPX: 같은 합성 서식에서 남은 자리는 기본 �
   assert.deepEqual(app.get('/api/workbench/source',new URLSearchParams({session:opened.session}))!.body,bytes);
 });
 
-test('#126 예시 파일: Helper 내보내기·생성 요청 예시는 data-mailmerge.json과 같은 결과, 실패 처리면 남은 2곳으로 실패·원래 글 유지면 41곳 + 알림',()=>{
+test('#133 예시 파일: Helper 내보내기 예시(평평한 값)는 같은 값의 배열 데이터와 같은 결과, 점 경로 {{…}} 8곳은 값이 없어 실패 처리면 실패·원래 글 유지면 33곳 + 남은 10곳',()=>{
   const read=(name:string)=>new Uint8Array(readFileSync(new URL('../../../examples/quick/'+name,import.meta.url)));
   const bytes=read('template-mailmerge.hwpx'),places=analyzePlaces(bytes);
-  const plain=generateAll(bytes,places,parseQuickData(read('data-mailmerge.json')),'template-mailmerge.hwpx','keep');
-  for(const [name,form] of [['data-helper-export.json','helperExport'],['data-helper-request.json','helperRequest']] as const){
-    const data=parseQuickData(read(name));assert.equal(data.form,form);assert.equal(data.records.length,2);
-    const kept=generateAll(bytes,places,data,'template-mailmerge.hwpx','keep');
-    for(let i=0;i<2;i++){assert(kept[i]!.view.ok);assert.equal(kept[i]!.view.filled,41);assert.deepEqual(kept[i]!.output,plain[i]!.output);assert.equal(kept[i]!.view.leftover?.count,2);}
-    const blocked=generateAll(bytes,places,data,'template-mailmerge.hwpx','error');
-    assert.deepEqual(blocked.map(r=>[r.view.ok,r.view.errors[0]?.detail]),[[false,'남은 자리 2곳: {{참고 사항}} 1곳, {{계약 방법(수의)}} 1곳'],[false,'남은 자리 2곳: {{참고 사항}} 1곳, {{계약 방법(수의)}} 1곳']]);
-  }
+  const file=JSON.parse(new TextDecoder().decode(read('data-helper-export.json')));
+  assert.equal(file.format,'studio-generate');assert.equal(file.version,2);
+  for(const it of file.items)for(const v of Object.values(it.values))assert(v===null||typeof v!=='object','값은 글자·숫자·참거짓·null만');
+  const data=parseQuickData(read('data-helper-export.json'));assert.equal(data.form,'helperExport');assert.equal(data.records.length,2);
+  const plain=generateAll(bytes,places,parseQuickData(encode(file.items.map((it:any)=>it.values))),'template-mailmerge.hwpx','keep');
+  // data-mailmerge.json(중첩 값)은 41곳을 채우고 2곳이 남는다. 평평한 예시에는 project·dates·manager가 없어 그 점 경로 {{…}} 8곳이 더 남는다
+  const nested=places.placeholders.filter(p=>/^(project|dates|manager)\./.test(p.key)).reduce((n,p)=>n+p.count,0);assert.equal(nested,8);
+  const kept=generateAll(bytes,places,data,'template-mailmerge.hwpx','keep');
+  for(let i=0;i<2;i++){assert(kept[i]!.view.ok);assert.deepEqual(kept[i]!.output,plain[i]!.output);assert.equal(kept[i]!.view.filled,41-nested);assert.equal(kept[i]!.view.leftover?.count,2+nested);}
+  const blocked=generateAll(bytes,places,data,'template-mailmerge.hwpx','error');
+  assert(blocked.every(r=>!r.view.ok&&r.output===undefined));
 });

@@ -194,55 +194,16 @@ export function analyzePlaces(bytes: Uint8Array): PlacesView {
 
 export type QuickData = { form: DataForm; records: BatchRecord[] };
 
-/** G2B Helper 내보내기 파일(`document-input.json`)의 꼴 이름. Helper가 `{ format, version: 1, source }`로 싸서 내보낸다 */
-const HELPER_FORMAT = "g2b-helper-document";
+/** G2B Helper 내보내기 파일의 꼴 이름: 생성 요청(`/api/g2b` 2판)과 같은 꼴 `{ format, version: 2, items, columns? }`(엔진 명세 8.8.14) */
+const HELPER_FORMAT = "studio-generate";
 
 const flat = (data: Record<string, unknown>): BatchRecord => ({ dataset: { data, derived: {} } });
 
 /**
- * Helper 항목 하나(생성 요청의 `items[]`, 내보내기 DB 레코드)를 평평한 라벨–값 한 건으로 펼친다: `{ ...fields, ...userValues }`.
- * `fields`가 객체가 아니면 그 건만 `DATA_SCHEMA`, 두 객체에 같은 이름이 있으면 그 건만 `QUICK_FIELD_COLLISION`이다(Helper 1판 다리의 `FIELD_COLLISION`과 같은 규칙).
- * `children` 등 다른 칸은 쓰지 않는다.
- */
-function helperItem(item: unknown, n: number): BatchRecord {
-  const user = isObj(item) ? item["userValues"] ?? {} : undefined;
-  if (!isObj(item) || !isObj(item["fields"]) || !isObj(user)) {
-    return { error: { code: "DATA_SCHEMA", message: `${n}번째 Helper 항목에 fields·userValues 객체가 없습니다.` } };
-  }
-  const fields = item["fields"];
-  const clash = Object.keys(user).filter((k) => Object.hasOwn(fields, k));
-  if (clash.length > 0) {
-    return { error: { code: "QUICK_FIELD_COLLISION", message: `${n}번째 Helper 항목의 원천 값(fields)과 사용자 입력(userValues)에 같은 이름이 있습니다: ${clash.join(", ")}` } };
-  }
-  return flat({ ...fields, ...user });
-}
-
-/**
- * Helper 내보내기의 `source`를 건으로 나눈다. 배열이면 DB 레코드(`{ fields, userValues, … }`)마다 한 건(`helperItem`). 객체이면 화면 추출본
- * (`{ pointInfo, tables }`, 여러 frame이면 `{ frames: [...] }`)이고 frame·표·행 순서대로 표의 행마다 한 건이다(행은 그대로 라벨–값). `pointInfo`는 화면 위치라 쓰지 않는다.
- */
-function helperExport(source: unknown): BatchRecord[] {
-  if (Array.isArray(source)) return source.map((item, i) => helperItem(item, i + 1));
-  if (!isObj(source)) throw new HostError(400, "QUICK_BAD_DATA", "Helper 내보내기 파일의 source가 객체나 배열이 아닙니다.");
-  const frames = source["frames"];
-  const units = Array.isArray(frames) && frames.length > 0 ? frames : [source];
-  const records: BatchRecord[] = [];
-  for (const unit of units) {
-    const tables = isObj(unit) ? unit["tables"] : undefined;
-    if (!isObj(tables)) continue;
-    for (const rows of Object.values(tables)) {
-      if (!Array.isArray(rows)) continue;
-      for (const row of rows) records.push(isObj(row) ? flat(row) : { error: { code: "DATA_SCHEMA", message: `${records.length + 1}번째 건(표의 행)이 JSON 객체가 아닙니다.` } });
-    }
-  }
-  return records;
-}
-
-/**
  * 올린 JSON을 건으로 나눈다(엔진의 `readBatchRecords`): 최상위가 배열이면 원소마다 한 건, 묶음 형식(`hwpx-studio/dataset@1`)의 `data`가 배열이면
  * 원소마다 한 건(`derived`는 공유), 객체이면 한 건이다. 객체가 아닌 원소는 그 건만 `DATA_SCHEMA`로 실패한다.
- * G2B Helper의 두 꼴은 먼저 알아본다(엔진 명세 8.8.14): 내보내기(`format: "g2b-helper-document"`. `version`이 1이 아니면 `QUICK_HELPER_VERSION`)와
- * 생성 요청(`requestId` 글 + `items` 배열). 건마다 평평한 라벨–값이 된다(`helperExport`·`helperItem`).
+ * G2B Helper 내보내기 파일(`format: "studio-generate"`, 엔진 명세 8.8.14)은 먼저 알아본다: `version`이 2가 아니거나 `items`가 배열이 아니면 `QUICK_BAD_DATA`,
+ * `items[]`마다 `values`가 한 건(라벨–값 그대로)이고 `values`가 객체가 아닌 항목은 그 건만 `DATA_SCHEMA`다. `requestId`·`profileId`(비어도 됨)·`allowEmpty`·`selections`·`meta`·`types`·`columns`는 쓰지 않는다.
  * JSON이 아니면 `BAD_JSON`(400), 그 밖의 모양이면 `QUICK_BAD_DATA`, 건이 없거나 너무 많으면 `QUICK_NO_RECORDS`·`QUICK_TOO_MANY_RECORDS`다.
  * 묶음 형식의 `data`·`derived`가 틀리면 엔진의 `DATA_SCHEMA`(`HwpxError`)가 올라온다.
  */
@@ -252,14 +213,11 @@ export function parseQuickData(body: Uint8Array): QuickData {
   if (!Array.isArray(raw) && !isObj(raw)) throw new HostError(400, "QUICK_BAD_DATA", "데이터는 JSON 객체 하나이거나 객체의 배열이어야 합니다.");
   let form: DataForm;
   let records: BatchRecord[];
-  const items = isObj(raw) && typeof raw["requestId"] === "string" ? raw["items"] : undefined;
   if (isObj(raw) && raw["format"] === HELPER_FORMAT) {
-    if (raw["version"] !== 1) throw new HostError(400, "QUICK_HELPER_VERSION", `이 Helper 내보내기 판(version ${JSON.stringify(raw["version"] ?? null)})은 읽지 못합니다. version 1만 받습니다.`);
+    const items = raw["items"];
+    if (raw["version"] !== 2 || !Array.isArray(items)) throw new HostError(400, "QUICK_BAD_DATA", `Helper 내보내기 파일은 version 2이고 items 배열이 있어야 합니다(올린 파일은 version ${JSON.stringify(raw["version"] ?? null)}).`);
     form = "helperExport";
-    records = helperExport(raw["source"]);
-  } else if (Array.isArray(items)) {
-    form = "helperRequest";
-    records = items.map((item, i) => helperItem(item, i + 1));
+    records = items.map((item, i) => (isObj(item) && isObj(item["values"]) ? flat(item["values"]) : { error: { code: "DATA_SCHEMA", message: `${i + 1}번째 Helper 항목에 values 객체가 없습니다.` } }));
   } else {
     const batch = readBatchRecords(raw);
     if (batch !== undefined) {
@@ -271,7 +229,7 @@ export function parseQuickData(body: Uint8Array): QuickData {
       records = [{ dataset: readDataset(raw) }];
     }
   }
-  if (records.length === 0) throw new HostError(400, "QUICK_NO_RECORDS", form === "helperExport" ? "Helper 내보내기 파일의 표에 행이 없습니다." : "데이터에 만들 건이 없습니다.");
+  if (records.length === 0) throw new HostError(400, "QUICK_NO_RECORDS", form === "helperExport" ? "Helper 내보내기 파일의 items가 비어 있습니다." : "데이터에 만들 건이 없습니다.");
   if (records.length > MAX_RECORDS) throw new HostError(400, "QUICK_TOO_MANY_RECORDS", `한 번에 ${MAX_RECORDS}건까지 만들 수 있습니다(올린 데이터는 ${records.length}건).`);
   return { form, records };
 }

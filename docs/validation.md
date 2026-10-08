@@ -1038,3 +1038,36 @@ CLI `block extract`로 떼고 `block insert --section 0 --index 25`(대상 2쪽�
 시험: `node --test apps/studio-lite/test/value-type.test.ts apps/studio-lite/test/item-label.test.ts apps/studio-lite/test/input-table.test.ts`.
 
 남은 것: 꾸밈은 작업창에서 지정·확정한 자리만이다(문서에 원래 있던 `{{키}}`·누름틀·메일머지는 엔진 표시 형식 #131, 블록 배치가 있는 생성은 아직 안 꾸밈). "서식 설정으로 덮기"는 원문 날짜 모양을 서식 설정으로 보고 따로 설정 칸은 두지 않았다. 데이터 키는 작업창 `{{키}}` 규칙(공백 불가)이라 공백·괄호 든 라벨 이름은 키를 따로 적는다(키 규칙을 넓히려면 별도 이슈). 라벨 찾기 순서는 이슈 글(머리 칸 → `라벨:` → 제목)과 달리 같은 문단의 `라벨:`이 먼저다. 제목 라벨은 엔진 제목 탐지가 목록 줄(`①`·`-`)도 제목으로 보므로 약하다(이름으로는 쓰지 않음). 자리 재탐색은 함수만 있고 화면이 없다. 한글로 결과 열기는 하지 않았다. 독립 검증.
+
+## 43. `/api/g2b` 창구 2판 (2026-10-09, 이슈 #133)
+
+엔진 명세 8.8.14 "`/api/g2b` 2판 계약(확정 2026-10-09)"과 그 아래 "구현 확정 사항", 8.8.10의 창구 코드 표. `apps/studio-lite/src/g2b-v2.ts`가 `format: "studio-generate"` 요청을 프로필의 template@2 판으로 엔진 2단계 생성(`generateFromTemplate`)과 타입 7종(#131)으로 만들고, 1판 다리(`src/g2b.ts`)는 그대로 둔다. `/quick`은 2판 내보내기 파일만 알아본다. 아래는 구현자 시험이고 독립 검증 전이다. 한컴 COM은 쓰지 않았다.
+
+| 검사 | 결과 |
+| --- | --- |
+| 창구 | 서식 판·프로필 저장은 Origin이 있어야 함(없으면 403), `GET /api/g2b/profiles`의 2판 항목이 `{ id, label, templateId, version, outputDirectory }`만, Helper(Origin 없음) 생성 200, 다른 Origin 403. 같은 서식 판을 다른 내용으로 저장하면 409, 원본 해시가 다르면 400, 없는 판의 프로필 400 `PROFILE_INVALID` |
+| 요청 전체 오류 꼴 | 15가지 거절이 모두 `{ requestId?, code, message }`(1판의 `error` 없음): JSON 아님·415·413(33MB, 끝까지 읽고 답함)·`version` 3·`items` 0개·101개·`values` 없음·모르는 타입 이름(`types`·`columns[].type`)·빈 키·제어 문자 키·NFC로 겹치는 키·제어 문자 `allowEmpty` → 400 `INVALID_REQUEST`, 없는 프로필 400 `UNKNOWN_PROFILE`, 다른 지문 409 `REQUEST_CONFLICT`. 메시지에 값 원문 없음 |
+| 값·키·모르는 필드 | NFD 키로 보낸 요청과 쓰지 않는 열(점·괄호 든 이름 포함)을 더한 요청의 결과 바이트가 같음, 서식이 쓰는 열의 객체 값은 그 건만 `INVALID_FIELDS`(money), 서식이 안 쓰는 열의 배열은 무시. 모르는 필드 4종(`sourceKind`·`items[].children`·`items[].meta.foo`·`columns[].bar`, 두 건에 있어도 한 번)이 최상위 `UNKNOWN_FIELD`, 정상 요청의 최상위 `warnings` 0 |
+| 타입 우선순위 | 서식 money 열에 요청 `text` → 서식 타입으로 읽어 `1억`은 `INVALID_FIELDS(money)`, 다섯 건 모두 건별 `TYPE_MISMATCH`. 서식이 안 쓰는 열은 요청 타입과 안 맞는 값·객체·배열이어도 성공·최상위·건별 경고 0(별도 시험 1건) |
+| 빈 값·allowEmpty | `null`·`''` → `MISSING_FIELDS`, 보내지 않은 열 + allowEmpty·`null` + allowEmpty·`''` + allowEmpty(서식이 안 쓰는 열 함께) → 같은 바이트로 성공(그 열 빈 글), 서식이 안 쓰는 열은 `ALLOW_EMPTY_UNUSED` 경고, 읽을 수 없는 값은 빈 열이 함께 있어도·allowEmpty에 있어도 `INVALID_FIELDS`, money 열의 공백뿐인 글은 빈 값 |
+| 분기 | 선택 없음 → `UNDECIDED`(`제출 서류`, `tie`, 후보 2), `selections`로 고르면 그 블록, 조건(1억 이상)과 다른 수동 선택이 이김, 없는 블록·다른 슬롯 블록 → `UNDECIDED`(`blockMissing`, 후보 2), 서식에 없는 분기 이름은 `SELECTION_UNKNOWN_SLOT` 경고. 합성 서식: 조건에만 쓰는 열이 없음·빈 글 → `UNDECIDED`(`valueMissing`, `fields`, 후보 b1), allowEmpty면 빈 값으로 판정해 조건 없는 블록, `requireConfirm` 서식은 `needConfirm`(후보 1) → 선택하면 성공 |
+| 재시도 | 같은 요청 둘을 동시에 → 응답 전체(걸린 시간까지) 같음, 출력 2개. 다른 지문 409. 서버를 다시 연 뒤 → `reused: true`, 입력 필요 건은 기록 그대로. 프로필을 새 판으로 바꾼 뒤 파일을 지우면 기록된 판으로 같은 경로에 같은 바이트, 새 요청은 새 판. 기록된 경로에 다른 파일 → `OUTPUT_ERROR`, 덮어쓰지 않음 |
+| 처리 중 표·순서(모듈) | 같은 번호·같은 지문은 같은 약속 객체, 다른 지문은 바로 409, 같은 이름에 다른 내용 세 요청을 동시에 → 들어온 순서대로 완료되고 이름이 `…`·`…-2`·`…-3` |
+| dryRun | 파일 0·기록 0·라벨 사전 그대로, 같은 번호의 실제 생성과 `path`·`reused`만 다름 |
+| 기록 | `g2b2_request` 4열·`g2b2_item` 7열, 결과 JSON의 키는 결과 꼴 안, 파일 해시가 실제와 같음. 덩어리 표에는 서식 원본·조각만. DB 파일 바이트에 표시 값(`VALUE-MARK`)·출력의 base64 없음 |
+| 파일 이름 | 규칙 8줄(프로필 규칙, identity 없음·공백뿐 → `g2b-<해시>-<순번>`, 금지 글자 `_`·앞뒤 공백·점, 이름 전체 기준, 없는 자리 표시는 빈 글, `CON_`, 120자). 서버: 같은 이름·같은 해시 재사용(`reused: true`)·다르면 `-2`·`-3`, 규칙을 바꿔도 끝난 요청은 기록한 이름, 임시 파일 0 |
+| columns | 오면 통째로 바뀜(합치지 않음), 없으면 그대로, dryRun은 그대로, 빈 배열이면 빔. 다른 표(학습 층 대역)는 그대로 |
+| 엔진 코드 대응 | 15줄 표(`windowCode`). 서버: 별칭 둘에 값 → `PROFILE_MAPPING_CONFLICT`(`error`, 두 열 이름), 등록하지 않은 `{{연락처}}`가 남는 판 → `TEMPLATE_RECHECK`(메시지에 `PLACE_UNREGISTERED`), 사라진 출력 폴더 → 모든 건 `PROFILE_INVALID`(기록 안 함), 1판 프로필 → `PROFILE_INVALID`이고 GET에는 1판 꼴 그대로 |
+| 합성 서식 무작위(자리 수십 개·긴 값) | `merge/merge-fields`에 본문 6문단·표 칸 5문단·머리말 1문단(공백·괄호·점 키, 같은 키 여러 곳)과 분기 하나(줄 앵커, 참거짓 조건 블록·조건 없는 블록, 블록 글 안 자리)를 더한 서식: 값 37개, 자리 50개, 곳 90(`{{ }}`·메일머지·누름틀). 시드 0x133a 50건(글 열 200~500자 여러 문장·줄바꿈·탭·XML 특수문자, 타입 열은 7종 원래 값, 서식이 안 쓰는 원천 열 4개)을 한 요청에 두 번(100건): 100/100 성공, 뒤 50건이 같은 해시라 재사용(결정성), 검사기 새 오류 0, 남은 `{{` 0, 글 값 300곳·메일머지 글 값 일치, 분기 b1 25·b2 25, 최상위·건별 경고 0 |
+| 100건 처리 시간 | 위 요청의 `summary.totalMs` 6회 측정: 6,198·6,707ms(이 시험 파일만), 9,592ms(lite 시험 전체와 함께), 12,211ms(1판 시험과 동시), 17,728·21,947ms(단독 실행, 다른 프로그램이 CPU 47% 사용 중). 건당 62~219ms로 기계 부하에 따라 흔들린다. `timings` 100개 |
+| 실제 공고서 16건(읽기 전용, 선택 실행) | 문서마다 금액·백분율·날짜·한글 낱말 자리(16~26곳)와 메일머지 키(1건 27개)로 template@2를 만들어 창구에 서식·프로필(출력은 OS 임시 폴더) 저장, 시드 1330 50회(회마다 같은 항목 두 번): 100/100 성공, 뒤 건 재사용 50, 검사기 새 오류 0, 최상위 경고 0, 자리 1,249, 생성 합계 28,209·43,003ms(두 번, 건당 약 282·430ms). 문서 모음 그대로 |
+| `/quick` 내보내기 파일 | 2판 꼴의 항목 `values`마다 한 건(배열 데이터와 같은 바이트·보고), `values` 없는·객체 아닌 항목만 `DATA_SCHEMA`, `version` 1·3·`items` 객체 → `QUICK_BAD_DATA`, 빈 `items` → `QUICK_NO_RECORDS`, 옛 `g2b-helper-document` v1과 1판 요청 꼴은 객체 하나(한 건)로 읽음. 무작위 50건×2(시드 0x126c): 결정성·엔진 직접 생성과 같음·새 오류 0. 예시 `data-helper-export.json`(값은 평평한 글·수·null): `template-mailmerge.hwpx`에서 원래 글 유지면 33곳 채움·남은 10곳(점 경로 8곳 + 2곳), 실패 처리면 실패 |
+| 변이 확인 | 빈 값을 읽을 수 없는 값보다 먼저 보면 4개, 키 NFC 맞춤을 빼면 2개, allowEmpty 빈 글 넣기를 빼면 2개 시험이 실패. 재시도의 같은 파일 확인을 빼도 다시 만든 바이트가 같아 결과가 같음(최적화일 뿐) |
+| 1판 회귀 | `apps/studio-lite/test/g2b.test.ts` 7/7 |
+| 회귀 | main(b8d454f)을 합친 뒤: 형 검사(`npm run typecheck`) 0, lite 검사(`npm run check`) 통과, lite 154개 중 152 통과·1 실패·1 선택 실행분, `npm test` 1,880개 중 1,808 통과·1 실패·71 선택 실행분. 실패 1은 `quick-limit.test.ts`의 512 MiB 시험으로, 작업 폴더의 저장소 뿌리 `node_modules`가 주 체크아웃 엔진을 가리켜 자식 프로세스의 모듈 대역이 lite가 읽는 엔진(작업 폴더)과 어긋나서 난다(이 작업 전 같은 가지에서도 같은 실패. CI로 확인 필요) |
+
+시험: `node --test apps/studio-lite/test/g2b-v2.test.ts apps/studio-lite/test/g2b.test.ts apps/studio-lite/test/quick-leftover.test.ts`, `HWPX_CORPUS_DIR=<폴더> node --test apps/studio-lite/test/g2b-v2-corpus.test.ts`.
+
+가정(계약 문장에 없어 정한 것, 엔진 명세 8.8.14 "구현 확정 사항"): 서식이 안 쓰는 열은 값이 무엇이든 무시(총괄 결정 2026-10-09, 요청 `types`는 서식 타입과 다를 때의 경고에만), text 밖 타입의 공백뿐인 글도 빈 값, 조건에만 쓰는 값이 비면 `MISSING_FIELDS`가 아니라 `UNDECIDED`(`valueMissing`), 건마다 이긴 코드의 목록 하나만, Studio 설정 원인 3종의 `status`는 `error`, 분기는 슬롯 이름·블록 id로 주고받음, 같은 이름·같은 해시면 첫 처리에서도 `reused: true`, 프로필을 준비하지 못한 요청은 기록하지 않음, 건별 경고 3종의 이름, 서식 판·프로필 저장 API(Origin 전용).
+
+남은 것: 독립 검증, 서식 판·2판 프로필을 저장하는 Studio 화면(지금은 Origin이 있는 요청으로만 저장), Helper와 같은 서식·같은 파일로 끝까지 시험(⑤, 한글 열기), 1판 다리·옛 Grid·kordoc 제거(⑥, #11·#36), `/quick`을 같은 창구로(⑦).
