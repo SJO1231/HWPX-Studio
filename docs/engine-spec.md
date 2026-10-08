@@ -361,6 +361,7 @@ type Fragment = {
   lineSegSpans: { start: number; end: number }[]
   texts: string[]                   // 조각 안 모든 문단의 논리 텍스트(문서 순서)
   prints: string[]                  // 조각 안 모든 서식 참조의 지문(문서 순서)
+  dangling: { kind: string; id: string; count: number }[]  // 소스에서 이미 없는 대상을 가리키던 참조의 종류·id별 개수(FRAG_DANGLING_SOURCE와 짝, 7.8). 이전 형식 조각은 빈 목록으로 읽는다
 }
 type FragmentResource = {
   kind: string; lang?: string; id: string; xml: string
