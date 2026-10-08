@@ -361,6 +361,7 @@ type Fragment = {
   lineSegSpans: { start: number; end: number }[]
   texts: string[]                   // 조각 안 모든 문단의 논리 텍스트(문서 순서)
   prints: string[]                  // 조각 안 모든 서식 참조의 지문(문서 순서)
+  dangling: { kind: string; id: string; count: number }[]  // 소스에서 이미 없는 대상을 가리키던 참조의 종류·id별 개수(FRAG_DANGLING_SOURCE와 짝, 7.8). 이전 형식 조각은 빈 목록으로 읽는다
 }
 type FragmentResource = {
   kind: string; lang?: string; id: string; xml: string
@@ -398,7 +399,7 @@ type InsertPoint = { sectionIndex: number; parentPath: number[]; index: number; 
 3. **본문 재작성**: 조각 원문의 참조 속성값을 대응표대로 바꾼다. 줄 배치 캐시 구간을 지운다.
 4. **인스턴스 id**: 객체 id·instId가 대상에 이미 있거나 자리값(`0`, 빈 값)이면 새 값(대상과 조각을 합친 가장 큰 숫자 + 1부터)을 준다. 필드는 시작 id와 끝의 `beginIDRef`를 함께 바꾼다. 문단 id는 자리값(빈 값, `0`, `2147483648`, `4294967295`)이 아니고 대상에 이미 있을 때만 새 값(문단 id 최댓값 + 1부터, 자리값은 건너뜀)으로 바꾼다.
 5. **책갈피**: 이름이 대상과 겹치면 `_1`, `_2` …를 붙인다.
-6. **이진 자료**: 대상에 같은 내용(sha256)의 항목이 있으면 그 id를 재사용한다. 없으면 겹치지 않는 새 id와 항목 이름으로 추가하고 manifest에 등록한다.
+6. **이진 자료**: 대상에 같은 내용(sha256)의 항목이 있으면 그 id를 재사용한다. 없으면 겹치지 않는 새 id와 항목 이름으로 추가하고 manifest에 등록한다. 새 id는 대상 manifest의 id와, 없는 이진 자료를 가리키는 참조의 id(대상 본문·header의 것, 조각의 `dangling`)를 건너뛰고, 항목 이름은 패키지 항목과 대상 manifest 항목이 가리키는 이름을 건너뛴다. 그 참조·항목은 그대로 남으므로 새 항목이 같은 id·이름을 받으면 새 그림을 가리키게 되기 때문이다(#157). `dangling` 키가 없는 이전 형식 조각은 조각 쪽 id를 몰라 건너뛰지 못한다.
 7. **삽입**: 삽입 지점 문단의 시작(before) 또는 끝(after)에 재작성한 조각 원문을 넣는다.
 8. `summary`에 재사용·추가·재발급 수를 적는다.
 
