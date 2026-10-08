@@ -121,7 +121,6 @@ export function createG2B(db:DatabaseSync) {
     CREATE TABLE IF NOT EXISTS g2b_request (request_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, profile_document TEXT NOT NULL, project_document TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS g2b_item (request_id TEXT NOT NULL, item_index INTEGER NOT NULL, document TEXT NOT NULL, PRIMARY KEY(request_id,item_index));`);
   const flights=new Map<string,Promise<unknown>>();
-  const profiles=()=>db.prepare('SELECT document FROM g2b_profile ORDER BY id').all().map(row=>JSON.parse(String(row.document)) as Profile);
   function saveProfile(input:any):Profile {
     if(!object(input) || Object.keys(input).some(k=>!['id','label','revisionId','outputDirectory'].includes(k)) || !profileId(input.id) || typeof input.label!=='string' || !input.label.trim() || input.label.length>120 || !Number.isSafeInteger(input.revisionId) || Number(input.revisionId)<1 || typeof input.outputDirectory!=='string' || !isAbsolute(input.outputDirectory))
       throw new G2BRequestError(400,'INVALID_PROFILE','프로필 ID·이름·저장된 프로젝트와 절대 출력 폴더 경로를 확인하세요.');
@@ -199,5 +198,5 @@ export function createG2B(db:DatabaseSync) {
     void pending.finally(()=>flights.delete(flightKey)).catch(()=>{});
     return pending;
   }
-  return {profiles,saveProfile,generate};
+  return {saveProfile,generate};
 }

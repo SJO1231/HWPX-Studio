@@ -1449,7 +1449,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | 원형 핀의 내용이 블록 내용과 다르다 | `TPL_PROTO_MISMATCH` |
 | 원형의 `source`·`history`(8.8.17) 형식: 시각이 ISO 8601 UTC가 아니거나 달력에 없는 날짜·시각(2월 30일·4월 31일·평년 2월 29일·24:00 등), 지문의 문단 수가 구간과 다름, 판 기록이 비었거나 판 번호가 오름차순이 아니거나 마지막 줄이 원형의 판이 아님 | `TPL_FIELD` |
 
-- 1판 다리(`/api/g2b`, 8.8.14)의 창구 코드 `MONEY_PRECISION`은 2판에서 **폐지(#133)**한다. 2판은 금액을 십진 글로 읽어 정밀도 제한이 없고, 읽지 못하는 금액은 `DATA_FORMAT`(8.8.4)이다. 엔진에는 이 코드가 없고, lite 1판 다리(`apps/studio-lite/src/g2b.ts`)의 코드는 #133에서 2판으로 옮길 때 정리한다.
+- 1판 다리(`/api/g2b`, 8.8.14)의 창구 코드 `MONEY_PRECISION`은 2판에서 **폐지(#133)**한다. 2판은 금액을 십진 글로 읽어 정밀도 제한이 없고, 읽지 못하는 금액은 `DATA_FORMAT`(8.8.4)이다. 엔진에는 이 코드가 없고, 2판 창구(#133)는 내지 않는다. 1판 다리(`apps/studio-lite/src/g2b.ts`)는 제거(8.8.14의 ⑥) 때까지 그대로 낸다.
 
 - `/api/g2b` 2판 생성 창구의 코드(8.8.14, 확정 2026-10-09)는 읽기 검사가 내지 않고 창구 응답의 `code`로 낸다. 등재와 폐지:
 
@@ -1463,6 +1463,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | `GENERATION_FAILED` | 건별 실패 | 새 이름 |
 | `OUTPUT_ERROR` | 건별 실패 | 1판에서 이어짐 |
 | `UNKNOWN_FIELD` | 최상위 경고(`warnings`) | 새 이름 |
+| `TYPE_MISMATCH`, `ALLOW_EMPTY_UNUSED`, `SELECTION_UNKNOWN_SLOT` | 건별 경고(`results[].warnings`) | 새 이름(#133 구현 확정, 8.8.14) |
 | `FIELD_COLLISION`, `UNSUPPORTED_CHILDREN`, `INVALID_CHILDREN`, `MONEY_PRECISION`, `MISSING_CONDITION_FIELDS`, `BLOCK_SELECTION`, `MISSING_PROFILE` | — | 폐지(#133) |
 
 - 범위 지문(`range` 앵커의 `print`, 원형의 `source.print`)은 지문 자체의 형식(모르는 키 → `count` → `first` → `last` → `sha256` 순)을 먼저 보고, 그다음 `count`가 범위·구간의 문단 수와 같은지 본다. 둘 다 틀리면 지문 형식 오류가 나고 `where`는 지문 안(예: `anchors[0].print.first`)이다. 문단 수만 틀리면 `where`는 앵커·출처 자신(예: `anchors[0]`)이다(#99 D8).
@@ -1608,7 +1609,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 
 **`/api/g2b` 2판 계약(확정 2026-10-09)**
 
-소유: `/api/g2b` 계약 = Studio(Claude). G2B Helper 저장소는 별도 세션이 맡고 Studio는 고치지 않는다(요구 문서 8.9의 14·15). 이 소절은 사용자·Helper 세션이 합의한 **확정 계약**이며 **구현 전**이다(타입 #131 → 창구 #133, 문서 반영 #164). 2026-10-07 초안(#117: 요청·응답 1판 유지, 엔진 코드 재사용)은 이 소절로 대체한다. 구현 전까지 동작하는 것은 아래 "1판 다리"다.
+소유: `/api/g2b` 계약 = Studio(Claude). G2B Helper 저장소는 별도 세션이 맡고 Studio는 고치지 않는다(요구 문서 8.9의 14·15). 이 소절은 사용자·Helper 세션이 합의한 **확정 계약**이다(타입 #131 → 창구 #133, 문서 반영 #164). 2026-10-07 초안(#117: 요청·응답 1판 유지, 엔진 코드 재사용)은 이 소절로 대체한다. **[구현 #133]**(2026-10-09, `apps/studio-lite/src/g2b-v2.ts`. 계약에 없어 정한 것은 아래 "구현 확정 사항", 검증은 [검증 기준](validation.md) 43절). 요청에 `format: "studio-generate"`가 있으면 2판, 없으면 아래 "1판 다리"가 그대로 처리한다(⑥에서 한 번에 제거).
 
 원칙(사용자 결정):
 
@@ -1677,9 +1678,9 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | 실패 | `GENERATION_FAILED`, `OUTPUT_ERROR` | 건. `error` | — |
 
 - 폐지(#133): `FIELD_COLLISION`(분리: 원천·사용자 이름 겹침은 Helper가 `values` 하나로 보내 없어지고, 저장된 연결의 겹침은 `PROFILE_MAPPING_CONFLICT`), `UNSUPPORTED_CHILDREN`·`INVALID_CHILDREN`(`children` 삭제), `MONEY_PRECISION`(금액을 못 읽으면 `INVALID_FIELDS`), `MISSING_CONDITION_FIELDS`·`BLOCK_SELECTION`(→ `UNDECIDED`), `MISSING_PROFILE`(→ `UNKNOWN_PROFILE`). 위 목록이 최종이므로 1판 생성 창구의 나머지 코드(`INVALID_ITEMS`·`MISSING_REVISION`·`GENERATION_INPUT`)도 2판에서는 내지 않는다.
-- 엔진 코드는 응답에 그대로 내지 않고 위 이름으로 옮긴다: `DATA_MISSING` → `MISSING_FIELDS`, `DATA_FORMAT`·`DATA_NOT_SCALAR`·`VALUE_CONTROL_CHAR` → `INVALID_FIELDS`, `SEL_UNDECIDED` → `UNDECIDED`. 나머지(`SEL_RECHECK`·`TPL_*`·`GATE_*` 등)의 대응표는 #133 구현 때 이 절에 더한다.
+- 엔진 코드는 응답에 그대로 내지 않고 위 이름으로 옮긴다: `DATA_MISSING` → `MISSING_FIELDS`, `DATA_FORMAT`·`DATA_NOT_SCALAR`·`VALUE_CONTROL_CHAR` → `INVALID_FIELDS`, `SEL_UNDECIDED` → `UNDECIDED`. 나머지(`SEL_RECHECK`·`TPL_*`·`GATE_*` 등)의 대응표는 아래 "구현 확정 사항"에 있다(#133).
 
-타입 7종의 읽기·표시(#131. 표시 모양 기본값은 모두 서식 설정으로 덮을 수 있다. 지금 엔진 값 형식은 `text`·`money`뿐이다, 8.8.4):
+타입 7종의 읽기·표시(#131. 표시 모양 기본값은 모두 서식 설정으로 덮을 수 있다. 엔진 구현과 세부 규칙은 8.8.4):
 
 | 타입 | 읽기 | 못 읽으면 | 표시 기본 |
 | --- | --- | --- | --- |
@@ -1703,11 +1704,36 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 
 **결정 완료(더 묻지 않는다)**: "원" 중복은 숫자만, 괄호 라벨 허용, 토큰은 트레이(그 전까지 지금처럼), 당기기는 나중, `FIELD_COLLISION` 분리, 파일 이름 규칙 둠, 서식 판 고정.
 
+**구현 확정 사항(#133, 2026-10-09)** — 계약 문장에 없어 구현이 정한 것. 바꾸려면 이 표와 시험(`apps/studio-lite/test/g2b-v2.test.ts`)을 함께 고친다.
+
+| 항목 | 정한 것 |
+| --- | --- |
+| 요청 한도 | `requestId` 제어 문자 없는 1~200자, `profileId` `[A-Za-z0-9_-]{1,80}`, `items` 1~100개, `meta.identity` 글·수 20개 이하. 본문 32MB를 넘으면 끝까지 읽어 버린 뒤 413. 생성 창구 경로의 본문 앞 거절(415·413·JSON 아님)은 1판·2판을 가리기 전이라 모두 `{ code: "INVALID_REQUEST", message }` |
+| 지문 | 읽어 맞춘 요청(NFC 키, 모르는 항목 제외, `dryRun` 제외)의 정규 JSON(8.8.2) sha256 |
+| 모르는 필드 | `field`는 경로 꼴(`sourceKind`·`items[].children`·`items[].meta.foo`·`columns[].bar`), 같은 이름은 한 번 |
+| 키 | 빈 이름·제어 문자(U+0000–001F·007F–009F)·NFC로 같아지는 두 이름은 400. `values`·`allowEmpty`·`types`·`selections`·`columns[].key`에 같은 규칙 |
+| 서식이 쓰는 열 | 자리·블록 조건이 쓰는 값의 연결 이름(`key`와 별칭, 경로 연결은 `path` 글 그대로) |
+| 빈 값 | `null`·`''`, text 밖 타입(서식 타입 → 요청 `types`)은 공백뿐인 글도(8.8.4와 같다). 빈 값은 없는 열로 보고, `allowEmpty`에 있으면 빈 글로 넣는다 |
+| 읽을 수 없는 값 | `values`의 모든 열을 타입 우선순위로 읽어 본다: 서식이 쓰는 열은 엔진 `bindValues`(형식·객체·배열·제어 문자), 서식이 안 쓰는 열은 요청 `types`(없으면 text)의 읽기. `invalidFields[].type`은 그 타입 |
+| 열 이름(돌려줄 때) | `missingFields`·`invalidFields`·`undecided[].fields`에는 요청이 보낸 이름(`key`·별칭 가운데), 보내지 않았으면 연결의 첫 이름 |
+| `missingFields` | 자리가 쓰는 값만(블록에 묶인 자리는 그 블록이 골라졌을 때만). 조건에만 쓰는 값이 비면 `UNDECIDED`(`reason: valueMissing`, `fields`) |
+| 건별 판정 순서 | `PROFILE_INVALID`(프로필 준비) → `PROFILE_MAPPING_CONFLICT` → `INVALID_FIELDS` → `MISSING_FIELDS` → `UNDECIDED` → 엔진 생성 → `OUTPUT_ERROR`. 결과에는 이긴 코드의 자세한 목록 하나만 담는다. `status`는 입력 필요 3종이 `needs-input`, 나머지가 `error` |
+| 분기 이름 | `selections`의 키와 `undecided[].slot`은 슬롯 이름(NFC), 값과 `candidates[].block`은 블록 id, `label`은 블록 이름. 후보: `tie`·`valueMissing`·`valueRejected`는 엔진이 든 블록, `needConfirm`은 계산된 블록, `noCandidate`·없는 블록이나 다른 슬롯 블록을 고른 것(`blockMissing`)은 그 슬롯의 모든 블록 |
+| 건별 경고 | `TYPE_MISMATCH`(서식 타입과 요청 타입이 다름. 요청의 모든 건에), `ALLOW_EMPTY_UNUSED`(서식이 안 쓰는 열), `SELECTION_UNKNOWN_SLOT`(서식에 없는 분기 이름. 무시) |
+| 성공 건 | `message` 없음. `dryRun`은 `path`·`reused`만 빠지고, 라벨 사전도 바꾸지 않는다 |
+| 재시도 | 경로를 기록한 건(성공, 저장 실패)만 파일을 확인한다: 해시가 같으면 `reused: true`, 없으면 기록된 판으로 같은 경로에 다시 만들고, 다른 파일이 있으면 덮어쓰지 않고 `OUTPUT_ERROR`. 입력 필요·생성 실패 건은 같은 값·같은 판이라 기록한 결과를 그대로 돌려준다. 프로필을 준비하지 못한 요청(`PROFILE_INVALID`)은 기록하지 않는다(Studio에서 고친 뒤 같은 번호로 다시 보낼 수 있다). 재시도는 라벨 사전을 바꾸지 않는다 |
+| 처리 중 표·순서 | 2판 요청은 한 줄 대기열(1판 다리와 따로)로 처리하고 건 사이에 다른 요청을 받는다. 같은 번호가 처리 중이면 같은 지문은 같은 응답, 다른 지문은 바로 409 |
+| 파일 이름 | 프로필 `fileName` 규칙(없으면 `{identity}_{서식명}`). 자리 표시: `{identity}`(부분을 `_`로 이음)·`{identity[N]}`·`{서식명}`(`meta.name`, 없으면 서식 id)·`{stage}`·`{recordId}`. `identity`가 비거나 공백뿐이면 `g2b-<sha256(requestId) 앞 10자>-<itemIndex+1>`. 금지 글자 `<>:"/\|?*`와 제어 문자는 `_`, 이름 전체의 앞뒤 공백·점을 지우고 120자에서 자르며 Windows 예약 이름(`CON` 등)은 뒤에 `_`. 첫 처리에서 같은 이름이 같은 해시면 그 파일을 쓰고 `reused: true` |
+| Studio 화면 전용 API | Origin이 있어야 한다(Helper·명령줄은 403). `POST /api/g2b/templates { template, source(base64), blobs?: { sha256: base64 } }`: 2판·hwpx 서식만, 원본·조각 해시 대조, 저장한 판은 바꾸지 않음(다른 내용이면 409 `REQUEST_CONFLICT`) → `{ template: { id, version, name } }`. `POST /api/g2b/profiles { id, label, templateId, version, outputDirectory, fileName? }`(`templateId`가 있으면 2판 프로필, 없는 판이면 400 `PROFILE_INVALID`). `GET /api/g2b/profiles`는 2판 프로필을 계약 꼴로, 1판 프로필은 저장한 꼴 그대로 보인다. 2판 요청이 1판 프로필을 가리키면 건마다 `PROFILE_INVALID` |
+| 저장(SQLite, 템플릿 저장소 #25 전의 자리) | `g2b_template(id, version, document=정규 JSON)`, `g2b_blob(sha256, bytes=원본·조각)`, `g2b2_request(request_id, fingerprint, template_id, template_version)`, `g2b2_item(request_id, item_index, status, code, path, sha256, result)`, `g2b_label_helper(document)`. 프로필은 1판과 같은 `g2b_profile`. 값·만든 문서 바이트는 어디에도 없다. Studio 학습 층은 아직 저장이 없다(#147·#148) |
+
+엔진 코드 → 창구 이름(위 계약 줄에 더함): `DATA_ALIAS_CONFLICT` → `PROFILE_MAPPING_CONFLICT`(같은 행이면 다른 값 오류보다 먼저). `SEL_RECHECK`·`PLACE_UNREGISTERED`·`TPL_*`(`TPL_SOURCE_MISMATCH`·`TPL_FRAGMENT_MISSING`·`TPL_CONFLICT` 등)·`ANCHOR_*`·`FRAG_*` → `TEMPLATE_RECHECK`. 그 밖(`GATE_*`·`FILL_*`·문서를 열 수 없음 등) → `GENERATION_FAILED`. 메시지에는 옮기기 전 엔진 코드를 괄호로 적는다(값 원문 없음).
+
 **1판 다리(현재 구현, 위 ⑤ 뒤 한 번에 제거 #133)**: `apps/studio-lite/src/g2b.ts`·`src/server.ts`, 2026-10-03 구현. 2판 구현 전까지만 동작하고 병행 기간 없이 없앤다.
 
 | 경로 | 요청 | 응답 | 규칙 |
 | --- | --- | --- | --- |
-| `GET /api/g2b/profiles` | — | `{ profiles: Profile[] }` | Origin 없는 로컬 요청 허용(Host 검사는 그대로) |
+| `GET /api/g2b/profiles` | — | `{ profiles: Profile[] }` | Origin 없는 로컬 요청 허용(Host 검사는 그대로). #133부터 2판 프로필과 함께 보인다(위 구현 확정 사항) |
 | `POST /api/g2b/profiles` | `Profile = { id, label, revisionId, outputDirectory }` | `{ profile }` | Studio Origin이 있어야 한다(없으면 403). `id`는 `[A-Za-z0-9_-]{1,80}`, `revisionId`는 lite 저장 프로젝트 행, `outputDirectory`는 절대 경로. 틀리면 400 `INVALID_PROFILE`·`MISSING_REVISION`·`INVALID_DIRECTORY` |
 | `POST /api/g2b/generate` | `{ requestId, profileId, sourceKind, items }`: `requestId` 1~200자, `sourceKind`는 `"screen"` 또는 `"db"`, `items`는 `Item` 1~100개 | `{ requestId, status, results: Result[], summary: { succeeded, needsInput, failed } }` | 형식이 틀리면 400 `INVALID_REQUEST`·`INVALID_ITEMS`. 같은 `requestId`에 다른 본문은 409 `REQUEST_CONFLICT`. 같은 요청을 다시 보내면 기록한 생성 계획으로 같은 결과를 돌려준다 |
 | `Item` | `{ fields, userValues, children, source?, identity?, stage? }` | — | `fields`·`userValues`는 열 이름 → 스칼라(글·수·불리언·null). 둘을 합쳐 한 행으로 쓰고 이름이 겹치면 `FIELD_COLLISION`. `children`은 `{ key, label, kind: items·qualification·other, rows }`이고 `rows`가 비어 있지 않으면 `UNSUPPORTED_CHILDREN` |
@@ -1715,7 +1741,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | 값·선택 문제(needs-input) | — | `MISSING_PROFILE`·`MISSING_REVISION`·`INVALID_CHILDREN`·`UNSUPPORTED_CHILDREN`·`INVALID_FIELDS`·`FIELD_COLLISION`·`MISSING_FIELDS`·`MONEY_PRECISION`·`MISSING_CONDITION_FIELDS`·`BLOCK_SELECTION`·`GENERATION_INPUT` | 확정 Field의 열이 없거나 null이면 `MISSING_FIELDS`(빈 글은 값). 금액은 정수 원만(`금`·`원`·`원정`·쉼표·`₩`는 떼고 읽음). 블록은 저장한 선택이 먼저, 없으면 조건·우선순위(동률·없음은 `BLOCK_SELECTION`) |
 | 출력 문제(error) | — | `OUTPUT_ERROR` | 출력은 프로필 폴더의 `g2b-<requestId의 sha256>-<순번>.hwpx`. 같은 이름의 다른 파일은 덮어쓰지 않는다 |
 
-**제거 예정(#133)**: 아래 펼침 규칙(`QUICK_HELPER_VERSION`·`QUICK_FIELD_COLLISION` 포함)은 2판 내보내기 파일(위) 읽기로 바뀐다. **Helper JSON을 `/quick`에서 라벨–값으로 펼치는 규칙**(2026-10-07, #126, 구현: `apps/studio-lite/src/quick.ts`의 `parseQuickData`): Helper가 내보낸 파일(`document-input.json`)은 `{ format: "g2b-helper-document", version: 1, source }`이다(Helper 저장소의 내보내기 함수, 읽기만 해서 확인). `version`이 1이 아니면 `QUICK_HELPER_VERSION`으로 거절한다. `source`가 배열이면 Helper DB 레코드(`{ fields, userValues, children, … }`)마다 한 건, 객체이면 화면 추출본(`{ pointInfo, tables }`, 여러 frame이면 `{ frames: [{ pointInfo, tables }, …] }`)이고 frame·표·행 순서대로 **표의 행마다 한 건**이다. 행은 그대로 라벨(열 이름)–값이고 `pointInfo`(화면 위치)는 쓰지 않는다. 생성 요청 꼴(`requestId` 글 + `items` 배열, 위 1판 `Item`)도 받아 항목마다 한 건이다. `fields`·`userValues`가 있는 항목은 1판 다리와 같이 `{ ...fields, ...userValues }`로 합치고, 두 객체에 같은 이름이 있으면 그 건만 `QUICK_FIELD_COLLISION`, `fields`가 객체가 아니거나 행이 객체가 아니면 그 건만 `DATA_SCHEMA`로 실패한다. `children`은 쓰지 않는다. 열 이름은 바꾸지 않으므로 `/quick`에서는 문서의 `{{키}}`·누름틀 이름·메일머지 키가 열 이름과 같아야 채운다(공백·괄호가 든 열 이름은 `/quick`의 키 규칙 밖이다). 알아보지 못한 JSON은 전처럼 객체·배열·묶음 형식으로 읽는다.
+**제거됨(#133)**: PR #143(#126)이 `/quick`에 더한 옛 두 꼴 읽기(`format: "g2b-helper-document"` v1의 표 행·DB 레코드 펼치기와 1판 생성 요청 `{ requestId, items: [{ fields, userValues }] }`, 코드 `QUICK_HELPER_VERSION`·`QUICK_FIELD_COLLISION`)는 없앴다. `/quick`은 위 내보내기 파일만 알아본다: `format: "studio-generate"`이고 `version`이 2가 아니거나 `items`가 배열이 아니면 `QUICK_BAD_DATA`, 항목의 `values`마다 한 건(라벨–값 그대로, 키를 바꾸지 않음), `values`가 객체가 아닌 항목은 그 건만 `DATA_SCHEMA`. `allowEmpty`·`selections`·`types`·`columns`는 `/quick`이 쓰지 않는다(⑦에서 같은 창구로). 옛 꼴 파일은 알아보지 않고 전처럼 객체 하나(한 건)로 읽는다. 그 밖의 JSON은 전처럼 객체·배열·묶음 형식이다.
 
 #### 8.8.15 공개 API
 

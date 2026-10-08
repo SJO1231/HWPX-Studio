@@ -20,8 +20,6 @@ const TABLE: Readonly<Record<string, string>> = {
   QUICK_MULTILINE: "값에 줄바꿈·탭이 있어 문단을 나누지 않고 같은 문단 안의 줄바꿈·탭으로 넣었습니다.",
   QUICK_LEFTOVER: "채우지 못한 {{…}} 자리가 결과에 남아 이 건을 만들지 않았습니다. 아래 키를 데이터·서식에서 고치거나, 그대로 두려면 '값이 없을 때'를 '원래 글 유지'로 바꿔 주세요.",
   QUICK_LEFTOVER_KEPT: "채우지 못한 {{…}} 자리가 결과에 그대로 남아 있습니다. 결과를 쓰기 전에 그 자리를 확인해 주세요.",
-  QUICK_FIELD_COLLISION: "Helper 항목의 원천 값과 사용자 입력에 같은 이름이 있어 이 건을 만들지 않았습니다. Helper에서 이름을 구분해 다시 내보내 주세요.",
-  QUICK_HELPER_VERSION: "이 프로그램이 아직 읽지 못하는 Helper 내보내기 판입니다. Helper가 내보낸 version 1 파일을 올려 주세요.",
   QUICK_GENERATE_FAILED: "문서를 만들지 못했습니다.",
   QUICK_RESULT_NOT_FOUND: "그 결과가 없습니다(실패한 건은 파일이 없습니다).",
   QUICK_NO_FOLDER: "저장된 결과 폴더가 없습니다. 먼저 [생성]을 눌러 주세요.",
@@ -29,6 +27,23 @@ const TABLE: Readonly<Record<string, string>> = {
   QUICK_WORKSPACE_FOREIGN: "작업 공간 폴더가 이미 다른 파일들로 차 있어 결과를 저장하지 않았습니다. 빈 폴더나 이 프로그램의 작업 공간을 지정해 주세요.",
   QUICK_OPEN_FAILED: "탐색기를 열지 못했습니다.",
   QUICK_OPEN_UNSUPPORTED: "이 컴퓨터에서는 폴더 열기를 지원하지 않습니다(Windows만 됩니다).",
+
+  // ── Helper 생성 창구 2판(/api/g2b, 엔진 명세 8.8.14) ─────────────
+  INVALID_REQUEST: "요청 형식이 약속한 꼴과 다릅니다. 설명을 보고 요청을 고쳐 다시 보내 주세요.",
+  REQUEST_CONFLICT: "이 요청 번호는 다른 내용으로 이미 쓰였습니다. 새 요청 번호로 보내 주세요.",
+  UNKNOWN_PROFILE: "그런 생성 프로필이 없습니다. Studio에서 만든 프로필을 골라 주세요.",
+  MISSING_FIELDS: "서식에 넣을 값이 비어 있어 이 건을 만들지 않았습니다. 값을 채우거나, 비워 둬도 되는 열이면 allowEmpty에 넣어 새 요청 번호로 보내 주세요.",
+  INVALID_FIELDS: "열의 타입으로 읽을 수 없는 값이 있어 이 건을 만들지 않았습니다. 값을 고쳐 새 요청 번호로 보내 주세요.",
+  UNDECIDED: "서식의 분기에서 넣을 내용을 정하지 못해 이 건을 만들지 않았습니다. 후보 가운데 하나를 selections로 골라 새 요청 번호로 보내 주세요.",
+  PROFILE_MAPPING_CONFLICT: "서식에 저장한 열 연결이 겹쳐(같은 값에 이은 열 둘 이상에 값이 있음) 이 건을 만들지 않았습니다. Studio에서 서식의 열 연결을 고쳐 주세요.",
+  TEMPLATE_RECHECK: "서식을 다시 확인해야 해서 이 건을 만들지 않았습니다. Studio에서 서식을 확인해 프로필을 새 판으로 고친 뒤 새 요청 번호로 보내 주세요.",
+  PROFILE_INVALID: "생성 프로필을 쓸 수 없습니다(서식 판이나 출력 폴더가 없음). Studio에서 프로필을 다시 저장해 주세요.",
+  GENERATION_FAILED: "문서를 만들지 못했습니다. Studio에서 원본 문서와 서식을 확인해 주세요.",
+  OUTPUT_ERROR: "만든 문서를 출력 폴더에 저장하지 못했습니다. 기존 파일은 덮어쓰지 않았습니다. 폴더와 같은 이름의 파일을 확인해 주세요.",
+  UNKNOWN_FIELD: "요청에 이 프로그램이 모르는 항목이 있어 무시했습니다.",
+  TYPE_MISMATCH: "요청의 열 타입이 서식에 정한 타입과 달라 서식 타입으로 읽었습니다.",
+  ALLOW_EMPTY_UNUSED: "allowEmpty에 적은 열을 서식이 쓰지 않아 무시했습니다.",
+  SELECTION_UNKNOWN_SLOT: "selections에 적은 분기 이름이 서식에 없어 무시했습니다.",
 
   // ── 앵커(채울 자리 지정) ─────────────────────────────────────────
   ANCHOR_AMBIGUOUS: "문서에서 같은 모양의 자리가 여러 곳이라 어느 곳인지 정할 수 없었습니다.",

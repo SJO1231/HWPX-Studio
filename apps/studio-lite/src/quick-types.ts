@@ -55,10 +55,9 @@ export type TemplateResponse = {
 
 /**
  * `object` 객체 하나, `array` 객체 배열, `bundle` 묶음 형식(`data`가 객체), `bundleArray` 묶음 형식(`data`가 배열),
- * `helperExport` G2B Helper 내보내기(`document-input.json`, `format: "g2b-helper-document"`, `version: 1`),
- * `helperRequest` Helper 생성 요청 꼴(`{ requestId, items: [{ fields, userValues }] }`). 두 Helper 꼴은 건마다 평평한 라벨–값으로 펼친다(엔진 명세 8.8.14)
+ * `helperExport` G2B Helper 내보내기 파일(생성 요청 2판과 같은 꼴 `{ format: "studio-generate", version: 2, items }`. 항목의 `values`마다 한 건, 엔진 명세 8.8.14)
  */
-export type DataForm = "object" | "array" | "bundle" | "bundleArray" | "helperExport" | "helperRequest";
+export type DataForm = "object" | "array" | "bundle" | "bundleArray" | "helperExport";
 
 export type DataKey = {
   /** 점으로 이은 경로(`applicant.name`) */
