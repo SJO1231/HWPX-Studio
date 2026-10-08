@@ -337,7 +337,8 @@ test("값: rejected·DATA_MISSING 값을 쓰는 자리는 그 코드로 실패, 
     edit(record);
     return generateFromTemplate(k.bytes, t, record, caseOf(t, record, { selections: { s2: manual(t, "s2", "b3") } }), load);
   };
-  assert.deepEqual(failCodes(run((row) => (row["예정가격"] = "1,234"))), ["DATA_FORMAT"]);
+  // "1,234"는 #131부터 금액으로 읽힌다. 읽지 못하는 글로 거절을 본다
+  assert.deepEqual(failCodes(run((row) => (row["예정가격"] = "1,234달러"))), ["DATA_FORMAT"]);
   assert.deepEqual(failCodes(run((row) => (row["부가세"] = { 값: 1 }))), ["DATA_NOT_SCALAR"]);
   assert.deepEqual(failCodes(run((row) => (row["장소"] = "제어\u0001문자"))), ["VALUE_CONTROL_CHAR"]);
   assert.deepEqual(failCodes(run((row) => delete row["장소"])), ["DATA_MISSING"]);

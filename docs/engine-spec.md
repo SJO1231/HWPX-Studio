@@ -1165,7 +1165,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | `source` | 원본 문서 `{ kind: "hwpx" 또는 "md", sha256 }` | 필수 | 파일 이름·경로는 저장하지 않는다. 생성 때 대조한다(8.8.12) |
 | `anchors[]` | 위치 기준. 1판 5종 + `range`(7.10) + `mergeField`(#18) + `headingRange`(#19 구현, 7.10) | 필수(빈 배열 가능) | `cell`·`object`에 선택 `print`, 모든 앵커에 선택 `pattern`(패턴 id) |
 | `patterns[]` | 같은 유형 항목을 일괄 제안하는 패턴(7.10) | 선택 | |
-| `values[]` | 값 `{ id, name, format: "text" 또는 "money" }` | 필수 | 값 하나를 자리 여럿과 조건이 함께 쓴다. `money`는 조건에서 숫자, 출력은 `1,234원`(8.8.4) |
+| `values[]` | 값 `{ id, name, format, display? }`. `format`은 타입 7종(`text`·`number`·`money`·`percent`·`date`·`datetime`·`boolean`), `display`는 표시 설정 | 필수 | 값 하나를 자리 여럿과 조건이 함께 쓴다. 읽기·표시·조건 값은 8.8.4(#131) |
 | `bindings[]` | JSON 연결 `{ value, key 또는 path, aliases? }` | 쓰이는 값마다 정확히 하나 | `key`는 열 이름 그대로(공백·점 허용), `path`는 중첩 경로. 별칭 둘 이상에 값이 있으면 `DATA_ALIAS_CONFLICT`(8.8.4) |
 | `places[]` | 값 자리(8.8.5) | 필수 | 후보 자리는 승인 전에는 넣지 않는다 |
 | `slots[]` | 앵커 + `{ id, name, anchors[≥1], parent: null 또는 블록 id }` | 필수 | 앵커가 여럿이면 같은 선택을 여러 곳에 적용한다. `parent`는 중첩 예약(8.8.6) |
@@ -1253,7 +1253,34 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 
 소유: 엔진 = Claude.
 
-- 값 `{ id, name, format }`: `text`는 8.2의 값 변환을 따른다(문자열은 그대로, 숫자·불리언은 글, 객체·배열은 `DATA_NOT_SCALAR`). `money`는 정수로 읽히는 값(숫자, 또는 앞뒤 공백 없는 10진 정수 글. 음수 허용)만 받는다. 조건에서는 숫자이고 출력은 천 단위 쉼표와 `원`이다(`1234` → `1,234원`, `-1234` → `-1,234원`). 정수로 읽히지 않으면 `DATA_FORMAT`이다. 허용 범위는 안전 정수(±2⁵³−1)다. `"+5"`·빈 글·`"1,234"`·소수는 `DATA_FORMAT`, `"007"`은 7, `-0`은 0이다(#29 구현 확정).
+- 값 `{ id, name, format, display? }`: `format`은 타입 7종 `text|number|money|percent|date|datetime|boolean`이고 `display`는 표시 설정(아래 둘째 표)이다. 읽기·표시 규칙은 사용자 결정(2026-10-09, #131)이다. **[구현 #131]**(`src/template/value-format.ts`, 2026-10-09. 검증은 [검증 기준](validation.md) 41절). 입력은 데이터의 원래 값(글·수·참거짓)이고 객체·배열은 `DATA_NOT_SCALAR`다.
+
+| 타입 | 받는 입력 | 정규 꼴(`normalized`) | 기본 표시 | 거절(`DATA_FORMAT`) 예 |
+| --- | --- | --- | --- | --- |
+| `text` | 글은 그대로, 수·참거짓은 글(8.2의 값 변환) | 없음 | 원문 그대로(앞자리 0·전화·식별번호 꼴 보존) | 없음(제어 문자는 `VALUE_CONTROL_CHAR`) |
+| `number` | 십진수 글(앞뒤 공백 무시, 천 단위 쉼표, 음수 `-`) 또는 JSON 수 | 십진 글(쉼표 없음, 앞자리 0을 뗌, 소수 자릿수 그대로) | `1,234.50` | `1,23`·`+5`·`1e3`·`.5`·`5.`·전각 숫자·단위가 붙은 글 |
+| `money` | number와 같되 앞의 `금`, 끝의 `원`·`원정`, `₩`·전각 `￦`, 모든 공백을 떼고 음수는 `-` 또는 `△`(`₩` 앞뒤 어디든) | number와 같다 | `-1,234원` | `1,234달러`·`△-1`·`원`만·`+1,234` |
+| `percent` | 십진수 또는 끝에 `%`를 붙인 십진수(`%` 앞 공백 허용). 12.5%는 12.5 | number와 같다 | `12.5%` | `%12`·`12%%`·`12‰`·`12 퍼센트` |
+| `date` | `YYYYMMDD`·`YYYY-MM-DD`·`YYYY/MM/DD`·`YYYY.MM.DD`(구분자 앞뒤 공백 허용, 월·일 1~2자리, 점 꼴은 끝 점 허용). 달력 검사(윤년 포함) | `YYYY-MM-DD` | `YYYY. MM. DD.` | 2월 30일·평년 2월 29일·13월·0일·연도 0·섞인 구분자·`2026년 10월 9일` |
+| `datetime` | date 꼴 + 공백 또는 `T` + `HH:MM` 또는 `HH:MM:SS`(시 1~2자리 0~23, 분·초 2자리 0~59) | `YYYY-MM-DDTHH:MM:SS` | `YYYY. MM. DD. HH:mm`(입력에 초가 있으면 `:ss`를 더함) | 시각 없음·`24:00`·초 60·시간대(`Z`·`+09:00`)·소수 초 |
+| `boolean` | 참거짓, `true`/`false`·`Y`/`N`(대소문자 무시)·`예`/`아니오`·`아니요`(앞뒤 공백 무시) | `true`·`false` | `예`·`아니오` | `1`·`0`(수·글 모두)·`yes`·`네` |
+
+- 수(number·money·percent)는 십진 글 그대로 다룬다. 표시 글은 정규 꼴에서 만들고 JavaScript 수를 거치지 않는다(`"9007199254740993"` → `9,007,199,254,740,993`, `"1234.50"` → `1,234.50`). 크기 제한이 없다. JSON 수는 기본 글 꼴이 십진 꼴일 때만 읽는다(`1e21` 이상처럼 지수 꼴이면 `DATA_FORMAT`). 천 단위 쉼표는 세 자리씩 바르게 묶은 것만 받는다(`1,23`은 오타로 보고 거절). `-0`·`-0.00`은 부호를 뗀다. 앞자리 0은 `text`에서만 남는다(`"007"`은 number·money에서 7).
+- 빈 값: `null`·없음은 누락이다(아래 누락 정책). 빈 글은 모든 타입에서 빈 값(state `empty`, `text` 빈 글)이고, text 밖 타입은 공백뿐인 글도 빈 값이다. 빈 값은 형식 오류가 아니다.
+- 읽지 못하면 `DATA_FORMAT`이다. 메시지에 값 이름, 읽으려던 타입(예: `금액(money)`), 받는 꼴을 적고 값 원문은 넣지 않는다. 1판 다리의 `MONEY_PRECISION`은 2판에서 폐지(#133, 8.8.10)다.
+
+| `display` 키 | 쓰는 타입 | 값 | 기본 |
+| --- | --- | --- | --- |
+| `grouping` | number·money·percent | true·false | true(정수 부분 천 단위 쉼표) |
+| `negative` | number·money·percent | `"-"`·`"△"` | `"-"` |
+| `unit` | money·percent | 글 0~10자(제어 문자·탭·줄바꿈 없음). 빈 글이면 단위를 붙이지 않는다 | money `원`, percent `%` |
+| `pattern` | date·datetime | 글 1~40자. `YYYY`·`MM`·`M`·`DD`·`D`·`HH`·`H`·`mm`·`ss`를 바꾸고 그 밖의 글자는 그대로다. date에는 시각 자리 표시(`HH`·`H`·`mm`·`ss`)를 쓸 수 없다 | 위 표의 기본 표시 |
+| `yes`·`no` | boolean | 글 0~40자(제어 문자·탭·줄바꿈 없음) | `예`·`아니오` |
+
+- `display`는 선택이고 없는 키는 기본이다. 타입에 없는 키, text의 `display`, 틀린 값은 `TPL_FIELD`다(8.8.10). 표시 설정은 정규 꼴·조건 값을 바꾸지 않는다.
+- 자리 바로 뒤 단위: money·percent 값의 글은 단위로 끝난다. 생성(8.8.12)은 자리마다 바로 뒤 글(스페이스·탭·NBSP·전각 공백을 건너뜀)이 그 단위로 시작하면 단위를 뗀 글을 넣는다(`금 {{금액}}원정` → `금 1,234원정`, `{{율}} %` → `12.5 %`). 바로 뒤 글은 `{{ }}`·`word` 자리는 같은 문단의 자리 뒤 글, 누름틀·메일머지는 끝 표식 뒤 글이다. `line`·`cell` 자리는 문단·칸 전체를 바꾸므로 뒤 글이 없어 단위를 붙인다. 앞의 `₩`·`금`이나 전각 `％`는 보지 않는다.
+- 조건(8.8.8)은 꾸미기 전 값으로 비교한다: number·money·percent는 수(정규 꼴을 JavaScript 수로 바꾼 것. 아주 큰 수·긴 소수는 근삿값), date·datetime은 정규 꼴 글(글자 순서가 시간 순서), boolean은 참거짓, text는 글, 빈 값은 빈 글이다.
+- #29 판과의 차이: `money`가 `"1,234"`·`"1,234원"`·소수·안전 정수 밖의 수를 받는다(의도한 확장). 정수 입력의 출력 꼴(`1,234원`·`-1,234원`)은 같다. 빈 글 `money`는 `DATA_FORMAT`이 아니라 빈 값이다.
 - 값 형식 7종 예약(2026-10-09 확정, #131): 지금 형식은 `text`·`money` 둘뿐이다. #131에서 `/api/g2b` 2판의 타입 7종(`text`·`number`·`money`·`percent`·`date`·`datetime`·`boolean`)으로 넓히고, 읽기·표시 규칙은 8.8.14의 타입 표를 따른다(`money`는 쉼표·`원`·`₩` 허용, 십진 문자열 유지, 표시 기본 `-1,234`, 서식에 "원"이 있으면 숫자만. 표시 기본값은 서식 설정으로 덮는다). 구현 전까지는 위 `money` 규칙이 유효하다.
 - 연결 `{ value, key 또는 path, aliases? }`: 값에 데이터 한 칸을 잇는다. 쓰이는 값(자리·조건·블록 글이 가리키는 값)마다 정확히 하나가 있어야 하고, 없으면 `TPL_UNBOUND_VALUE`, 둘 이상이면 `TPL_FIELD`다. 쓰이지 않는 값은 연결이 없어도 된다. `bindings[]`가 없으면 빈 목록으로 읽는다.
   - `key`: 데이터 행(JSON 객체)의 최상위 열 이름 그대로다. 공백·점·괄호가 있어도 된다(점은 경로 구분이 아니다). 엑셀 머리글을 그대로 쓰기 위한 것이다.
@@ -1261,9 +1288,9 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
   - `aliases`: 같은 값의 다른 열 이름(머리글 차이). `key`와 같은 순위로 찾는다.
   - 행에서 `key`와 별칭 가운데 둘 이상에 값(null·없음이 아님. 빈 글은 값이다)이 있으면 `DATA_ALIAS_CONFLICT`다. 하나만 있으면 그것을 쓰고, 없으면 `missing`이다.
   - 한 키(별칭 포함)를 두 값에 연결하면 `TPL_KEY_CONFLICT`다.
-- `bindValues(t, record, case, opts)`는 값 표를 돌려준다. 값마다 `{ id, name, format, state, text?, number?, source, issue? }`이고 `state`는 `bound`(행에서 찾음)·`edited`(`valueEdits`가 이김)·`missing`(값 없음)·`empty`(빈 글)·`rejected`(형식·제어 문자 오류)다(8.8.15). 순서: ① 연결로 행에서 찾는다(`source`는 어디서 왔는지: 열 이름·별칭·경로·수정·없음). ② `case.valueEdits[값 id]`가 있으면 그것이 이긴다(원본 행은 바꾸지 않는다. state `edited`). ③ 형식을 적용한다(`money`는 `number`와 `1,234원` 꼴 `text`). ④ 글에 XML 금지 제어 문자가 있으면 `VALUE_CONTROL_CHAR`(8.2). 값 오류(`DATA_FORMAT`·`DATA_NOT_SCALAR`·`DATA_ALIAS_CONFLICT`·`VALUE_CONTROL_CHAR`)는 던지지 않고 `rejected`와 `issue { code, message }`로 남긴다(그 값을 쓰는 자리·조건이 있을 때만 막힌다. 값 원문은 담지 않는다). 값이 없으면 누락 정책과 무관하게 state `missing`이다.
+- `bindValues(t, record, case, opts)`는 값 표를 돌려준다. 값마다 `{ id, name, format, state, text?, normalized?, number?, source, issue? }`이고 `state`는 `bound`(행에서 찾음)·`edited`(`valueEdits`가 이김)·`missing`(값 없음)·`empty`(빈 값)·`rejected`(형식·제어 문자 오류)다(8.8.15). 순서: ① 연결로 행에서 찾는다(`source`는 어디서 왔는지: 열 이름·별칭·경로·수정·없음). ② `case.valueEdits[값 id]`가 있으면 그것이 이긴다(원본 행은 바꾸지 않는다. state `edited`). ③ 형식을 적용한다(위 표. 표시 글 `text`, text 밖 타입의 정규 꼴 `normalized`, number·money·percent의 조건용 수 `number`). ④ 글에 XML 금지 제어 문자가 있으면 `VALUE_CONTROL_CHAR`(8.2). 값 오류(`DATA_FORMAT`·`DATA_NOT_SCALAR`·`DATA_ALIAS_CONFLICT`·`VALUE_CONTROL_CHAR`)는 던지지 않고 `rejected`와 `issue { code, message }`로 남긴다(그 값을 쓰는 자리·조건이 있을 때만 막힌다. 값 원문은 담지 않는다). 값이 없으면 누락 정책과 무관하게 state `missing`이다.
 - 누락 정책 `opts.missing`은 그 값을 쓰는 자리를 채울 때만 적용한다. `error`면 `missing` 값의 `issue`가 `DATA_MISSING`(채움 중단), `empty`면 `text`가 빈 글, `keep`이면 `text`가 없어 자리를 그대로 둔다. 조건에서의 누락은 8.8.8이 다룬다.
-- 같은 값을 여러 자리가 쓴다. 한 값은 어디서나 같은 글이다.
+- 같은 값을 여러 자리가 쓴다. 한 값은 어디서나 같은 글이다(money·percent의 단위만 자리 바로 뒤 글에 따라 뗀다).
 - 연결은 템플릿 안의 별도 절(`bindings[]`)에 둔다. 데이터 머리글이 달라지면 별칭을 더해 새 템플릿 판으로 저장한다.
 
 #### 8.8.5 자리 종류와 적용 범위
@@ -1351,7 +1378,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 
 1. `slot.parent`가 null이 아니고 그 블록이 선택되지 않았으면 `inactive`(예약).
 2. `case.selections[슬롯]`이 있으면: 그 블록이 템플릿에 없거나 저장한 `content` 해시가 블록의 현재 내용 해시와 다르면 `recheck`(`reason`: `blockMissing`·`contentChanged`. 상위 선택 변경은 `parentChanged`). 아니면 `basis`가 `manual`이면 `manual`, `confirmed`이면 `confirmed`다. 조건 결과가 다르면 `differs: true`로 표시만 한다.
-3. 저장 선택이 없으면 계산한다. 조건은 8.2의 `evaluateCondition`을 재사용하고, 데이터는 값 표에서 만든 객체 `{ <값 id>: 값 }`다(`money`는 숫자, 그 밖은 글, `missing`은 키 없음. `derived` 없음).
+3. 저장 선택이 없으면 계산한다. 조건은 8.2의 `evaluateCondition`을 재사용하고, 데이터는 값 표에서 만든 객체 `{ <값 id>: 값 }`다(꾸미기 전 값: number·money·percent는 수, date·datetime은 정규 꼴 글, boolean은 참거짓, text는 글, 빈 값은 빈 글(8.8.4). `missing`은 키 없음. `derived` 없음).
    - 블록의 `when`이 참조하는 값이 `missing`이면 판정할 수 없어 슬롯은 `undecided`다(`reason: valueMissing`). 단, 그 값에 `exists`·`empty`만 쓴 참조는 제외한다(값이 없는 것이 정상 입력이다).
    - 조건 있는 블록 가운데 참인 것이 있으면 최고 `priority` 하나가 `default`다. 최고 우선순위가 동률이면 `undecided`(`reason: tie`).
    - 참인 조건 블록이 없으면 조건 없는 블록이 하나일 때 `fallback`이다. 둘 이상이면 `undecided`(`reason: tie`), 없으면 `undecided`(`reason: noCandidate`).
@@ -1409,6 +1436,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | `schema`가 없다, 이름이 다르다 | `TPL_SCHEMA` |
 | 지원하지 않는 번호: `template@3`·`@0`, `case@2`, `block-proto@2` | `TPL_VERSION` |
 | 모르는 키, 빠진 필수 필드, 틀린 형식 | `TPL_FIELD`(앵커 안은 `TPL_ANCHOR`, `options` 안은 `TPL_OPTIONS`, `rules` 안은 `TPL_RULE`) |
+| 값의 `format`이 타입 7종이 아니다, `display`가 타입에 없는 키·틀린 값·길이 초과·제어 문자를 가졌거나 `text`에 있다, date의 `pattern`에 시각 자리 표시가 있다(8.8.4, #131) | `TPL_FIELD` |
 | id 형식 오류, id 중복(종류 안·종류 사이) | `TPL_ID` |
 | 표시 이름 중복(값끼리·슬롯끼리) | `TPL_NAME_DUP` |
 | 쓰임에 맞지 않는 앵커 종류·필드(예: `word` 자리가 `clickHere` 앵커를 가리킴, 슬롯 앵커가 `cell`, md에 `mailMerge`) | `TPL_ANCHOR` |
@@ -1423,6 +1451,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | 원형 핀의 내용이 블록 내용과 다르다 | `TPL_PROTO_MISMATCH` |
 | 원형의 `source`·`history`(8.8.17) 형식: 시각이 ISO 8601 UTC가 아니거나 달력에 없는 날짜·시각(2월 30일·4월 31일·평년 2월 29일·24:00 등), 지문의 문단 수가 구간과 다름, 판 기록이 비었거나 판 번호가 오름차순이 아니거나 마지막 줄이 원형의 판이 아님 | `TPL_FIELD` |
 
+- 1판 다리(`/api/g2b`, 8.8.14)의 창구 코드 `MONEY_PRECISION`은 2판에서 **폐지(#133)**한다. 2판은 금액을 십진 글로 읽어 정밀도 제한이 없고, 읽지 못하는 금액은 `DATA_FORMAT`(8.8.4)이다. 엔진에는 이 코드가 없고, lite 1판 다리(`apps/studio-lite/src/g2b.ts`)의 코드는 #133에서 2판으로 옮길 때 정리한다.
 - `/api/g2b` 2판 생성 창구의 코드(8.8.14, 확정 2026-10-09)는 읽기 검사가 내지 않고 창구 응답의 `code`로 낸다. 등재와 폐지:
 
 | 코드 | 단위 | 상태 |
@@ -1477,7 +1506,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | `clickHere`·`mailMerge` 자리 | — | 조립본에서 이름·키(NFC 비교)로 다시 열거한다(조각 때문에 순번이 바뀐다). `occurrence`는 이동표로 옮겨 찾고, 원본에 그 순번이 없으면 `ANCHOR_NOT_FOUND`, 그 필드가 교체 범위에 덮였으면 `dropped`(`PLACE_COVERED`) |
 | `placeholder` 자리 | — | 조립본의 `{{ 키 }}`마다 `word` 앵커를 만들고 `fill { text }` |
 | 등록되지 않은 `{{ }}` | — | `unregistered: error`이면 `PLACE_UNREGISTERED`, 출력 없음. `keep`이면 경고를 남기고 그대로 둔다 |
-| 값 | 생성 전에 `bindValues`로 글 확정(형식·누락 정책·제어 문자·`valueEdits`) | 규칙은 `{text}`만 쓰고, 데이터 묶음은 비우고 `missing: "keep"`. 값의 `issue`(`DATA_MISSING`·`DATA_FORMAT`·`DATA_NOT_SCALAR`·`DATA_ALIAS_CONFLICT`·`VALUE_CONTROL_CHAR`)는 그 값을 쓰는 자리가 2단계 대상으로 1곳 이상 있을 때만 그 코드로 막는다(덮인 자리·고르지 않은 `where` 블록의 자리는 막지 않는다) |
+| 값 | 생성 전에 `bindValues`로 글 확정(형식·누락 정책·제어 문자·`valueEdits`) | 규칙은 `{text}`만 쓰고(money·percent는 자리 바로 뒤 글이 단위로 시작하면 단위를 뗀 글, 8.8.4), 데이터 묶음은 비우고 `missing: "keep"`. 값의 `issue`(`DATA_MISSING`·`DATA_FORMAT`·`DATA_NOT_SCALAR`·`DATA_ALIAS_CONFLICT`·`VALUE_CONTROL_CHAR`)는 그 값을 쓰는 자리가 2단계 대상으로 1곳 이상 있을 때만 그 코드로 막는다(덮인 자리·고르지 않은 `where` 블록의 자리는 막지 않는다) |
 | 판정 | 단계마다 `generate` 게이트(`allowNothingApplied`). `opts.mode`(`repair` 포함)는 처음 실행하는 단계에만 넘기고(슬롯이 없으면 2단계가 처음) 그 다음 단계는 baseline 또는 strict | 암묵 채움이 아닌 건너뜀이 어느 단계든 1건이라도 있으면 실패(`FILL_SKIPPED`). 후처리 뒤 원본 대비 누적 기준선 비교(`GATE_NEW_ERRORS`·`GATE_ERRORS`) |
 
 - 1단계와 2단계는 8.3의 `generate`를 그대로 재사용한다. 2단계는 1단계 결과를 다시 파싱한 조립본에서 자리를 찾는다. 1단계에서 `inject`·`insertText`가 쓰는 조각 안의 `{{}}`는 비운 데이터 묶음 때문에 채워지지 않고(`missing: "keep"`), 2단계가 채운다.
@@ -1698,6 +1727,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | `readStudioTemplate`, `readCase`, `readBlockProto` | `src/template/` | 읽기와 검사: 판 번호·id·참조·순환·원형 핀(8.8.10) |
 | `writeStudioTemplate`, `writeCase`, `writeBlockProto` | `src/template/` | 정규 JSON 문자열(8.8.2). 해시와 저장의 기준 |
 | `bindValues(t, record, case, opts)` | `src/template/` | 연결·별칭·형식·`valueEdits` → 값 표(상태 포함) |
+| `readTypedValue(format, raw, display?)`, `valueUnit(format, display?)`, `placeText(text, unit, after)`, `VALUE_FORMATS` | `src/template/value-format.ts` | 8.8.4(#131). 원래 값 하나를 타입 규칙으로 읽어 표시 글·정규 꼴·조건용 수(실패면 `DATA_FORMAT`·`DATA_NOT_SCALAR`와 사유), 값의 단위, 자리 바로 뒤 글에 따른 넣을 글. 형식과 무관한 순수 함수 |
 | `selectSlots(t, values, case)` | `src/template/` | 8.8.8의 상태 판정. `evaluateCondition` 재사용 |
 | `generateFromTemplate(bytes, t, record, case, loadBlob, opts)` | `src/fill/` | 8.8.12의 2단계 생성·게이트·원장. md는 텍스트 어댑터 |
 | `range` 앵커와 `makeRangeAnchor`, 액션의 range 수용, 보고서의 `moves` | `src/fill/` | 7.10. 내부에서 이동표 변환과 느슨한 `{{ }}` 찾기 |
@@ -1713,11 +1743,14 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | `buildBlockPreviewDocument(proto, blob, options?)` | `src/fill/block-preview.ts` | 8.8.18. 블록만으로 빈 바탕 문서에 넣은 미리보기 HWPX(저장 게이트 통과분)와 입력 항목 자리·같은 이름 항목 수 |
 | `fieldRangeIn(target, paragraph)`, `fieldAnchorOf(info)` | `src/fill/fields.ts` | 8.3. `collectFields`의 필드 하나가 문단 하나에서 차지하는 표시 글 구간(논리 글 위치, 여러 문단에 걸친 필드는 문단마다)과 그 필드를 가리키는 명시 `field` 앵커 초안(키 있는 메일 머지는 `mergeKey`, 그 밖은 `name`, 순번 포함). 앱이 메일 머지가 맡는 표시 글 안 `{{}}`를 엔진과 같은 구간으로 가린다(#24). 어느 필드가 맡는지(키가 경로 꼴이고 `fieldFillBlock`이 없음, 또는 규칙이 가리킴)는 호출자가 판정한다 |
 
-구현 상태(2026-10-04): `read*`·`write*`·해시 도우미(`templateSha256`·`caseSha256`·`contentSha256`)·`bindValues`·`selectSlots`·`listProtoUsage`·`planProtoUpdate`는 #29, `range`·`moves`·`makeRangeAnchor`는 #30(7.10). `generateFromTemplate`·CLI `--case --blobs`는 #31(`src/fill/generate-studio.ts`. 결과 형 `StudioGenerateResult`·`StudioGenerateReport`·`StudioLedger`는 `src/fill/studio-common.ts`가 정본). `checkAnchors`·`planRelocation`·`redraftAnchor`는 #32(`src/fill/check-anchors.ts`). 블록 저장소 API(`extractBlock`·`reextractBlock`·`planBlockInsert`·`blockFormatDiffs`·`blockFragment`·`planBlockUpdate`·`checkTemplateUpdates`, 원형의 `source`·`history`)와 CLI `block`은 #73(2026-10-06, `src/fill/block-store.ts`. 검증은 [검증 기준](validation.md) 28절). 블록 단독 미리보기(`buildBlockPreviewDocument`)는 #75(2026-10-06, `src/fill/block-preview.ts`. 결과 형은 `src/fill/block-preview-types.ts`. 검증은 30절). `fieldRangeIn`·`fieldAnchorOf` 공개는 #24(2026-10-07, 검증은 34절). 패턴(#20)은 미구현. 정확한 형은 `src/template/studio-types.ts`(와 `src/fill/studio-common.ts`·`src/fill/check-anchors.ts`)가 정본이고 아래는 요지다.
+구현 상태(2026-10-04): `read*`·`write*`·해시 도우미(`templateSha256`·`caseSha256`·`contentSha256`)·`bindValues`·`selectSlots`·`listProtoUsage`·`planProtoUpdate`는 #29, `range`·`moves`·`makeRangeAnchor`는 #30(7.10). `generateFromTemplate`·CLI `--case --blobs`는 #31(`src/fill/generate-studio.ts`. 결과 형 `StudioGenerateResult`·`StudioGenerateReport`·`StudioLedger`는 `src/fill/studio-common.ts`가 정본). `checkAnchors`·`planRelocation`·`redraftAnchor`는 #32(`src/fill/check-anchors.ts`). 블록 저장소 API(`extractBlock`·`reextractBlock`·`planBlockInsert`·`blockFormatDiffs`·`blockFragment`·`planBlockUpdate`·`checkTemplateUpdates`, 원형의 `source`·`history`)와 CLI `block`은 #73(2026-10-06, `src/fill/block-store.ts`. 검증은 [검증 기준](validation.md) 28절). 블록 단독 미리보기(`buildBlockPreviewDocument`)는 #75(2026-10-06, `src/fill/block-preview.ts`. 결과 형은 `src/fill/block-preview-types.ts`. 검증은 30절). `fieldRangeIn`·`fieldAnchorOf` 공개는 #24(2026-10-07, 검증은 34절). 값 타입 7종(`readTypedValue`·`valueUnit`·`placeText`, `values[].display`)은 #131(2026-10-09, `src/template/value-format.ts`. 검증은 41절). 패턴(#20)은 미구현. 정확한 형은 `src/template/studio-types.ts`(와 `src/fill/studio-common.ts`·`src/fill/check-anchors.ts`)가 정본이고 아래는 요지다.
 
 ```ts
 type ValueState = "bound" | "edited" | "missing" | "empty" | "rejected"
-type BoundValue = { id: string; name: string; format: "text" | "money"; state: ValueState; text?: string; number?: number; source: BoundSource; issue?: { code: string; message: string } }
+type ValueFormat = "text" | "number" | "money" | "percent" | "date" | "datetime" | "boolean"
+type ValueDisplay = { grouping?: boolean; negative?: "-" | "△"; unit?: string; pattern?: string; yes?: string; no?: string }
+type BoundValue = { id: string; name: string; format: ValueFormat; state: ValueState; text?: string; normalized?: string; number?: number; source: BoundSource; issue?: { code: string; message: string } }
+type TypedValue = { ok: true; text: string; normalized?: string; number?: number } | { ok: false; code: "DATA_FORMAT" | "DATA_NOT_SCALAR"; reason: string }
 type SelectionState = "manual" | "confirmed" | "default" | "fallback" | "undecided" | "recheck" | "inactive"
 type SelectionReason = "tie" | "noCandidate" | "valueMissing" | "valueRejected" | "needConfirm" | "blockMissing" | "contentChanged" | "parentChanged"
 type SlotSelection = { slot: string; state: SelectionState; block?: string; reason?: SelectionReason; differs?: boolean; candidates?: string[]; blocked?: "SEL_UNDECIDED" | "SEL_RECHECK"; message: string }

@@ -8,6 +8,7 @@ import type {
   Rule,
   WordAnchor,
 } from "./types.ts";
+import type { ValueDisplay, ValueFormat } from "./value-format.ts";
 import { HEADING_FORMS, type CellPrint, type HeadingRangeAnchor, type ObjectPrint, type ParagraphPrint, type RangeAnchor, type RangePrint } from "../fill/anchor-types.ts";
 // 같은 선언을 다시 내보낸다(`fill/index.ts`와 같은 선언이라 겹치지 않는다).
 export type { CellPrint, HeadingRangeAnchor, ObjectPrint, RangeAnchor, RangePrint } from "../fill/anchor-types.ts";
@@ -58,8 +59,9 @@ export type TemplatePattern = {
 
 // ── 값·연결·자리 ────────────────────────────────────────────────
 
-export type ValueFormat = "text" | "money";
-export type ValueDef = { id: string; name: string; format: ValueFormat };
+export type { ValueDisplay, ValueFormat } from "./value-format.ts";
+/** 값: 이름, 타입 7종(8.8.4), 선택 표시 설정(형식마다 쓸 수 있는 키가 정해져 있다. text는 없다) */
+export type ValueDef = { id: string; name: string; format: ValueFormat; display?: ValueDisplay };
 
 /** key(데이터 행의 최상위 열 이름 그대로) 또는 path(중첩 경로) 하나로 값을 데이터에 잇는다. aliases는 key와 같은 순위의 다른 열 이름이다. */
 export type ValueBinding = { value: string; key: string; aliases?: string[] } | { value: string; path: string };
@@ -191,11 +193,15 @@ export type BoundValue = {
   format: ValueFormat;
   state: ValueState;
   /**
-   * 자리에 채울 글(형식 적용 뒤. money는 1,234원 꼴). 값이 missing이고 누락 정책이 empty이면 빈 글이다.
+   * 자리에 채울 글(형식과 표시 설정을 적용한 뒤. money는 기본 1,234원 꼴). 값이 missing이고 누락 정책이 empty이면 빈 글이다.
+   * text 밖 형식의 빈 값(빈 글·공백뿐인 글)도 빈 글이다(state empty).
+   * money·percent는 단위로 끝나고, 자리 바로 뒤 글이 같은 단위로 시작하면 생성이 단위를 뗀다(8.8.4).
    * 소비자는 text가 있으면 채우고, issue가 있으면 막고, 둘 다 없으면(missing + keep) 자리를 그대로 둔다.
    */
   text?: string;
-  /** money의 정수 값(조건에서 숫자로 쓴다) */
+  /** text 밖 형식의 정규 꼴: 수는 십진 글(쉼표·단위 없음, 자릿수 그대로), date는 YYYY-MM-DD, datetime은 YYYY-MM-DDTHH:MM:SS, boolean은 true·false. 빈 값이면 없다 */
+  normalized?: string;
+  /** number·money·percent의 수(조건 비교용. normalized를 JavaScript 수로 바꾼 것이라 아주 큰 수·긴 소수는 근삿값이다. 표시에는 쓰지 않는다) */
   number?: number;
   source: BoundSource;
   /** 이 값으로 자리를 채우면 막히는 사유: rejected의 DATA_*·VALUE_CONTROL_CHAR, 누락 정책이 error인 missing의 DATA_MISSING. 값 원문은 담지 않는다. */

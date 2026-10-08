@@ -32,6 +32,8 @@ import {
   type ValuePlace,
 } from "./studio-types.ts";
 import { contentSha256, templateSha256 } from "./studio-write.ts";
+import { checkValueText } from "./value.ts";
+import { DISPLAY_KEYS, TIME_TOKENS, VALUE_FORMATS, type ValueDisplay, type ValueFormat } from "./value-format.ts";
 import { TEMPLATE_SCHEMA, type Condition, type Rule, type Template } from "./types.ts";
 
 // 2판 템플릿·원형·이번 건 읽기와 검사(엔진 명세 8.8.10). 첫 오류에서 멈추고 HwpxError를 던진다. 아무것도 쓰지 않는다.
@@ -277,8 +279,36 @@ function readPattern(v: unknown, index: number): TemplatePattern {
 function readValue(v: unknown, index: number): ValueDef {
   const where = `values[${index}]`;
   const o = obj(v, where, FIELD);
-  onlyKeys(o, ["id", "name", "format"], where, FIELD);
-  return { id: idOf(o, where), name: str(o, "name", where, FIELD), format: oneOf(o, "format", ["text", "money"] as const, where) };
+  onlyKeys(o, ["id", "name", "format", "display"], where, FIELD);
+  const def: ValueDef = { id: idOf(o, where), name: str(o, "name", where, FIELD), format: oneOf(o, "format", VALUE_FORMATS, where) };
+  if (o["display"] !== undefined) def.display = readDisplay(o["display"], def.format, `${where}.display`);
+  return def;
+}
+
+/** 표시 글(단위·표시 꼴·참거짓 글): 제어 문자·탭·줄바꿈 없음, 길이 한도(코드 포인트) */
+function displayText(o: Obj, key: string, where: string, max: number, nonEmpty: boolean): string {
+  const v = str(o, key, where, FIELD, nonEmpty);
+  if (checkValueText(v, "none") !== undefined) fail(FIELD, `${key}에 제어 문자·탭·줄바꿈을 넣을 수 없습니다.`, where);
+  if (Array.from(v).length > max) fail(FIELD, `${key}는 ${max}자 이하여야 합니다.`, where);
+  return v;
+}
+
+/** 값의 표시 설정(8.8.4): 형식마다 쓸 수 있는 키만, text는 쓸 수 없다. date 꼴에는 시각 자리 표시(HH·H·mm·ss)를 쓸 수 없다 */
+function readDisplay(v: unknown, format: ValueFormat, where: string): ValueDisplay {
+  const o = obj(v, where, FIELD);
+  if (format === "text") fail(FIELD, "text 형식에는 display를 쓸 수 없습니다.", where);
+  onlyKeys(o, DISPLAY_KEYS[format], where, FIELD);
+  const out: ValueDisplay = {};
+  if (o["grouping"] !== undefined) out.grouping = bool(o, "grouping", where);
+  if (o["negative"] !== undefined) out.negative = oneOf(o, "negative", ["-", "△"] as const, where);
+  if (o["unit"] !== undefined) out.unit = displayText(o, "unit", where, 10, false);
+  if (o["pattern"] !== undefined) {
+    out.pattern = displayText(o, "pattern", where, 40, true);
+    if (format === "date" && TIME_TOKENS.test(out.pattern)) fail(FIELD, "date의 pattern에는 시각 자리 표시(HH·H·mm·ss)를 쓸 수 없습니다.", where);
+  }
+  if (o["yes"] !== undefined) out.yes = displayText(o, "yes", where, 40, false);
+  if (o["no"] !== undefined) out.no = displayText(o, "no", where, 40, false);
+  return out;
 }
 
 function readBinding(v: unknown, index: number): ValueBinding {

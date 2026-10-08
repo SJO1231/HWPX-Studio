@@ -74,9 +74,27 @@ function compute(blocks: TemplateBlock[], values: Map<string, BoundValue>, data:
   return { state: "undecided", reason: "noCandidate", candidates: [], message: "참인 조건이 없고 조건 없는 블록도 없어 고를 블록이 없습니다." };
 }
 
+/** 조건에서 쓰는 값(8.8.8의 3): 표시 글이 아니라 꾸미기 전 정규 값이다. 빈 값은 빈 글이다 */
+function conditionValue(v: BoundValue): unknown {
+  switch (v.format) {
+    case "number":
+    case "money":
+    case "percent":
+      return v.number ?? "";
+    case "date":
+    case "datetime":
+      return v.normalized ?? "";
+    case "boolean":
+      return v.normalized === undefined ? "" : v.normalized === "true";
+    default:
+      return v.text ?? "";
+  }
+}
+
 /**
  * 슬롯마다 선택 상태를 판정한다(8.8.8). values는 bindValues의 값 표, c는 이번 건(없으면 저장 선택 없음). 결과는 템플릿 slots 순서다.
- * 조건의 데이터는 값 표에서 만든 { 값 id: 값 }이다(money는 숫자, 그 밖은 글, missing·rejected는 키 없음).
+ * 조건의 데이터는 값 표에서 만든 { 값 id: 값 }이다(꾸미기 전 정규 값: number·money·percent는 수, date·datetime은 정규 꼴 글, boolean은 참거짓,
+ * text는 글, 빈 값은 빈 글, missing·rejected는 키 없음).
  * 막는 상태는 blocked(SEL_UNDECIDED·SEL_RECHECK)로 표시하고 던지지 않는다.
  */
 export function selectSlots(t: StudioTemplate, values: readonly BoundValue[], c: StudioCase | undefined): SlotSelection[] {
@@ -84,7 +102,7 @@ export function selectSlots(t: StudioTemplate, values: readonly BoundValue[], c:
   const data: Record<string, unknown> = {};
   for (const v of values) {
     if (v.state === "missing" || v.state === "rejected") continue;
-    data[v.id] = v.format === "money" ? v.number : (v.text ?? "");
+    data[v.id] = conditionValue(v);
   }
   const blocks = new Map(t.blocks.map((b) => [b.id, b]));
   const slotBlocks = (s: TemplateSlot): TemplateBlock[] => t.blocks.filter((b) => b.slot === s.id);

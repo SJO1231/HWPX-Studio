@@ -71,7 +71,7 @@ test("bindValues: key는 열 이름 그대로(공백·점·괄호), path는 중�
   const t = studio(fixtureText("form.template.json"));
   const row = { "계약 금액(원)": 150000000, "부서(담당)": "총무과", contact: { phone: "02-000-0000" }, "담당자": "홍길동", "업체구분": "중소기업" };
   const v = bindValues(t, row, undefined, { missing: "keep" });
-  assert.deepEqual(byId(v, "v25"), { id: "v25", name: "계약금액", format: "money", state: "bound", source: "key", text: "150,000,000원", number: 150000000 });
+  assert.deepEqual(byId(v, "v25"), { id: "v25", name: "계약금액", format: "money", state: "bound", source: "key", text: "150,000,000원", normalized: "150000000", number: 150000000 });
   assert.deepEqual(byId(v, "v4"), { id: "v4", name: "담당 부서", format: "text", state: "bound", source: "alias", text: "총무과" });
   assert.deepEqual(byId(v, "v6"), { id: "v6", name: "전화", format: "text", state: "bound", source: "path", text: "02-000-0000" });
   assert.equal(byId(v, "v5").text, "홍길동");
@@ -102,7 +102,9 @@ test("bindValues: 별칭 둘 이상에 값이 있으면 DATA_ALIAS_CONFLICT(빈 
   }
 });
 
-test("bindValues: money는 정수만(숫자·10진 정수 글·음수), 출력 1,234원, 범위 초과·형식 오류는 DATA_FORMAT", () => {
+// #131(사용자 결정 2026-10-09)로 money 규칙이 바뀌었다: 금·원·원정·₩·쉼표·공백을 떼고 십진 글로 읽는다(범위 제한 없음, 소수 허용, 빈 글은 빈 값).
+// 아래 ok·bad 표는 #29의 표에서 새 규칙으로 받게 된 입력 9개(" 1234"·"1234 "·"1,234"·"1,234원"·"12.5"·12.5·2^53·-(2^53)·"9007199254740993")를 ok로, ""를 빈 값으로 옮긴 것이다.
+test("bindValues: money는 금·원·원정·₩·쉼표·공백을 떼고 십진 글로 읽는다(자릿수 보존), 출력 1,234원, 읽지 못하면 DATA_FORMAT", () => {
   const t = make({
     schema: "hwpx-studio/template@2", id: "t00000002", version: 1, source: { kind: "hwpx", sha256: SHA }, anchors: [],
     values: [{ id: "m", name: "금액", format: "money" }], bindings: [{ value: "m", key: "금액" }],
@@ -112,6 +114,8 @@ test("bindValues: money는 정수만(숫자·10진 정수 글·음수), 출력 1
     [0, "0원", 0], [7, "7원", 7], [999, "999원", 999], [1000, "1,000원", 1000], [1234, "1,234원", 1234], [-1234567, "-1,234,567원", -1234567],
     ["1234", "1,234원", 1234], ["-50", "-50원", -50], ["007", "7원", 7], [-0, "0원", 0], ["100000000", "100,000,000원", 100000000],
     [Number.MAX_SAFE_INTEGER, "9,007,199,254,740,991원", Number.MAX_SAFE_INTEGER], [Number.MIN_SAFE_INTEGER, "-9,007,199,254,740,991원", Number.MIN_SAFE_INTEGER],
+    [" 1234", "1,234원", 1234], ["1234 ", "1,234원", 1234], ["1,234", "1,234원", 1234], ["1,234원", "1,234원", 1234], ["12.5", "12.5원", 12.5], [12.5, "12.5원", 12.5],
+    [2 ** 53, "9,007,199,254,740,992원", 2 ** 53], [-(2 ** 53), "-9,007,199,254,740,992원", -(2 ** 53)], ["9007199254740993", "9,007,199,254,740,993원", 9007199254740993],
   ];
   for (const [raw, text, number] of ok) {
     const [v] = bindValues(t, { "금액": raw }, undefined);
@@ -119,7 +123,7 @@ test("bindValues: money는 정수만(숫자·10진 정수 글·음수), 출력 1
     assert.equal(v?.text, text);
     assert.ok(Object.is(v?.number, number), `${String(raw)} → ${String(v?.number)}`);
   }
-  const bad: unknown[] = [" 1234", "1234 ", "1,234", "1,234원", "12.5", 12.5, "1e3", "+5", "", "-", "０１", true, 2 ** 53, -(2 ** 53), "9007199254740993", Number.NaN, Infinity];
+  const bad: unknown[] = ["1e3", "+5", "-", "０１", true, Number.NaN, Infinity];
   for (const raw of bad) {
     const [v] = bindValues(t, { "금액": raw }, undefined);
     assert.equal(v?.state, "rejected", String(raw));
@@ -127,6 +131,8 @@ test("bindValues: money는 정수만(숫자·10진 정수 글·음수), 출력 1
     assert.equal(v?.text, undefined);
     assert.ok(!v?.issue?.message.includes(String(raw)) || String(raw).length < 2, "메시지에 값 원문을 담지 않는다");
   }
+  // 빈 글은 빈 값(형식 오류가 아니다)
+  assert.deepEqual(bindValues(t, { "금액": "" }, undefined)[0], { id: "m", name: "금액", format: "money", state: "empty", source: "key", text: "" });
   assert.equal(bindValues(t, { "금액": { won: 1 } }, undefined)[0]?.issue?.code, "DATA_NOT_SCALAR");
   assert.equal(bindValues(t, { "금액": [1] }, undefined)[0]?.issue?.code, "DATA_NOT_SCALAR");
 });
@@ -155,11 +161,12 @@ test("bindValues: valueEdits가 행을 이기고(edited), 형식을 다시 적�
   const cSnapshot = structuredClone(c);
   const v = bindValues(t, row, c);
   assert.deepEqual(byId(v, "v1"), { id: "v1", name: "사업명", format: "text", state: "edited", source: "edit", text: "정정 사업" });
-  assert.deepEqual(byId(v, "v2"), { id: "v2", name: "추정가격", format: "money", state: "edited", source: "edit", text: "2,000원", number: 2000 });
+  assert.deepEqual(byId(v, "v2"), { id: "v2", name: "추정가격", format: "money", state: "edited", source: "edit", text: "2,000원", normalized: "2000", number: 2000 });
   assert.equal(byId(v, "v3").text, "아니오");
   assert.deepEqual(row, snapshot);
   assert.deepEqual(c, cSnapshot);
-  const bad = byId(bindValues(t, row, caseOf(t, { valueEdits: { v2: "2,000원" } })), "v2");
+  // "2,000원"은 #131부터 금액으로 읽힌다. 읽지 못하는 글(단위가 다름)로 거절을 본다
+  const bad = byId(bindValues(t, row, caseOf(t, { valueEdits: { v2: "2,000달러" } })), "v2");
   assert.deepEqual([bad.state, bad.issue?.code], ["rejected", "DATA_FORMAT"]);
   assert.equal(byId(bindValues(t, row, caseOf(t, { valueEdits: { v1: "" } })), "v1").text, "");
 });
@@ -282,7 +289,7 @@ const W3: W3Row[] = [
     expect: { s5: { state: "undecided", reason: "tie", candidates: ["hasMemo", "noMemo"] } } },
   { name: "우선순위가 높은 참 블록", row: { "금액": 5, "구분": "물품" },
     expect: { s6: { state: "default", block: "p9" } } },
-  { name: "형식 오류 값을 조건이 쓰면 판정하지 않는다", row: { "금액": "1,000", "구분": "물품" },
+  { name: "형식 오류 값을 조건이 쓰면 판정하지 않는다", row: { "금액": "1,000달러", "구분": "물품" },
     expect: { s1: { state: "undecided", reason: "valueRejected", candidates: ["high", "low"] }, s2: { state: "undecided", reason: "tie" } } },
   { name: "수동 선택은 데이터가 바뀌어도 유지하고 차이만 표시", row: { "금액": 200000000, "구분": "물품" },
     selections: { s1: { block: "low", basis: "manual", content: sha256Hex("low 글") } },
