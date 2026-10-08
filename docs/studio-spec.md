@@ -169,6 +169,18 @@ DataNode     = { part: "data" | "derived", depth, key, path: string | null, type
 
 **호스트 API**: `POST /api/quick/template`(.hwpx → 세션, 자리 목록), `POST /api/quick/data`(.json → 키 목록과 대조표), `POST /api/quick/generate`(`{ missing }` → 건별 결과), `GET /api/quick/result/:id/:index`(내려받기), `POST /api/quick/open-folder`. 세션은 메모리, 개수·바이트 상한. 오류는 `{ error: { code, message, plain } }`. 자리 목록의 누름틀 항목은 `{ name, count, usable, fillable, merging, unfillable: [{ shape, count, reasons? }] }`이다(`fillable`은 엔진이 채울 수 있는 곳 수(`simple`·`empty`·`inline`·건너뛰지 않는 `crossParagraph`), `unfillable`은 `object`·`crossContainer`·`unpaired`·`crossBlocked`(모양은 `crossParagraph`지만 엔진이 건너뛰는 곳. 사유 문구 `reasons`)별 곳 수, `merging`은 채울 수 있는 곳 가운데 `crossParagraph`인 수(채우면 사이 문단이 합쳐짐). 채울 수 있는지는 엔진의 `fieldFillBlock`으로 판정해 생성 결과와 어긋나지 않게 한다. 2026-10-04부터 `inline`·`crossParagraph`는 채울 수 있다. 누름틀(`CLICK_HERE`, 이름)과 키가 있는 메일 머지 필드(`MAILMERGE`, 키)를 센다). 대조표 상태는 `ok | missing | notScalar | rejected | badKey | unfillable`이고, 데이터 응답에는 객체가 아닌 건의 수 `invalidRecords`가 있다(그 건은 건수 판정에서 뺀다). 서버 껍데기의 거절(Host·Origin·크기)도 `plain`을 갖는다(2026-10-03 독립 검증 반영).
 
+**Helper 생성 창구 `/api/g2b` 2판**(확정 2026-10-09, 사용자·Helper 세션 합의. 정본은 [엔진 명세](engine-spec.md) 8.8.14, 구현 전 #131 → #133): `/quick`·Helper·CLI가 같은 생성 창구를 쓴다. `127.0.0.1:4318`, Host·Origin 검사 유지, 토큰은 트레이 뒤.
+
+| 경로 | 요약 |
+| --- | --- |
+| `GET /api/g2b/profiles` | `{ profiles: [{ id, label, templateId, version, outputDirectory }] }`. 프로필 저장은 Studio 화면에서만, 서식 판 고정(새 판은 "다시 확인" 뒤 프로필 갱신) |
+| `POST /api/g2b/generate` 요청 | `{ format: "studio-generate", version: 2, requestId, profileId, dryRun, types, items: [{ values, allowEmpty, selections, meta: { identity, stage, recordId } }], columns }`. `values`는 메인 값 전부(하위 표 `children` 없음), 값은 글자·숫자·참거짓·`null`만, 타입 7종(`text`·`number`·`money`·`percent`·`date`·`datetime`·`boolean`) |
+| `POST /api/g2b/generate` 답장 | `{ requestId, status: success·needs-input·error·partial, warnings, results: [{ itemIndex, status, path?, reused?, code?, message?, missingFields?, invalidFields?, undecided?, warnings? }], summary: { succeeded, needsInput, failed, timings, totalMs } }`. 요청 전체 오류(400·409·413·415)는 `{ requestId?, code, message }`이고 1판의 `{ error }` 꼴은 없앤다 |
+| 오류 이름 | 요청 `INVALID_REQUEST`·`REQUEST_CONFLICT`·`UNKNOWN_PROFILE`. 건별 입력 필요 `MISSING_FIELDS`·`INVALID_FIELDS`·`UNDECIDED`. Studio 설정 원인 `PROFILE_MAPPING_CONFLICT`·`TEMPLATE_RECHECK`·`PROFILE_INVALID`. 실패 `GENERATION_FAILED`·`OUTPUT_ERROR` |
+| `/quick` 입력 | Helper 내보내기 파일은 생성 요청과 같은 꼴(`requestId`·`profileId` 비워도 됨) + `columns`이고 `/quick`은 이 파일만 읽는다. 옛 `g2b-helper-document` v1·1판 요청 꼴 읽기는 없앤다 |
+
+재시도(같은 번호·지문은 같은 응답 또는 `reused: true`, 다른 지문은 409)·`dryRun`·기록(값·파일 바이트 저장 금지)·파일 이름·라벨 사전 두 층은 엔진 명세 8.8.14가 정한다. **1판 제거 시점**: 1판 다리(지금 `apps/studio-lite/src/g2b.ts`)는 2판이 양쪽 같은 서식·같은 파일로 끝까지 시험된 뒤(한글 열기, 100건 시간 측정, 최상위 경고 0) 옛 `/template` Grid·kordoc과 함께 한 번에 제거한다. 병행 기간은 없다(#11·#36·#133).
+
 **결과 용량**(2026-10-04, #13): 빠른 생성은 건수×원본 크기로 미리 가늠하지 않고, 성공 출력의 실제 바이트 총합이 512 MiB를 넘는 건부터 `QUICK_TOO_LARGE`로 실패시키고 이후 엔진 생성을 중단한다. 앞선 성공 결과와 엔진 실패 보고·파일 이름은 유지되며 내려받을 수 있다. 상한은 보관하는 성공 출력 바이트 합이고, 순간 프로세스 메모리는 보장하지 않는다.
 
 **수용 조건**
