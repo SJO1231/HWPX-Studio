@@ -1086,3 +1086,17 @@ CLI `block extract`로 떼고 `block insert --section 0 --index 25`(대상 2쪽�
 시험: `node --test packages/hwpx-engine/test/block-proto-from-fragment.test.ts`, `HWPX_CORPUS_DIR=<폴더> node --test packages/hwpx-engine/test/block-corpus.test.ts packages/viewer/test/block-preview-corpus.test.ts packages/hwpx-engine/test/value-types-corpus.test.ts`.
 
 남은 것: 독립 검증. 미리보기 시험의 독립 계산(`test/preview-helpers.ts`)은 여러 문단 필드의 값 글을 빈 글로 받아 그 구간의 `{{ }}`를 빼지 못한다(실제 공고서 블록에는 그런 자리가 없어 영향 없음).
+
+## 45. CLI `block insert` 출력: 서식 차이 문단 번호·데이터 없는 실행 (2026-10-09, 이슈 #139)
+
+#8 통합 검증에서 본 두 가지: `서식 차이: 블록 문단 N`이 0부터 세어 lite 화면(1부터)과 번호가 달랐고, 데이터 없이 넣는 `block insert`가 `데이터에 없던 경로:` 줄을 냈다. 이제 출력 줄은 1부터(보고서 `block.formatDiffs[].paragraph`는 0부터 그대로), `block insert`는 그 줄을 내지 않는다(`fill`은 그대로). 구현은 `apps/cli/src/commands.ts`. 아래는 구현자 시험이고 독립 검증 전이다.
+
+| 검사 | 결과 |
+| --- | --- |
+| 문단 번호 | 다른 서식 자리에 3문단 블록을 넣으면 출력 줄 번호 [1, 1, 2, 2, 3, 3] = 보고서 번호 + 1(고치기 전 [0, 0, 1, 1, 2, 2]) |
+| 데이터 없는 실행 | `{{ }}` 13종이 든 블록을 넣으면 `필요한 데이터 경로:` 줄은 있고 `데이터에 없던 경로:` 줄은 없다(고치기 전에는 13종을 그 줄에 적었다) |
+| 회귀 | 형 검사 0. `npm test` 1,880개 중 1,809 통과, 0 실패, 71 선택 실행분 |
+
+시험: `node --test apps/cli/test/block.test.ts`.
+
+남은 것: 독립 검증. 데이터 없이 실행하는 `fragment import`·`table set`도 문서에 `{{ }}`가 있으면 같은 줄을 낸다(코드 읽기. 이번 범위 밖, 고치지 않음).
