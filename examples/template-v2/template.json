@@ -71,7 +71,10 @@
     {
       "id": "v2",
       "name": "추정가격",
-      "format": "money"
+      "format": "money",
+      "display": {
+        "unit": "원"
+      }
     },
     {
       "id": "v3",
@@ -206,7 +209,7 @@
       "slot": "s1",
       "name": "10억 원 이상 공동 수급(표가 든 조각)",
       "content": {
-        "fragment": "38e4f9b02a816cb49c35db107da07442040cbc0a9bba72e8fb4d08c96bd081ce"
+        "fragment": "b5ae0148dd80804682829020c23c1deed7aaf74d06cc70389a67ce0aa75bca22"
       },
       "when": {
         "path": "v2",

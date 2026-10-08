@@ -2,7 +2,7 @@ import {viewerLines, lineAt} from '/viewer-lines.js';
 import { installBlockLibrary } from '/block-library.js';
 import {editorLayout, editorSelection, unitAt, replaceEditorText, groupEditorSelection, editorChange} from '/editor-model.js';
 import { createPageView, createLatest, toPagePoint } from '/packages/viewer/src/dom/index.ts';
-import {STATUS_LABEL, REL_LABEL, LABEL_MAX, isField, keptStatus, autoKey, repsOf, changedSpan, toOriginal, spanNow, contextOf, contextAround, mergeSaved, nameFromLabel, designated, rankKeys, planConfirm, dropRow, commitConfirm, linkNote, rowAria, itemOf, g2bTemplate} from '/input-table.js';
+import {STATUS_LABEL, REL_LABEL, LABEL_MAX, isField, keptStatus, autoKey, repsOf, changedSpan, toOriginal, spanNow, contextOf, contextAround, mergeSaved, nameFromLabel, designated, rankKeys, planConfirm, dropRow, commitConfirm, linkNote, rowAria, itemOf, valueKey, linkTargets} from '/input-table.js';
 import {VALUE_TYPES, TYPE_LABEL, suggestType} from '/value-type.js';
 import { loadRhwp, openDocument, runPosition, sameParagraph } from '/packages/viewer/src/rhwp/index.ts';
 
@@ -11,7 +11,7 @@ const state = {
   placements: [], placementNames: {}, placementWarnings: {},
   outline: [], recommendations: [], reviewHistory: [], samples: {}, tableOpen: false, tableRow: undefined, detailDrafts: new Map(), detailId: undefined, pointer: undefined, currentItem: undefined,
   session: undefined, kind: 'hwpx', sourceText: '', name: '', paragraphs: [], edits: new Map(), headings: new Map(), blocks: [],
-  keys: [], records: 0, index: 0, chosen: undefined, selection: undefined,
+  keys: [], records: 0, index: 0, cases: [], typed: {}, chosen: undefined, selection: undefined,
   sourceDoc: undefined, resultDoc: undefined, view: undefined, viewMode: 'source', output: undefined,
   busy: false, dirty: false, caret: undefined,
   comparison: undefined, comparisonText: '', layout: {text: '', units: []}, history: [], future: [],
@@ -55,7 +55,7 @@ function controls() {
     const name=button.dataset.action;
     if(name==='labelPick'){const target=labelTarget();button.disabled=!available||!target;button.textContent='참고 글 지정'+(target?' · '+(target.name.trim()||'이름 없음').slice(0,10):'');
       button.title=target?'선택한 글을 '+(target.name.trim()||'이름 없는')+' 항목의 라벨(참고 글)로 씁니다.':'입력 항목을 지정하거나 표에서 고른 뒤, 라벨로 쓸 다른 글을 고르세요.';continue;}
-    button.disabled=name==='copyKey'?!available||!$('#key-select').value.trim():name==='importSelection'?!canEdit||!state.comparisonText:name==='copySelection'?!available:!canEdit;
+    button.disabled=name==='copyKey'?!available||!$('#key-select').value.trim():name==='importSelection'?!canEdit||!state.comparisonText:name==='copySelection'?!available:name==='dataDetail'?!available||!(canEdit||state.activeRecommendation?.kind==='input'):!canEdit;
     button.dataset.actionTitle??=button.title;
     button.title=button.disabled?(state.busy?'문서 처리가 끝난 뒤 사용하세요.':!state.session?'문서를 먼저 여세요.':!item?'문서에서 부분을 먼저 고르세요.':!item.editable?'표·개체 또는 보호된 서식이 있는 문단은 직접 편집할 수 없습니다.':name==='importSelection'?'비교 문서에서 가져올 글을 선택하세요.':'입력 항목 이름을 먼저 적으세요.'):button.dataset.actionTitle;
   }
@@ -92,7 +92,7 @@ async function api(path, body) {
   return result;
 }
 function errorMessage(error) { return error instanceof Error ? error.message : '작업을 마치지 못했습니다.'; }
-function hideMenu() { $('#context-menu').hidden = true; $('#selection-remote').hidden=true; contextRequest++; }
+function hideMenu() { $('#context-menu').hidden = true; $('#selection-remote').hidden=true; $('#remote-link-row').hidden=true; contextRequest++; }
 function closeMenus(except) {
   for (const menu of document.querySelectorAll('details.menu[open]')) if (menu !== except) menu.open = false;
 }
@@ -296,13 +296,13 @@ async function showResult() {
 }
 function updateData(info) {
   state.detailId=undefined;
-  state.records = info?.records ?? 0; state.keys = info?.keys ?? []; state.index = info?.index ?? 0;
+  state.records = info?.records ?? 0; state.keys = info?.keys ?? []; state.index = info?.index ?? 0; state.cases = info?.cases ?? [];
   $('#data-info').textContent = state.records ? state.records + '개 행 연결됨' : '데이터가 없습니다.';
   const records = $('#record-select'); records.replaceChildren();
   const count = Math.max(1, state.records);
   for (let index = 0; index < count; index++) {
     const option = document.createElement('option'); option.value = String(index);
-    option.textContent = state.records ? (index + 1) + '행' : '데이터 없음'; records.append(option);
+    option.textContent = state.records ? caseLabel(index) : '견본 값'; records.append(option);
   }
   if (!Number.isInteger(state.index) || state.index < 0 || state.index >= count) state.index = 0;
   records.value = String(state.index);
@@ -338,7 +338,7 @@ async function installWorkspace(result, ticket) {
   state.edits = new Map((result.edits ?? []).map((item) => [item.id, item.text]));
   state.headings = new Map((result.headings ?? []).map((item) => [item.id, item.level]));
   state.blockPick = undefined;
-  state.found=result.inputs??[];state.g2bTemplate=undefined;$('#g2b-template').textContent='서식 판 없음';
+  state.typed={...(result.samples??{})};state.g2bTemplate=undefined;$('#g2b-template').textContent='서식 판 없음';
   state.outline=result.outline??[];state.recommendations=[];state.detailDrafts.clear();state.detailId=undefined;state.reviewHistory=[];state.currentItem=undefined;closeTable();
   state.blocks = (result.blocks ?? []).map((item) => ({...item}));
   state.placements=(result.placements??[]).map(p=>({...p}));state.placementNames=result.placementNames??{};state.placementWarnings=result.placementWarnings??{};
@@ -389,7 +389,7 @@ async function loadData(name, content, expected = {}) {
   try {
     const result = await api('data', {session, name, content});
     if (!dataLoads.current(ticket) || session !== state.session) return;
-    updateData(result); state.dirty = true; status(result.records + '개 데이터 행을 연결했습니다. 사용할 행과 키를 선택하세요.');
+    updateData(result); state.dirty = true; const missing = renderKeyNotice(); status(result.records + '개 업무 건을 올렸습니다' + (missing ? ' · 템플릿에만 있는 키 ' + missing + '개(데이터 메뉴)' : '') + '.', missing ? 'warn' : '');
   } catch (error) {
     if (dataLoads.current(ticket) && session === state.session) {
       updateData(undefined); state.dirty = true; $('#copy-fallback').hidden = true;
@@ -401,7 +401,7 @@ async function loadData(name, content, expected = {}) {
 function snapshot() {
   return {session: state.session, index: state.index, missing: $('#txt-missing').value, edits: [...state.edits].map(([id, text]) => ({id, text})),
     headings: [...state.headings].map(([id, level]) => ({id, level})), blocks: state.blocks.map((block) => ({...block})),placements:state.placements.map(p=>({...p})),
-    inputItems: inputItems().map(itemOf)};
+    inputItems: inputItems().map(itemOf), ...(Object.keys(state.typed).length ? {samples: {...state.typed}} : {})};
 }
 function saveBlob(content, name) {
   const url = URL.createObjectURL(new Blob([content], {type: 'application/json;charset=utf-8'}));
@@ -418,10 +418,10 @@ async function saveWork() {
   } catch (error) { status(errorMessage(error), 'error'); }
   finally { setBusy(false); }
 }
-async function generate(asTemplate = false) {
+async function generate(asTemplate = false, busyMessage = '') {
   if (!state.session || state.busy) return;
   hideMenu(); closeMenus(); invalidateOutput(); const revision = state.revision, session = state.session;
-  setBusy(true, asTemplate ? '누름틀 서식을 만드는 중입니다.' : '편집과 데이터를 적용하는 중입니다.');
+  setBusy(true, busyMessage || (asTemplate ? '누름틀 서식을 만드는 중입니다.' : '편집과 데이터를 적용하는 중입니다.'));
   try {
     await state.invalidations; const result = await api(asTemplate ? 'template' : 'generate', snapshot());
     if (revision !== state.revision || session !== state.session) return;
@@ -512,7 +512,8 @@ function action(name) {
   if(state.kind==='text'&&['bold','group'].includes(name))return;
   hideMenu();if(state.busy)return;
   try {
-    if(name==='inputDetail'||name==='dataDetail'){openInputDetail(name==='dataDetail');return;}
+    if(name==='inputDetail'){openInputDetail();return;}
+    if(name==='dataDetail'){void startLink();return;}
     if(name==='labelPick'){pickLabel();return;}
     if(name==='branchDetail')return;
     if(name==='saveBlock'){void blockLibraryUI.begin();return;}
@@ -585,9 +586,12 @@ $('#redo').addEventListener('click',()=>undo(true));
 $('#key-select').addEventListener('input', () => { $('#copy-fallback').hidden = true; controls(); });
 $('#key-select').addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); insertKey(); } });
 $('#txt-missing').addEventListener('change',()=>{if(!state.busy)changed();});
+// 업무 건(#149): 데이터 한 행. 바꾸면 이전 건의 결과는 바로 버리고(내려받기 막힘), 미리 보기 중이면 새 건으로 다시 만든다("갱신 중")
 $('#record-select').addEventListener('change', () => {
-  if (state.busy) return; state.index = Number($('#record-select').value); changed(); void loadSample();
-  status((state.index + 1) + '행을 선택했습니다. 적용하면 해당 행의 값으로 채웁니다.');
+  if (state.busy) return; const preview = Boolean(state.output) && state.viewMode === 'result';
+  state.index = Number($('#record-select').value); changed(); void loadSample();
+  if (preview) void generate(false, '갱신 중 · 업무 건 ' + caseLabel(state.index));
+  else status('업무 건 ' + caseLabel(state.index) + '을(를) 골랐습니다. 생성하면 이 건의 값으로 채웁니다.');
 });
 $('#source-view').addEventListener('click', () => {
   if (!state.busy) {
@@ -607,20 +611,18 @@ $('#zoom-out').addEventListener('click', () => zoom(-1));
 $('#zoom-in').addEventListener('click', () => zoom(1));
 
 // ── Helper 프로필(#173, 엔진 명세 8.8.14의 Studio 화면 전용 API): 열린 문서로 서식 판(template@2)을 저장하고 그 판을 고정한 2판 프로필을 저장·다시 확인·삭제한다 ──
-/** 열린 문서의 서식 판. 저장된 판은 바뀌지 않으므로 1판부터 같은 내용인 판을 찾고, 없으면 처음 빈 판에 저장한다 */
+/** 열린 문서의 서식 판(찾은 자리·지정한 자리·데이터 연결은 서버가 묶는다). 저장된 판은 바뀌지 않으므로 1판부터 같은 내용인 판을 찾고, 없으면 처음 빈 판에 저장한다 */
 // shortcut: 판을 1판부터 차례로 보내 맞춰 본다(판 수만큼 원본을 올림), 판이 수십 개로 늘면 서버가 다음 판 번호를 알려 주게 한다
 async function saveG2BTemplate(id){
   const response=await fetch('/api/workbench/source?session='+encodeURIComponent(state.session));
   if(!response.ok)throw new Error('문서를 다시 올려 주세요.');
-  const bytes=new Uint8Array(await response.arrayBuffer()),source=base64(bytes);
-  const sha256=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(b=>b.toString(16).padStart(2,'0')).join('');
-  const recs=new Map(inputItems().map(r=>[r.id,r]));
-  const found=state.found.flatMap(x=>{const r=recs.get(x.kind+':'+x.row+':'+x.start+':'+x.end);return r?.status==='excluded'?[]:[{kind:x.kind,name:x.kind==='placeholder'?x.name.trim():x.name,type:r?.type}];});
+  const source=base64(new Uint8Array(await response.arrayBuffer())),{template,skipped}=await api('g2b-template',{...snapshot(),...(id?{id}:{})});
   for(let version=1;;version++){
-    try{return (await api('/api/g2b/templates',{template:g2bTemplate(found,{id:id??'t'+sha256.slice(0,8),version,name:state.name.replace(/\.hwpx$/i,''),sha256}),source})).template;}
+    try{return {...(await api('/api/g2b/templates',{template:{...template,version},source})).template,skipped};}
     catch(error){if(error.code!=='REQUEST_CONFLICT')throw error;}
   }
 }
+const skippedNote=t=>t.skipped?' · 빈 구간이라 넣지 못한 지정 '+t.skipped+'곳':'';
 async function helperTask(message,run){
   if(state.busy)return;setBusy(true,message);
   try{status(await run(),'success');}catch(error){status(errorMessage(error),'error');}
@@ -633,7 +635,7 @@ async function renderProfiles(){
     $('#profile-list').replaceChildren(...profiles.filter(p=>typeof p.templateId==='string').map(p=>{
       const recheck=uiNode('button','다시 확인'),remove=uiNode('button','삭제'),where=uiNode('small',p.templateId+' '+p.version+'판 · '+p.outputDirectory+' · '+p.id);
       recheck.type=remove.type='button';recheck.dataset.recheck='true';where.title=where.textContent;
-      // shortcut: GET 꼴(fileName 없음)으로 다시 저장해 API로 넣은 파일 이름 규칙은 지워진다, 화면에서 규칙을 정하게 될 때 GET에 fileName을 더한다
+      // GET 꼴(fileName 없음)으로 판만 바꿔 보낸다. 저장된 파일 이름 규칙은 서버가 둔다(#149)
       recheck.onclick=()=>helperTask('서식을 다시 확인하는 중입니다.',async()=>{const t=await saveG2BTemplate(p.templateId);if(t.version===p.version)return p.label+' · 서식이 그대로입니다('+t.version+'판).';await api('/api/g2b/profiles',{...p,version:t.version});return p.label+' · '+p.version+'판에서 '+t.version+'판으로 바꿨습니다.';});
       remove.onclick=()=>{if(window.confirm(p.label+' 프로필을 지울까요?'))void helperTask('프로필을 지우는 중입니다.',async()=>{await api('/api/g2b/profiles/delete',{id:p.id});return p.label+' 프로필을 지웠습니다.';});};
       const li=uiNode('li');li.append(uiNode('strong',p.label),where,recheck,remove);return li;
@@ -644,7 +646,7 @@ async function renderProfiles(){
 $('#helper-menu').addEventListener('toggle',()=>{if($('#helper-menu').open)void renderProfiles();});
 $('#save-g2b-template').addEventListener('click',()=>helperTask('서식 판을 저장하는 중입니다.',async()=>{
   const t=await saveG2BTemplate();state.g2bTemplate=t;$('#g2b-template').textContent=t.version+'판 · '+t.name;$('#g2b-template').title=t.id+' '+t.version+'판 · '+t.name;
-  return '서식 판을 저장했습니다 · '+t.version+'판';
+  return '서식 판을 저장했습니다 · '+t.version+'판'+skippedNote(t);
 }));
 $('#profile-form').addEventListener('submit',event=>{event.preventDefault();const t=state.g2bTemplate;if(!t)return;void helperTask('프로필을 저장하는 중입니다.',async()=>{
   const label=$('#profile-label').value.trim();
@@ -1018,7 +1020,7 @@ function renderSourceTags(){
   }
 }
 /** 추천 목록·표 보기·원문 꼬리표를 같은 상태로 다시 그린다 */
-function renderInputs(){renderRecommendations();renderInputTable();displaySourceMarks(state.chosen?state.marks.get(state.chosen)??[]:[]);}
+function renderInputs(){renderRecommendations();renderInputTable();renderKeyNotice();displaySourceMarks(state.chosen?state.marks.get(state.chosen)??[]:[]);}
 let listFrame;
 function scheduleList(){cancelAnimationFrame(listFrame);listFrame=requestAnimationFrame(()=>{renderRecommendations();renderSourceTags();});}
 async function loadSample(){
@@ -1050,12 +1052,19 @@ function renderInputTable(){
     source.title=(r.label?labelTitle(r.label)+'\n':'')+before+'['+span.replaceAll('\uFFFC','')+']'+after;
     const name=uiNode('input',undefined,r.nameAuto?'auto':undefined);name.type='text';name.dataset.field='name';name.value=r.name;name.autocomplete='off';name.setAttribute('aria-label','이름');if(r.nameAuto)name.title='라벨에서 온 이름 · 추천(✓로 확정)';
     const key=uiNode('input',undefined,r.keyAuto?'auto':undefined);key.type='text';key.dataset.field='key';key.value=r.key;key.autocomplete='off';key.spellcheck=false;key.setAttribute('list','data-keys');key.setAttribute('aria-label','데이터 키');
-    key.readOnly=r.status==='confirmed'||isField(r.origin)||r.origin==='placeholder'&&!row?.editable;if(r.keyAuto)key.title='이름과 같은 데이터 키 · 연결 후보';else if(isField(r.origin))key.title=FORMS[r.origin]+' 이름';
+    // 누름틀·메일머지는 글을 바꾸지 않으므로 확정한 뒤에도 연결할 데이터 키를 바꿀 수 있다(#149)
+    key.readOnly=r.status==='confirmed'&&!isField(r.origin)||r.origin==='placeholder'&&!row?.editable;if(r.keyAuto)key.title='이름과 같은 데이터 키 · 연결 후보';else if(isField(r.origin))key.title=FORMS[r.origin]+' · 연결할 데이터 키';
     key.onfocus=()=>orderKeyList(r);
     name.oninput=()=>{r.name=name.value;r.nameAuto=false;name.classList.remove('auto');name.title='';const a2=rowAria(r.name);ok.setAttribute('aria-label',a2.ok);keep.setAttribute('aria-label',a2.keep);
-      retype(r);showType();if(!isField(r.origin)&&r.status!=='confirmed'){const a=autoKey(r.name,r.key,r.keyAuto,paths);if(a.key!==r.key||a.auto!==r.keyAuto){r.key=a.key;r.keyAuto=a.auto;key.value=a.key;key.classList.toggle('auto',a.auto);key.title=a.auto?'이름과 같은 데이터 키 · 연결 후보':'';sample.textContent=sampleText(r);}}touched();scheduleList();};
-    key.oninput=()=>{r.key=key.value.trim();r.keyAuto=false;key.classList.remove('auto');key.title='';sample.textContent=sampleText(r);touched();};
-    const sample=uiNode('span',sampleText(r),'sample');sample.title=sample.textContent;
+      retype(r);showType();if(!isField(r.origin)&&r.status!=='confirmed'){const a=autoKey(r.name,r.key,r.keyAuto,paths);if(a.key!==r.key||a.auto!==r.keyAuto){r.key=a.key;r.keyAuto=a.auto;key.value=a.key;key.classList.toggle('auto',a.auto);key.title=a.auto?'이름과 같은 데이터 키 · 연결 후보':'';}}showSample();touched();scheduleList();};
+    // 데이터 키(#149): 같은 이름의 항목도 같은 키를 받는다(같은 이름은 같은 값). 다른 줄의 칸은 다음에 표를 다시 그릴 때 보인다
+    key.oninput=()=>{const v=key.value.trim(),group=linkTargets(items,r,v);for(const x of typeof group==='string'?[r]:group){x.key=v;x.keyAuto=false;}key.classList.remove('auto');key.title='';showSample();if(isField(r.origin))changed();else touched();};
+    // 견본 값: 데이터가 있으면 고른 업무 건의 값, 없으면 직접 적는다(#149, 같은 값의 줄은 함께 바뀐다). 같은 값을 받는 줄이 여럿이면 "같은 값 n곳"
+    const vk=valueKey(r),same=r.status==='excluded'||!vk?0:items.filter(x=>x.status!=='excluded'&&valueKey(x)===vk).length,sample=uiNode(state.records?'span':'input',undefined,'sample'),sampleCell=uiNode('span');
+    const showSample=()=>{const k=valueKey(r);if(state.records){sample.textContent=sampleText(r);sample.title=sample.textContent;}else{sample.value=state.typed[k]??'';sample.dataset.vk=k;sample.disabled=!k;}};
+    if(!state.records){sample.type='text';sample.dataset.field='sample';sample.autocomplete='off';sample.setAttribute('aria-label','견본 값');
+      sample.oninput=()=>{const k=sample.dataset.vk;if(sample.value)state.typed[k]=sample.value;else delete state.typed[k];for(const el of body.querySelectorAll('input[data-field=sample]'))if(el!==sample&&el.dataset.vk===k)el.value=sample.value;changed();};}
+    showSample();sampleCell.append(sample,...(same>1?[uiNode('small','같은 값 '+same+'곳','same-value')]:[]));
     // 타입(#147): 7종. 추천은 기울임(원문 모양에서), 고른 것은 보통 글씨이고 다시 추천으로 덮지 않는다. 수량은 원문 단위를 함께 보인다
     const type=uiNode('select');type.dataset.field='type';type.setAttribute('aria-label','타입');
     const showType=()=>{const unit=r.type==='quantity'?suggestType(span).unit:undefined;type.replaceChildren(...VALUE_TYPES.map(v=>{const o=uiNode('option',TYPE_LABEL[v]+(v==='quantity'&&unit?' · '+unit:''));o.value=v;return o;}));type.value=r.type;
@@ -1063,7 +1072,7 @@ function renderInputTable(){
     showType();type.onchange=()=>{r.type=type.value;r.typeSet=true;showType();touched();};
     const ok=uiNode('button','✓','ok-button');ok.type='button';ok.dataset.locked=String(r.status==='confirmed'||r.status==='excluded');ok.disabled=state.busy||ok.dataset.locked==='true';ok.title=r.status==='confirmed'?'확정됨':'확정';ok.setAttribute('aria-label',aria.ok);
     ok.onclick=async()=>{const result=await confirmItems([{item:r,name:r.name,key:r.key}]);reportConfirm(result,result.done?r.name:'');const rows=inputItems(),next=rows.slice(rows.indexOf(r)+1).find(x=>x.status!=='confirmed'&&x.status!=='excluded');if(result.done&&next)focusTableRow(next,'name');};
-    const cells=[keep,source,name,key,sample,type,uiNode('span',STATUS_LABEL[r.status],'status-'+r.status),ok];
+    const cells=[keep,source,name,key,sampleCell,type,uiNode('span',STATUS_LABEL[r.status],'status-'+r.status),ok];
     for(const cell of cells){const td=uiNode('td');td.append(cell);tr.append(td);}
     body.append(tr);
   }
@@ -1075,6 +1084,32 @@ const DISTANCE_UNIT={rowHeader:'칸 왼쪽',colon:'자 뒤',heading:'문단 위'
 /** 라벨 풍선 도움말: 라벨 글 · 관계 · 거리 */
 function labelTitle(label){return '라벨 "'+label.text+'" · '+REL_LABEL[label.rel]+(label.distance?' · '+label.distance+DISTANCE_UNIT[label.rel]:'');}
 function sampleText(r){if(!state.records||!r.key)return '';return state.samples[r.key]??'—';}
+/** 업무 건 이름(#149): 번호와 그 행의 첫 값 */
+function caseLabel(i){return (i+1)+'건'+(state.cases[i]?' · '+state.cases[i]:'');}
+/** 데이터 연결(#149): 고른 입력 항목(없으면 지금 선택을 지정)에 이을 데이터 키를 리모컨의 목록에서 고른다 */
+async function startLink(){
+  if(!state.keys.length){openInputDetail(true);status('연결할 데이터를 먼저 올리세요.');return;}
+  let r;try{r=await designate();}catch(error){status(errorMessage(error),'error');return;}
+  if(!r)return;
+  const select=$('#remote-link'),paths=rankedKeys(r),none=uiNode('option','고르세요');none.value='';
+  select.replaceChildren(none,...paths.map(p=>{const o=uiNode('option',p);o.value=p;return o;}));select.value=paths.includes(r.key)?r.key:'';
+  $('#remote-link-row').hidden=false;showRemote();select.focus();try{select.showPicker();}catch{}
+}
+/** 항목과 같은 이름의 항목을 함께 데이터 키에 잇는다(같은 이름은 같은 값). 표시 이름·위치는 그대로, 원문도 그대로 */
+function linkItem(r,key){
+  const group=linkTargets(inputItems(),r,key);if(typeof group==='string'){status(group,'error');return;}
+  remember();for(const x of group){x.key=key;x.keyAuto=false;}changed();renderInputs();
+  status((r.name||'이름 없는')+' 항목을 '+key+'에 연결했습니다'+(group.length>1?' · 같은 이름 '+group.length+'곳':'')+'. 원문은 그대로입니다.','success');
+}
+$('#remote-link').onchange=()=>{const r=state.activeRecommendation,key=$('#remote-link').value;if(r?.kind==='input'&&key){linkItem(r,key);hideMenu();}};
+/** 데이터를 밀어 넣을 때(8.9-7): 템플릿에만 있는 키는 알리고, 데이터에만 있는 키는 펼쳐야 보인다. 템플릿에만 있는 키 수를 돌려준다 */
+function renderKeyNotice(){
+  const note=$('#key-notice'),extra=$('#data-only'),paths=state.keys.map(k=>k.path),usable=dataPaths();
+  const used=[...new Set(inputItems().filter(r=>r.status!=='excluded').map(valueKey).filter(Boolean))],missing=state.records?used.filter(k=>!paths.includes(k)):[],only=state.records?usable.filter(p=>!used.includes(p)):[];
+  note.hidden=!missing.length;note.textContent='템플릿에만 있는 키 '+missing.length+'개 · '+missing.slice(0,8).join(', ')+(missing.length>8?' …':'');
+  extra.hidden=!only.length;extra.querySelector('summary').textContent='데이터에만 있는 키 '+only.length+'개';extra.querySelector('p').textContent=only.join(', ');
+  return missing.length;
+}
 function showRemote(){if(!state.chosen||state.busy)return;const el=$('#selection-remote');el.hidden=false;$('#remote-name').value=$('#detail-name').value;const p=state.pointer??{x:$('.original-pane').getBoundingClientRect().left+30,y:150};const r=el.getBoundingClientRect();el.style.left=Math.max(8,Math.min(p.x,innerWidth-r.width-8))+'px';el.style.top=Math.max(55,Math.min(p.y+8,innerHeight-r.height-35))+'px';}
 let libraryRequest=0;
 async function renderLibraryTab(){

@@ -286,19 +286,42 @@ export function designated(at: Span & { row: string }, label?: ItemLabel): Input
   return r;
 }
 
+/** 같은 값의 열쇠(#149): 연결한 데이터 키, 없으면 이름. 열쇠가 같은 항목은 같은 값을 받는다(엔진 `bindValues`: 한 값은 어디서나 같은 글) */
+export const valueKey = (r: Pick<InputItem, 'key' | 'name'>): string => (r.key.trim() || r.name.trim()).normalize('NFC');
 /**
- * Helper 프로필(#173)의 서식 판 template@2: 문서에서 찾은 누름틀·메일머지·`{{키}}`(문서의 이름 그대로)를 자리로, 같은 이름은 값 하나·열 이름 하나로 잇는다.
- * 값 형식은 표의 타입이 금액·날짜면 money·date, 나머지는 text. 판 번호·id는 부르는 쪽이 정한다(저장된 판은 바뀌지 않는다).
+ * 데이터 연결(#149): 항목과, 이름이 같은 항목(제외한 것 빼고)을 함께 `key`에 잇는다(같은 이름은 같은 값). 표시 이름·위치는 그대로다.
+ * 확정해 글이 `{{키}}`로 바뀐 항목(누름틀·메일머지 밖)의 키가 다르면 아무것도 잇지 않고 이유를 돌려준다.
  */
-// shortcut: 표 보기에서 지정·확정한 자리(원문에 없는 {{키}})는 넣지 않는다(word 앵커가 필요), Helper가 지정 자리를 써야 할 때 서버에서 앵커를 만든다
-export function g2bTemplate(found: readonly { kind: Exclude<ItemOrigin, 'user'>; name: string; type?: ValueType }[], t: { id: string; version: number; name: string; sha256: string }) {
-  const names = [...new Set(found.map(x => x.name))], value = (name: string) => 'v' + (names.indexOf(name) + 1);
-  const places = [...new Map(found.map(x => [x.kind + '\n' + x.name, x])).values()];
+export function linkTargets<T extends InputItem>(all: readonly T[], item: T, key: string): T[] | string {
+  const name = item.name.trim().normalize('NFC');
+  const group = name ? all.filter(x => x === item || x.status !== 'excluded' && x.name.trim().normalize('NFC') === name) : [item];
+  return group.some(x => x.status === 'confirmed' && !isField(x.origin) && x.key !== key) ? '확정한 키는 실행 취소(Ctrl+Z)로 확정을 되돌린 뒤 바꾸세요.' : group;
+}
+
+/** 서식 판의 자리 하나: 문서에서 찾은 누름틀·메일머지·`{{키}}`(`name`은 문서의 이름), 또는 지정한 자리(`anchor`는 word·line 앵커, `name`은 표시 이름). `key`는 연결한 데이터 키 */
+export type G2BEntry = { kind: Exclude<ItemOrigin, 'user'> | 'word' | 'line'; name: string; key?: string; type?: ValueType; anchor?: { id: string }; unit?: boolean };
+/**
+ * Helper 프로필(#173)의 서식 판 template@2. 값은 연결한 데이터 키(없으면 이름)마다 하나이고 연결의 `key`가 그 키다(같은 이름은 같은 값, #149).
+ * 이름이 키와 다르면 이름을 `aliases`에 둬 서식의 이름 그대로 오는 열도 받는다(다른 값의 키이거나 두 값에 걸친 이름은 빼서 엔진 `TPL_KEY_CONFLICT`를 피한다).
+ * 자리: 찾은 것은 문서의 이름 그대로, 지정한 것은 앵커 자리. 값 형식은 표의 타입이 금액·날짜면 money·date, 나머지 text이고,
+ * 금액 지정 자리의 원문이 "원"으로 끝나면 `display.unit: "원"`(엔진이 자리 뒤가 "원"이면 뗀다). 판 번호·id는 부르는 쪽이 정한다(저장된 판은 바뀌지 않는다).
+ */
+// shortcut: 지정 자리의 날짜는 엔진 기본 표시(YYYY. MM. DD.)이고 원문의 앞 글(`금 `)은 빠진다(작업창 생성은 원문 모양을 따른다), 원문 모양을 display.pattern으로 옮길 때 올린다
+export function g2bTemplate(found: readonly G2BEntry[], t: { id: string; version: number; name: string; sha256: string }) {
+  const nfc = (s: string) => s.normalize('NFC'), keyOf = (x: G2BEntry) => nfc(x.key?.trim() || x.name);
+  const keys = [...new Set(found.map(keyOf))], value = (k: string) => 'v' + (keys.indexOf(k) + 1);
+  const owners = new Map<string, Set<string>>();
+  for (const x of found) if (nfc(x.name) !== keyOf(x)) owners.set(nfc(x.name), (owners.get(nfc(x.name)) ?? new Set()).add(keyOf(x)));
+  const aliases = (k: string) => [...owners].filter(([n, of]) => of.size === 1 && of.has(k) && !keys.includes(n)).map(([n]) => n);
+  const places = [...new Map(found.map(x => [x.anchor?.id ?? x.kind + '\n' + x.name, x])).values()];
   return {
-    schema: 'hwpx-studio/template@2', id: t.id, version: t.version, meta: { name: t.name }, source: { kind: 'hwpx', sha256: t.sha256 }, anchors: [],
-    values: names.map(name => { const type = found.find(x => x.name === name)?.type; return { id: value(name), name, format: type === 'money' || type === 'date' ? type : 'text' }; }),
-    bindings: names.map(name => ({ value: value(name), key: name })),
-    places: places.map((x, i) => ({ id: 'p' + (i + 1), kind: x.kind, value: value(x.name), [x.kind === 'clickHere' ? 'name' : 'key']: x.name })),
+    schema: 'hwpx-studio/template@2', id: t.id, version: t.version, meta: { name: t.name }, source: { kind: 'hwpx', sha256: t.sha256 }, anchors: places.flatMap(x => x.anchor ? [x.anchor] : []),
+    values: keys.map(k => {
+      const xs = found.filter(x => keyOf(x) === k), type = xs[0]?.type;
+      return { id: value(k), name: k, format: type === 'money' || type === 'date' ? type : 'text', ...(type === 'money' && xs.some(x => x.unit) ? { display: { unit: '원' } } : {}) };
+    }),
+    bindings: keys.map(k => { const a = aliases(k); return { value: value(k), key: k, ...(a.length ? { aliases: a } : {}) }; }),
+    places: places.map((x, i) => ({ id: 'p' + (i + 1), kind: x.kind, value: value(keyOf(x)), ...(x.anchor ? { anchor: x.anchor.id } : { [x.kind === 'clickHere' ? 'name' : 'key']: x.name }) })),
     slots: [], blocks: [],
   };
 }

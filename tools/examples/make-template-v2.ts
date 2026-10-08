@@ -167,7 +167,7 @@ function makeTemplate(noticeSha: string, anchors: { a1: Record<string, unknown>;
     anchors: [anchors.a1, anchors.a2],
     values: [
       { id: "v1", name: "사업명", format: "text" },
-      { id: AMOUNT, name: "추정가격", format: "money" },
+      { id: AMOUNT, name: "추정가격", format: "money", display: { unit: "원" } },
       { id: "v3", name: "접수기간", format: "text" },
       { id: "v4", name: "담당자", format: "text" },
       { id: "v5", name: "연락처", format: "text" },
