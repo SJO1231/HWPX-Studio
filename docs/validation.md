@@ -1123,3 +1123,23 @@ CLI `block extract`로 떼고 `block insert --section 0 --index 25`(대상 2쪽�
 시험: `HWPX_CORPUS_DIR=<폴더> node --test --test-name-pattern='^참고자료 공고서 시뮬레이션$' apps/studio-lite/test/studio.test.ts`, `HWPX_CORPUS_DIR=<폴더> node --test packages/hwpx-engine/test/inline-corpus.test.ts`.
 
 남은 것: 독립 검증. 지금 모음으로는 lite 생성 성공 경로(글 대조·ZIP 보존·렌더)와 조각 교체가 실제 문서로 검증되지 않는다(모음에 기준 성공 문서가 없음). lite `npm run check`는 작업 폴더에서 엔진 경로 확인이 주 체크아웃을 가리켜 실패해 돌리지 못했다(43절과 같은 원인, CI로 확인).
+
+## 47. Helper 프로필 화면(최소)·생성 창구 거절 꼴 (2026-10-09, 이슈 #173)
+
+[스튜디오 명세](studio-spec.md) 4a "Helper 생성 창구" 문단과 엔진 명세 8.8.14의 Studio 화면 전용 API. 작업창 왼쪽 흐름 탭의 "Helper 프로필" 절(`apps/studio-lite/web/workbench.*`), 서식 판 만들기 `apps/studio-lite/src/input-table.ts`의 `g2bTemplate`, 프로필 삭제 `POST /api/g2b/profiles/delete`. 아래는 구현자 시험이고 독립 검증 전이다. 한컴 COM은 쓰지 않았다.
+
+| 검사 | 결과 |
+| --- | --- |
+| 서식 판 | `examples/quick/template-mailmerge.hwpx`에서 작업창이 찾은 45곳 → 값 27개·자리 27개(메일머지 15·누름틀 4·`{{키}}` 8) template@2, 엔진 읽기 통과. 같은 내용 다시 저장 200(같은 판), 한 키 제외 + 금액 타입 → 1판 409 `REQUEST_CONFLICT` → 2판 200. 2판의 금액 열에 `1234000` → `1,234,000` |
+| 프로필 | Origin 없는 서식 판·프로필 저장·삭제 403. 저장 뒤 `GET /api/g2b/profiles`에 `{ id, label, templateId, version, outputDirectory }`만. 서식 2판을 저장해도 프로필은 1판(판 고정), 2판으로 다시 저장해야 2판. 삭제 `{ deleted: true }` → 목록 빔 → 다시 `{ deleted: false }`, 틀린 id 400 `INVALID_REQUEST` |
+| 그 판으로 생성(자리 수십 개·긴 값) | Helper(Origin 없음) 한 요청 50건(시드 0x173a, 값마다 200~500자·여러 문장·줄바꿈·탭·XML 특수문자): 50/50 성공, 최상위 경고 0, 검사기 새 오류 0, 남은 `{{` 0, 건마다 27개 값이 모두 들어감 |
+| 생성 창구 거절 꼴 | 다른 Origin 403·PUT 405·GET 405 → `{ code: "INVALID_REQUEST", message }`, DB 표를 지워 일으킨 내부 예외 → 500 `{ code: "GENERATION_FAILED", message }`(메시지에 SQL·경로 없음). 변이: 500·405 처리와 `plain` 덮기를 함께 빼면 두 시험이 실패 |
+| `/quick` 판 불일치 | `version` 1·3·`null` → 400 `QUICK_BAD_DATA`, `plain` "Helper 내보내기 파일 판이 다릅니다(2판만 받습니다).", 작업창 데이터도 같은 문장. `items`가 객체면 전 문장. `quick.html`의 옛 파일 이름 문구 없앰 |
+| 내장 브라우저(임시 DB, 포트 4354) | 예시 문서로 서식 판 저장(1판) → 프로필 저장 → GET에 보임 → 추천 목록에서 "참고 사항" 두 줄 제외 → 서식 판 저장 2판, 목록의 프로필은 1판 그대로 → 다시 확인 → 2판("1판에서 2판으로 바꿨습니다") → 한 번 더 → "서식이 그대로입니다(2판)" → 삭제 → GET 빔. 1366×768·1024×768에서 문서·왼쪽 레일 가로 넘침 0, 절 밖으로 나간 요소 0. 캡처 `apps/studio-lite/docs/screenshots/issue-173-fixed.png`(1366, 서식 2판·프로필 1판), `issue-173-recheck-1024.png`(1024, 다시 확인 뒤 2판) |
+| 회귀 | 형 검사 0, lite 시험 157개 중 156 통과·1 선택 실행분. lite 검사(`npm run check`)는 작업 폴더에서 lite의 엔진 경로를 작업 폴더 엔진으로 잠시 이어 PASS(이으면 `quick-limit.test.ts`의 자식 프로세스가 저장소 뿌리의 엔진을 읽어 그 시험만 어긋난다. 43절과 같은 작업 폴더 사정, CI로 확인) |
+
+시험: `node --test apps/studio-lite/test/g2b-v2.test.ts`(이름에 `#173`이 든 3개).
+
+정한 것(계약 문장에 없음): 서식 id는 `t` + 원본 sha256 앞 8자, 판은 1판부터 같은 내용인 판을 찾고 없으면 처음 빈 판(판 수만큼 올림), 같은 이름은 값 하나·열 이름 하나, 값 형식은 표 타입 금액·날짜만 `money`·`date`, 프로필 id는 화면이 `p-` + 8자, 목록은 2판 프로필만, 삭제 API 꼴.
+
+남은 것: 독립 검증, 표 보기에서 지정·확정한 자리(원문에 없는 `{{키}}`)를 서식 판에 넣기(word 앵커), 다시 확인이 API로 넣은 파일 이름 규칙(`fileName`)을 지우는 점, Helper와 같은 서식·같은 파일로 끝까지 시험(⑤).

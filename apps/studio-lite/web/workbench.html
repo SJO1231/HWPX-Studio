@@ -34,6 +34,14 @@
           <details class="advanced-input"><summary>직접 입력</summary><label for="data-text" class="sr-only">JSON 데이터</label><textarea id="data-text" rows="5" spellcheck="false" placeholder='{"사업명": "전산장비 구매"}'></textarea><button id="load-data-text" type="button" disabled>데이터 사용</button></details>
         </div>
       </details>
+      <details id="helper-menu" class="menu">
+        <summary>Helper 프로필<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg></summary>
+        <div class="menu-panel data-panel">
+          <div class="panel-heading"><strong id="g2b-template">서식 판 없음</strong><button id="save-g2b-template" type="button" disabled>서식 판 저장</button></div>
+          <form id="profile-form" class="profile-form"><label for="profile-label">프로필 이름</label><input id="profile-label" maxlength="120" required autocomplete="off"><label for="profile-folder">출력 폴더</label><input id="profile-folder" required placeholder="절대 경로" autocomplete="off" spellcheck="false"><button id="save-profile" type="submit" disabled>프로필 저장</button></form>
+          <ul id="profile-list" class="profile-list"></ul>
+        </div>
+      </details>
 
         <nav id="heading-tree" aria-label="제목 트리"></nav>
         <div class="recommend-heading"><strong>추천 목록</strong><span><button id="open-input-table" type="button" disabled>크게 보기</button><button id="review-undo" type="button" disabled>되돌리기</button></span></div><button id="save-checked-blocks" type="button" hidden>체크한 블록 저장</button><div id="recommendations"></div>

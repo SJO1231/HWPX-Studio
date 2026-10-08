@@ -2,7 +2,7 @@ import {viewerLines, lineAt} from '/viewer-lines.js';
 import { installBlockLibrary } from '/block-library.js';
 import {editorLayout, editorSelection, unitAt, replaceEditorText, groupEditorSelection, editorChange} from '/editor-model.js';
 import { createPageView, createLatest, toPagePoint } from '/packages/viewer/src/dom/index.ts';
-import {STATUS_LABEL, REL_LABEL, LABEL_MAX, isField, keptStatus, autoKey, repsOf, changedSpan, toOriginal, spanNow, contextOf, contextAround, mergeSaved, nameFromLabel, designated, rankKeys, planConfirm, dropRow, commitConfirm, linkNote, rowAria, itemOf} from '/input-table.js';
+import {STATUS_LABEL, REL_LABEL, LABEL_MAX, isField, keptStatus, autoKey, repsOf, changedSpan, toOriginal, spanNow, contextOf, contextAround, mergeSaved, nameFromLabel, designated, rankKeys, planConfirm, dropRow, commitConfirm, linkNote, rowAria, itemOf, g2bTemplate} from '/input-table.js';
 import {VALUE_TYPES, TYPE_LABEL, suggestType} from '/value-type.js';
 import { loadRhwp, openDocument, runPosition, sameParagraph } from '/packages/viewer/src/rhwp/index.ts';
 
@@ -45,6 +45,8 @@ function controls() {
   $('#comparison-view').disabled=!available;
   for(const id of ['scale','zoom-in','zoom-out']) $('#'+id).disabled=!available;
   $('#key-select').disabled=!available; $('#make-template').disabled=!available||state.kind!=='hwpx';
+  $('#save-g2b-template').disabled=!available||state.kind!=='hwpx';$('#save-profile').disabled=!available||!state.g2bTemplate;
+  for(const b of document.querySelectorAll('#profile-list button'))b.disabled=!available||b.dataset.recheck==='true'&&state.kind!=='hwpx';
   $('#copy-body').disabled=state.busy||typeof state.output?.text!=='string';
   $('#copy-body').title=state.busy?'문서 처리가 끝난 뒤 복사하세요.':!state.session?'문서를 먼저 여세요.':!state.output?'현재 업무 건과 편집 내용으로 다시 생성한 뒤 복사하세요.':'';
   $('#document-editor').disabled=!state.session; $('#document-editor').readOnly=state.busy;
@@ -77,14 +79,15 @@ function controls() {
   if(ready)download.href=state.output.outputUrl;else download.removeAttribute('href');
 }
 async function api(path, body) {
-  const response = await fetch('/api/workbench/' + path, {
+  // '/'로 시작하면 그 주소 그대로(Helper 프로필의 /api/g2b/…), 아니면 작업창 API
+  const response = await fetch(path.startsWith('/') ? path : '/api/workbench/' + path, {
     method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body),
   });
   const result = await response.json();
   if (!response.ok) {
     const error = result.error;
-    throw new Error((typeof error === 'string' ? error : error?.message) ?? result.plain
-      ?? result.message ?? '작업을 마치지 못했습니다.');
+    throw Object.assign(new Error((typeof error === 'string' ? error : error?.message) ?? result.plain
+      ?? result.message ?? '작업을 마치지 못했습니다.'), {code: result.code});
   }
   return result;
 }
@@ -335,6 +338,7 @@ async function installWorkspace(result, ticket) {
   state.edits = new Map((result.edits ?? []).map((item) => [item.id, item.text]));
   state.headings = new Map((result.headings ?? []).map((item) => [item.id, item.level]));
   state.blockPick = undefined;
+  state.found=result.inputs??[];state.g2bTemplate=undefined;$('#g2b-template').textContent='서식 판 없음';
   state.outline=result.outline??[];state.recommendations=[];state.detailDrafts.clear();state.detailId=undefined;state.reviewHistory=[];state.currentItem=undefined;closeTable();
   state.blocks = (result.blocks ?? []).map((item) => ({...item}));
   state.placements=(result.placements??[]).map(p=>({...p}));state.placementNames=result.placementNames??{};state.placementWarnings=result.placementWarnings??{};
@@ -601,6 +605,52 @@ function zoom(direction) {
 }
 $('#zoom-out').addEventListener('click', () => zoom(-1));
 $('#zoom-in').addEventListener('click', () => zoom(1));
+
+// ── Helper 프로필(#173, 엔진 명세 8.8.14의 Studio 화면 전용 API): 열린 문서로 서식 판(template@2)을 저장하고 그 판을 고정한 2판 프로필을 저장·다시 확인·삭제한다 ──
+/** 열린 문서의 서식 판. 저장된 판은 바뀌지 않으므로 1판부터 같은 내용인 판을 찾고, 없으면 처음 빈 판에 저장한다 */
+// shortcut: 판을 1판부터 차례로 보내 맞춰 본다(판 수만큼 원본을 올림), 판이 수십 개로 늘면 서버가 다음 판 번호를 알려 주게 한다
+async function saveG2BTemplate(id){
+  const response=await fetch('/api/workbench/source?session='+encodeURIComponent(state.session));
+  if(!response.ok)throw new Error('문서를 다시 올려 주세요.');
+  const bytes=new Uint8Array(await response.arrayBuffer()),source=base64(bytes);
+  const sha256=[...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(b=>b.toString(16).padStart(2,'0')).join('');
+  const recs=new Map(inputItems().map(r=>[r.id,r]));
+  const found=state.found.flatMap(x=>{const r=recs.get(x.kind+':'+x.row+':'+x.start+':'+x.end);return r?.status==='excluded'?[]:[{kind:x.kind,name:x.kind==='placeholder'?x.name.trim():x.name,type:r?.type}];});
+  for(let version=1;;version++){
+    try{return (await api('/api/g2b/templates',{template:g2bTemplate(found,{id:id??'t'+sha256.slice(0,8),version,name:state.name.replace(/\.hwpx$/i,''),sha256}),source})).template;}
+    catch(error){if(error.code!=='REQUEST_CONFLICT')throw error;}
+  }
+}
+async function helperTask(message,run){
+  if(state.busy)return;setBusy(true,message);
+  try{status(await run(),'success');}catch(error){status(errorMessage(error),'error');}
+  finally{setBusy(false);await renderProfiles();}
+}
+async function renderProfiles(){
+  try{
+    const {profiles}=await (await fetch('/api/g2b/profiles')).json();
+    // shortcut: 1판 프로필은 보이지 않는다(1판 다리 제거 ⑥ 때 함께 사라진다)
+    $('#profile-list').replaceChildren(...profiles.filter(p=>typeof p.templateId==='string').map(p=>{
+      const recheck=uiNode('button','다시 확인'),remove=uiNode('button','삭제'),where=uiNode('small',p.templateId+' '+p.version+'판 · '+p.outputDirectory+' · '+p.id);
+      recheck.type=remove.type='button';recheck.dataset.recheck='true';where.title=where.textContent;
+      // shortcut: GET 꼴(fileName 없음)으로 다시 저장해 API로 넣은 파일 이름 규칙은 지워진다, 화면에서 규칙을 정하게 될 때 GET에 fileName을 더한다
+      recheck.onclick=()=>helperTask('서식을 다시 확인하는 중입니다.',async()=>{const t=await saveG2BTemplate(p.templateId);if(t.version===p.version)return p.label+' · 서식이 그대로입니다('+t.version+'판).';await api('/api/g2b/profiles',{...p,version:t.version});return p.label+' · '+p.version+'판에서 '+t.version+'판으로 바꿨습니다.';});
+      remove.onclick=()=>{if(window.confirm(p.label+' 프로필을 지울까요?'))void helperTask('프로필을 지우는 중입니다.',async()=>{await api('/api/g2b/profiles/delete',{id:p.id});return p.label+' 프로필을 지웠습니다.';});};
+      const li=uiNode('li');li.append(uiNode('strong',p.label),where,recheck,remove);return li;
+    }));
+  }catch(error){status(errorMessage(error),'error');}
+  controls();
+}
+$('#helper-menu').addEventListener('toggle',()=>{if($('#helper-menu').open)void renderProfiles();});
+$('#save-g2b-template').addEventListener('click',()=>helperTask('서식 판을 저장하는 중입니다.',async()=>{
+  const t=await saveG2BTemplate();state.g2bTemplate=t;$('#g2b-template').textContent=t.version+'판 · '+t.name;$('#g2b-template').title=t.id+' '+t.version+'판 · '+t.name;
+  return '서식 판을 저장했습니다 · '+t.version+'판';
+}));
+$('#profile-form').addEventListener('submit',event=>{event.preventDefault();const t=state.g2bTemplate;if(!t)return;void helperTask('프로필을 저장하는 중입니다.',async()=>{
+  const label=$('#profile-label').value.trim();
+  await api('/api/g2b/profiles',{id:'p-'+crypto.randomUUID().slice(0,8),label,templateId:t.id,version:t.version,outputDirectory:$('#profile-folder').value.trim()});
+  $('#profile-label').value='';return label+' 프로필을 저장했습니다 · '+t.version+'판';
+});});
 for (const menu of document.querySelectorAll('details.menu')) menu.addEventListener('toggle', () => { if (menu.open) closeMenus(menu); });
 document.addEventListener('pointerdown', (event) => {
   // 리모컨 안을 누르면 닫지 않는다(닫으면 누른 단추의 click이 오지 않는다)

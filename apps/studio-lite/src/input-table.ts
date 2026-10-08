@@ -1,6 +1,6 @@
 // 표 보기(#146): 입력 항목 한 줄의 상태·위치·데이터 키를 다루는 순수 함수. 화면(`web/workbench.js`, 형 제거본 `/input-table.js`)과 시험이 같은 코드를 쓴다.
 // 위치는 늘 원문 줄 글(`Row.text`) 기준 `[start, end)`다. 확정한 항목만 편집 글에 `{{키}}`로 들어가고, 지정·추천·제외는 글을 바꾸지 않는다(요구 8.8-2).
-// 타입(#147)은 `value-type.ts`, 라벨 찾기(#148)는 서버의 `item-label.ts`가 맡는다. 여기에는 저장 꼴과 화면·시험이 함께 쓰는 계산만 둔다.
+// 타입(#147)은 `value-type.ts`, 라벨 찾기(#148)는 서버의 `item-label.ts`가 맡는다. 여기에는 저장 꼴과 화면·시험이 함께 쓰는 계산만 둔다(Helper 서식 판 #173 포함).
 import type { ValueType } from './value-type.ts';
 
 export type ItemStatus = 'recommended' | 'designated' | 'confirmed' | 'excluded';
@@ -284,6 +284,23 @@ export function designated(at: Span & { row: string }, label?: ItemLabel): Input
   const r: InputItem & { nameAuto?: boolean } = { ...at, name: '', key: '', type: 'text', ...(label ? { label } : {}), status: 'designated', origin: 'user' };
   nameFromLabel(r);
   return r;
+}
+
+/**
+ * Helper 프로필(#173)의 서식 판 template@2: 문서에서 찾은 누름틀·메일머지·`{{키}}`(문서의 이름 그대로)를 자리로, 같은 이름은 값 하나·열 이름 하나로 잇는다.
+ * 값 형식은 표의 타입이 금액·날짜면 money·date, 나머지는 text. 판 번호·id는 부르는 쪽이 정한다(저장된 판은 바뀌지 않는다).
+ */
+// shortcut: 표 보기에서 지정·확정한 자리(원문에 없는 {{키}})는 넣지 않는다(word 앵커가 필요), Helper가 지정 자리를 써야 할 때 서버에서 앵커를 만든다
+export function g2bTemplate(found: readonly { kind: Exclude<ItemOrigin, 'user'>; name: string; type?: ValueType }[], t: { id: string; version: number; name: string; sha256: string }) {
+  const names = [...new Set(found.map(x => x.name))], value = (name: string) => 'v' + (names.indexOf(name) + 1);
+  const places = [...new Map(found.map(x => [x.kind + '\n' + x.name, x])).values()];
+  return {
+    schema: 'hwpx-studio/template@2', id: t.id, version: t.version, meta: { name: t.name }, source: { kind: 'hwpx', sha256: t.sha256 }, anchors: [],
+    values: names.map(name => { const type = found.find(x => x.name === name)?.type; return { id: value(name), name, format: type === 'money' || type === 'date' ? type : 'text' }; }),
+    bindings: names.map(name => ({ value: value(name), key: name })),
+    places: places.map((x, i) => ({ id: 'p' + (i + 1), kind: x.kind, value: value(x.name), [x.kind === 'clickHere' ? 'name' : 'key']: x.name })),
+    slots: [], blocks: [],
+  };
 }
 
 /** 선택 상세의 연결 글: 확정한 항목은 확정한 키, 아니면 연결 후보·연결 전 */
