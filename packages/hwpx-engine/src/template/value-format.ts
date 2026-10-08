@@ -53,11 +53,11 @@ const LABEL: Readonly<Record<ValueFormat, string>> = {
 const HINT: Readonly<Record<ValueFormat, string>> = {
   text: "",
   number: "쉼표를 넣을 수 있는 십진수여야 합니다(음수는 -)",
-  money: "금·원·원정·₩·쉼표·공백을 뺀 십진수여야 합니다(음수는 - 또는 △)",
+  money: "금·원·원정·₩(￦)·쉼표·공백을 뺀 십진수여야 합니다(음수는 - 또는 △)",
   percent: "십진수 또는 끝에 %를 붙인 십진수여야 합니다(음수는 -)",
   date: "YYYYMMDD·YYYY-MM-DD·YYYY/MM/DD·YYYY.MM.DD 꼴의 달력에 있는 날짜여야 합니다",
   datetime: "날짜 뒤에 공백이나 T와 HH:MM 또는 HH:MM:SS가 오는 달력에 있는 날짜·시각이어야 합니다",
-  boolean: "true·false·Y·N·예·아니오 가운데 하나여야 합니다(1·0은 받지 않습니다)",
+  boolean: "true·false·Y·N·예·아니오·아니요 가운데 하나여야 합니다(1·0은 받지 않습니다)",
 };
 
 /**
@@ -73,8 +73,8 @@ type Decimal = { negative: boolean; int: string; frac: string };
 
 // 정수 부분은 쉼표 없는 숫자 또는 천 단위로 바르게 묶은 숫자, 소수 부분은 점 뒤 숫자 1개 이상(ASCII 숫자만)
 const DECIMAL = /^(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?$/;
-// 금액 앞뒤 표기: 금, 부호(- 또는 △)와 ₩(어느 쪽이 먼저든), 끝의 원·원정
-const MONEY = /^금?(?:([-△])₩?|₩([-△])?)?(.*?)(?:원정|원)?$/;
+// 금액 앞뒤 표기: 금, 부호(- 또는 △)와 ₩·전각 ￦(어느 쪽이 먼저든), 끝의 원·원정
+const MONEY = /^금?(?:([-△])[₩￦]?|[₩￦]([-△])?)?(.*?)(?:원정|원)?$/;
 const DATE = /^(\d{4})\s*([-/.])\s*(\d{1,2})\s*\2\s*(\d{1,2})(\s*\.)?$/;
 const DATE_COMPACT = /^(\d{4})(\d{2})(\d{2})$/;
 const TIME_TAIL = /^(.*?)(?:\s*T\s*|\s+)(\d{1,2}):(\d{2})(?::(\d{2}))?$/;
@@ -225,7 +225,7 @@ export function readTypedValue(format: ValueFormat, raw: unknown, display: Value
       else if (typeof raw === "string") {
         const s = raw.trim();
         const lower = s.toLowerCase();
-        b = lower === "true" || lower === "y" || s === "예" ? true : lower === "false" || lower === "n" || s === "아니오" ? false : undefined;
+        b = lower === "true" || lower === "y" || s === "예" ? true : lower === "false" || lower === "n" || s === "아니오" || s === "아니요" ? false : undefined;
       }
       if (b === undefined) return bad;
       return { ok: true, text: b ? (display.yes ?? "예") : (display.no ?? "아니오"), normalized: b ? "true" : "false" };
