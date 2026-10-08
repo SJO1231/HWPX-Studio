@@ -173,7 +173,7 @@ hwpx block insert other.hwpx --store store --block k0a1b2c3d --range 0:7-9 -o ou
 
 - 저장소 폴더: `blocks/<블록 id>/block.json`(최신 판 원형, 정규 JSON)과 `blocks/<블록 id>/<sha256>.json`(조각 덩어리). 블록 폴더는 `fill --blobs`의 덩어리 폴더로도 쓸 수 있다.
 - `extract`: `--range 구역:시작-끝`이나 `--heading 구역:문단`(제목 문단) 하나를 준다. 표 칸 안 범위는 `--parent`. id를 주지 않으면 무작위로 만들고, 같은 id의 블록이 있으면 종료 코드 2다. 원형에는 출처(원본 해시·구간·지문·떼어 낸 시각)와 판 기록(`첫 저장`)이 들어간다. 구역 설정 문단·누름틀을 자르는 범위는 종료 코드 1이다.
-- `insert`: 블록 덩어리의 해시를 대조하고(다르면 2), 넣는 자리 문단과 블록 문단의 문단 모양·스타일이 다르면 `서식 차이:` 줄과 `경고 [BLOCK_FORMAT_DIFFERS]`를 내고 그대로 넣는다(자동으로 바꾸지 않는다. 종료 코드는 바뀌지 않는다). 출력은 `fragment import`와 같은 저장 게이트를 거친다. `--report`에는 `block: { id, version, formatDiffs }`가 더해진다.
+- `insert`: 블록 덩어리의 해시를 대조하고(다르면 2), 넣는 자리 문단과 블록 문단의 문단 모양·스타일이 다르면 `서식 차이:` 줄과 `경고 [BLOCK_FORMAT_DIFFERS]`를 내고 그대로 넣는다(자동으로 바꾸지 않는다. 종료 코드는 바뀌지 않는다). `서식 차이:` 줄의 블록 문단 번호는 1부터 센다(화면과 같다. 보고서의 `formatDiffs[].paragraph`는 0부터). 데이터 없이 넣으므로 `데이터에 없던 경로:` 줄은 내지 않는다. 출력은 `fragment import`와 같은 저장 게이트를 거친다. `--report`에는 `block: { id, version, formatDiffs }`가 더해진다.
 - `list`: 읽을 수 없는 블록이 있으면 종료 코드 1이다. `--json`은 원형 배열을 낸다.
 
 ## 보고서 형식 (`--report`)
