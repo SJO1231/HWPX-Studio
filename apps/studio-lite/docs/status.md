@@ -1,7 +1,7 @@
 # 구현 및 검증 기록
 ## #133 `/api/g2b` 창구 2판 (2026-10-09)
 
-- `src/g2b-v2.ts`: `format: "studio-generate"`, `version: 2` 요청을 프로필의 template@2 판으로 엔진 2단계 생성(값 규칙·타입 우선순위·빈 값·분기·재시도·dryRun·기록(값 없음)·파일 이름·라벨 사전 Helper 층), 서식·프로필 저장은 Studio Origin 전용 API(화면은 아직 없음). 1판 다리는 그대로. `/quick`은 2판 내보내기 파일만 읽는다. lite 153 중 151 통과(1 선택 실행, 1 실패는 작업 폴더 연결 탓의 기존 `quick-limit`), [검증 기준](../../../docs/validation.md) 43절.
+- `src/g2b-v2.ts`: `format: "studio-generate"`, `version: 2` 요청을 프로필의 template@2 판으로 엔진 2단계 생성(값 규칙·타입 우선순위·빈 값·분기·재시도·dryRun·기록(값 없음)·파일 이름·라벨 사전 Helper 층), 서식·프로필 저장은 Studio Origin 전용 API(화면은 아직 없음). 1판 다리는 그대로. `/quick`은 2판 내보내기 파일만 읽는다. lite 154 중 152 통과(1 선택 실행, 1 실패는 작업 폴더 연결 탓의 기존 `quick-limit`), [검증 기준](../../../docs/validation.md) 43절.
 
 ## #147·#148 타입 칸·라벨 자동 저장 (2026-10-09)
 

@@ -127,7 +127,7 @@ test('요청 전체 오류는 { requestId?, code, message }: 400 형식·모르�
   });
 });
 
-test('값·키·모르는 필드: 스칼라·null만(객체·배열은 그 건 INVALID_FIELDS), 괄호·공백 키 그대로·NFC 비교, 모르는 필드는 무시 + 최상위 UNKNOWN_FIELD 한 번씩', async () => {
+test('값·키·모르는 필드: 서식이 쓰는 열은 스칼라·null만(객체·배열은 그 건 INVALID_FIELDS), 괄호·공백 키 그대로·NFC 비교, 모르는 필드는 무시 + 최상위 UNKNOWN_FIELD 한 번씩', async () => {
   await withApp(async (app, root) => {
     const dir = join(root, 'out'); await setup(app, dir);
     const nfd = Object.fromEntries(Object.entries(DATA).map(([k, v]) => [k.normalize('NFD'), v]));
@@ -138,8 +138,7 @@ test('값·키·모르는 필드: 스칼라·null만(객체·배열은 그 건 I
       item({ ...DATA, 'a.b': 'x', '사업명.이름': '점은 경로가 아니다', 원천숫자: 7, 원천참거짓: false, 원천없음: null }, { meta: { identity: ['점'] } }),
     ]));
     assert.equal(r.body.status, 'partial'); assert.deepEqual(r.body.warnings, []);
-    assert.deepEqual(r.body.results.map((x: any) => [x.status, x.code]), [['success', undefined], ['needs-input', 'INVALID_FIELDS'], ['needs-input', 'INVALID_FIELDS'], ['success', undefined]]);
-    assert.deepEqual(r.body.results[1].invalidFields, [{ field: '원천목록', type: 'text' }]);
+    assert.deepEqual(r.body.results.map((x: any) => [x.status, x.code]), [['success', undefined], ['success', undefined], ['needs-input', 'INVALID_FIELDS'], ['success', undefined]]);
     assert.deepEqual(r.body.results[2].invalidFields, [{ field: '추정 가격(원)', type: 'money' }]);
     assert.deepEqual(readFileSync(r.body.results[0].path), readFileSync(r.body.results[3].path), 'NFD 키·쓰지 않는 열은 결과를 바꾸지 않는다');
     const unknown = await app.post('/api/g2b/generate', { ...req('unknown', [{ ...item(), children: [], meta: { identity: ['u'], foo: 1 } }, { ...item(), children: [{ rows: [] }] }], { columns: [{ key: '사업명', label: '사업명', type: 'text', bar: 1 }] }), sourceKind: 'db' });
@@ -149,7 +148,7 @@ test('값·키·모르는 필드: 스칼라·null만(객체·배열은 그 건 I
   });
 });
 
-test('타입 우선순위: 서식 타입 → 요청 types → text. 다르면 서식 타입으로 읽고 건별 TYPE_MISMATCH 경고, 서식이 안 쓰는 열은 요청 타입으로 읽는다', async () => {
+test('타입 우선순위: 서식 타입 → 요청 types → text. 다르면 서식 타입으로 읽고 건별 TYPE_MISMATCH 경고, 서식이 안 쓰는 열은 읽지 않는다', async () => {
   await withApp(async (app, root) => {
     await setup(app, join(root, 'out'));
     const r = await app.post('/api/g2b/generate', req('types', [
@@ -160,9 +159,8 @@ test('타입 우선순위: 서식 타입 → 요청 types → text. 다르면 �
       item({ ...DATA, 원천비고: '확인 중' }, { meta: { identity: ['c'] } }),
     ], { types: { '추정 가격(원)': 'text', 원천금액: 'money', '사업명': 'text' } }));
     assert.deepEqual(r.body.warnings, []);
-    assert.deepEqual(r.body.results.map((x: any) => x.code ?? x.status), ['success', 'INVALID_FIELDS', 'INVALID_FIELDS', 'success', 'success']);
+    assert.deepEqual(r.body.results.map((x: any) => x.code ?? x.status), ['success', 'INVALID_FIELDS', 'success', 'success', 'success']);
     assert.deepEqual(r.body.results[1].invalidFields, [{ field: '추정 가격(원)', type: 'money' }], '서식이 money이면 요청의 text를 따르지 않는다');
-    assert.deepEqual(r.body.results[2].invalidFields, [{ field: '원천금액', type: 'money' }], '서식이 안 쓰는 열은 요청 타입으로 읽는다');
     for (const x of r.body.results) assert.deepEqual(x.warnings.map((w: any) => [w.code, w.field]), [['TYPE_MISMATCH', '추정 가격(원)']]);
     assert(texts(readFileSync(r.body.results[0].path)).join('\n').includes('150,000,000'), '서식 타입(money)으로 꾸민다');
   });
@@ -528,4 +526,12 @@ test('분기 값: 조건에만 쓰는 열이 비면 UNDECIDED(valueMissing)와 �
     assert.deepEqual(c.results[0]!.undecided, [{ slot: '업종 제한', reason: 'needConfirm', candidates: [{ block: 'b1', label: '업종 제한 있음' }] }]);
     assert.equal(c.results[1]!.status, 'success'); assert(texts(readFileSync(c.results[1]!.path!)).join('\n').includes(`바. 업종 제한: ${rest['업종']} 업종을 등록한`));
   } finally { db.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('서식이 안 쓰는 열은 값이 무엇이든(타입과 안 맞는 값·객체·배열) 무시: 성공, 최상위·건별 경고 0', async () => {
+  await withApp(async (app, root) => {
+    await setup(app, join(root, 'out'));
+    const r = await app.post('/api/g2b/generate', req('unused', [item({ ...DATA, 원천금액: '확인 중', 원천날짜: '2월 30일', 원천객체: { a: 1 }, 원천목록: [1, 2] })], { types: { 원천금액: 'money', 원천날짜: 'date' } }));
+    assert.equal(r.body.status, 'success'); assert.deepEqual(r.body.warnings, []); assert.equal(r.body.results[0].warnings, undefined);
+  });
 });

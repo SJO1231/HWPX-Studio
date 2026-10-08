@@ -1715,7 +1715,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | 키 | 빈 이름·제어 문자(U+0000–001F·007F–009F)·NFC로 같아지는 두 이름은 400. `values`·`allowEmpty`·`types`·`selections`·`columns[].key`에 같은 규칙 |
 | 서식이 쓰는 열 | 자리·블록 조건이 쓰는 값의 연결 이름(`key`와 별칭, 경로 연결은 `path` 글 그대로) |
 | 빈 값 | `null`·`''`, text 밖 타입(서식 타입 → 요청 `types`)은 공백뿐인 글도(8.8.4와 같다). 빈 값은 없는 열로 보고, `allowEmpty`에 있으면 빈 글로 넣는다 |
-| 읽을 수 없는 값 | `values`의 모든 열을 타입 우선순위로 읽어 본다: 서식이 쓰는 열은 엔진 `bindValues`(형식·객체·배열·제어 문자), 서식이 안 쓰는 열은 요청 `types`(없으면 text)의 읽기. `invalidFields[].type`은 그 타입 |
+| 읽을 수 없는 값 | 서식이 쓰는 열만 서식 타입으로 엔진 `bindValues`가 읽는다(형식·객체·배열·제어 문자). `invalidFields[].type`은 서식 타입. 서식이 안 쓰는 열은 값이 무엇이든(타입과 안 맞는 값·객체·배열) 읽지 않고 경고도 내지 않는다(Helper가 보낸 정상 열). 그래서 요청 `types`는 서식 타입과 다를 때의 경고에만 쓰인다 |
 | 열 이름(돌려줄 때) | `missingFields`·`invalidFields`·`undecided[].fields`에는 요청이 보낸 이름(`key`·별칭 가운데), 보내지 않았으면 연결의 첫 이름 |
 | `missingFields` | 자리가 쓰는 값만(블록에 묶인 자리는 그 블록이 골라졌을 때만). 조건에만 쓰는 값이 비면 `UNDECIDED`(`reason: valueMissing`, `fields`) |
 | 건별 판정 순서 | `PROFILE_INVALID`(프로필 준비) → `PROFILE_MAPPING_CONFLICT` → `INVALID_FIELDS` → `MISSING_FIELDS` → `UNDECIDED` → 엔진 생성 → `OUTPUT_ERROR`. 결과에는 이긴 코드의 자세한 목록 하나만 담는다. `status`는 입력 필요 3종이 `needs-input`, 나머지가 `error` |

@@ -8,7 +8,7 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import type { DatabaseSync } from 'node:sqlite';
 import {
-  CASE_SCHEMA, VALUE_FORMATS, bindValues, canonicalStudioJson, contentSha256, generateFromTemplate, readStudioTemplate, readTypedValue, selectSlots,
+  CASE_SCHEMA, VALUE_FORMATS, bindValues, canonicalStudioJson, contentSha256, generateFromTemplate, readStudioTemplate, selectSlots,
   sha256Hex, templateSha256, writeStudioTemplate,
   type BlobLoader, type BoundValue, type Condition, type SlotSelection, type StudioCase, type StudioTemplate, type TemplateSlot, type ValueFormat,
 } from '@hwpx-studio/engine';
@@ -208,14 +208,13 @@ function evaluate(p: Plan, item: Item, types: Record<string, ValueFormat>, itemI
     chosen[slot.id] = { block, basis: 'manual', content: b === undefined ? '' : contentSha256(b.content) };
   }
 
-  // 데이터 한 행: 빈 값은 없는 열로 보고, allowEmpty의 열은 빈 글로 넣는다. 서식이 쓰지 않는 열도 타입(요청 types → text)으로 읽어 본다
+  // 데이터 한 행: 빈 값은 없는 열로 보고, allowEmpty의 열은 빈 글로 넣는다. 서식이 쓰지 않는 열은 값이 무엇이든 읽지 않는다(Helper가 보낸 정상 열)
   const record: Record<string, unknown> = {};
   const invalid: { field: string; type: ValueFormat }[] = [];
   for (const [col, v] of Object.entries(item.values)) {
     const type = formatOf(col);
     if (isEmpty(v, type)) continue;
     record[col] = v;
-    if (!usedColumn(col) && !readTypedValue(type, v).ok) invalid.push({ field: col, type });
   }
   const allow = new Set(item.allowEmpty);
   for (const id of p.used) {
