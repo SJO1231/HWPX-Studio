@@ -288,6 +288,8 @@ export function designated(at: Span & { row: string }, label?: ItemLabel): Input
 
 /** 같은 값의 열쇠(#149): 연결한 데이터 키, 없으면 이름. 열쇠가 같은 항목은 같은 값을 받는다(엔진 `bindValues`: 한 값은 어디서나 같은 글) */
 export const valueKey = (r: Pick<InputItem, 'key' | 'name'>): string => (r.key.trim() || r.name.trim()).normalize('NFC');
+/** 블록 안 입력 항목(이름 = 데이터 키)과 같은 값을 받는 문서 입력 항목 수(#194 O8, 같은 이름은 같은 값, 요구 8.3-3). 제외한 항목은 세지 않는다 */
+export const sameValueCount = (items: readonly Pick<InputItem, 'key' | 'name' | 'status'>[], name: string): number => items.filter(x => x.status !== 'excluded' && valueKey(x) === name.normalize('NFC')).length;
 /**
  * 데이터 연결(#149): 항목과, 이름이 같은 항목(제외한 것 빼고)을 함께 `key`에 잇는다(같은 이름은 같은 값). 표시 이름·위치는 그대로다.
  * 확정해 글이 `{{키}}`로 바뀐 항목(누름틀·메일머지 밖)의 키가 다르면 아무것도 잇지 않고 이유를 돌려준다.
@@ -304,25 +306,36 @@ export function linkTargets<T extends InputItem>(all: readonly T[], item: T, key
  */
 export type G2BEntry = { kind: Exclude<ItemOrigin, 'user'> | 'word' | 'line'; name: string; key?: string; type?: ValueType; anchor?: { id: string }; unit?: boolean; pattern?: string; where?: string };
 /**
- * 분기점(#7) 하나: 슬롯(이름·범위 앵커)과 후보 블록(저장소 원형 판을 핀하고 그 내용을 복사). `key`는 결정 값의 데이터 키이고,
- * 블록의 `values`는 결정 값이 이것일 때 고르는 경우, `fallback`은 기본 블록이다(경우 표. 조건은 여기에만 둔다, 요구 8.8-4)
+ * 분기점(#7) 하나: 슬롯(이름·범위 앵커)과 후보 블록(저장소 원형 판을 핀하고 그 내용을 복사). `keys`는 결정 값의 데이터 키들이고(#194, 모두 같아야 그 경우),
+ * 블록의 `cases`는 그 블록을 고르는 경우마다 결정 값들(키 순서), `fallback`은 기본 블록이다(경우 표. 조건은 여기에만 둔다, 요구 8.8-4).
+ * `exclusive`는 함께 경우 표 블록을 고를 수 없는 다른 분기점 id들이다(엔진 8.8.8 상호 배타, 8.9-12)
  */
-export type G2BBranch = { id: string; name: string; anchor: { id: string }; key?: string; blocks: { id: string; name: string; proto: { id: string; version: number }; content: unknown; values: string[]; fallback: boolean }[] };
+export type G2BBranch = { id: string; name: string; anchor: { id: string }; keys: string[]; exclusive?: string[]; blocks: { id: string; name: string; proto: { id: string; version: number }; content: unknown; cases: string[][]; fallback: boolean }[] };
 /**
  * Helper 프로필(#173)의 서식 판 template@2. 값은 연결한 데이터 키(없으면 이름)마다 하나이고 연결의 `key`가 그 키다(같은 이름은 같은 값, #149).
  * 이름이 키와 다르면 이름을 `aliases`에 둬 서식의 이름 그대로 오는 열도 받는다(다른 값의 키이거나 두 값에 걸친 이름은 빼서 엔진 `TPL_KEY_CONFLICT`를 피한다).
  * 자리: 찾은 것은 문서의 이름 그대로, 지정한 것은 앵커 자리. 값 형식은 표의 타입이 금액·날짜면 money·date, 나머지 text이고,
  * 금액 지정 자리의 원문이 "원"으로 끝나면 `display.unit: "원"`(엔진이 자리 뒤가 "원"이면 뗀다), 날짜 지정 자리의 원문에 날짜 모양이 있으면 `display.pattern`(#186).
  * 판 번호·id는 부르는 쪽이 정한다(저장된 판은 바뀌지 않는다).
- * 분기점(#7)은 슬롯·블록이 된다. 결정 키가 있으면 기본 블록 밖의 블록은 `when: 결정 값 in [경우 값들]`(경우가 없으면 빈 목록이라 늘 거짓), 기본 블록은 조건 없음(엔진 `fallback`).
+ * 분기점(#7)은 슬롯·블록이 된다. 결정 키가 하나면 기본 블록 밖의 블록은 `when: 결정 값 in [경우 값들]`(경우가 없으면 빈 목록이라 늘 거짓),
+ * 둘 이상이면 경우마다 `all`(키마다 `eq`)이고 경우가 여럿이면 `any`로 묶는다(#194). 기본 블록은 조건 없음(엔진 `fallback`).
  * 결정 키가 없으면 모든 블록이 조건 없음이라 후보가 둘 이상이면 업무 건마다 직접 고른다(엔진 `undecided` → 수동 선택).
+ * 분기점의 `exclusive`는 최상위 `exclusive` 쌍으로, `renumber`(붙임·별지·표 가운데 고른 꼴)는 `options.renumber`로 둔다(엔진 8.8.8·8.8.12, 둘 다 없으면 키를 넣지 않는다).
  */
 // shortcut: 금액 지정 원문의 앞 글(`금 `)은 빠지고 같은 날짜 키의 지정 원문 모양이 여럿이면 첫 모양이다(display에 앞 글 설정이 없고 꼴은 값마다 하나), 엔진 display가 앞 글·자리별 꼴을 받으면 올린다
-// shortcut: 경우 조건은 결정 값 하나의 같음(`in`)뿐이다(범위·여러 값 조합·상호 배타·참조 번호 재정렬은 #63·#58 경우 계약 예약, 8.9-12), 경우 계약이 정해지면 올린다
-export function g2bTemplate(found: readonly G2BEntry[], t: { id: string; version: number; name: string; sha256: string }, branches: readonly G2BBranch[] = []) {
+// shortcut: 경우 조건은 결정 값들의 같음(`eq`·`in`)뿐이다. 범위(이상·이하)는 결정 값이 글(text) 값이라 엔진이 "1,500" 같은 글을 글자 순으로 견줘 조용히 틀린다, 결정 값에 수 타입을 고르는 화면이 생기면 올린다
+export function g2bTemplate(found: readonly G2BEntry[], t: { id: string; version: number; name: string; sha256: string }, branches: readonly G2BBranch[] = [], renumber: readonly string[] = []) {
   const nfc = (s: string) => s.normalize('NFC'), keyOf = (x: G2BEntry) => nfc(x.key?.trim() || x.name);
-  const decision = (b: G2BBranch) => b.key ? nfc(b.key.trim()) : undefined;
-  const keys = [...new Set([...found.map(keyOf), ...branches.flatMap(b => decision(b) ?? [])])], value = (k: string) => 'v' + (keys.indexOf(k) + 1);
+  const decision = (b: G2BBranch) => b.keys.map(k => nfc(k.trim()));
+  const keys = [...new Set([...found.map(keyOf), ...branches.flatMap(decision)])], value = (k: string) => 'v' + (keys.indexOf(k) + 1);
+  const when = (b: G2BBranch, x: G2BBranch['blocks'][number]) => {
+    const v = decision(b).map(value);
+    if (!v.length || x.fallback) return undefined;
+    if (v.length === 1 || !x.cases.length) return { path: v[0]!, op: 'in', value: x.cases.map(c => c[0]) };
+    const each = x.cases.map(c => ({ all: v.map((path, i) => ({ path, op: 'eq', value: c[i] })) }));
+    return each.length === 1 ? each[0]! : { any: each };
+  };
+  const pairs = [...new Map(branches.flatMap(b => (b.exclusive ?? []).map(o => { const p = [b.id, o].sort(); return [p.join(' '), p] as const; }))).values()];
   const owners = new Map<string, Set<string>>();
   for (const x of found) if (nfc(x.name) !== keyOf(x)) owners.set(nfc(x.name), (owners.get(nfc(x.name)) ?? new Set()).add(keyOf(x)));
   const aliases = (k: string) => [...owners].filter(([n, of]) => of.size === 1 && of.has(k) && !keys.includes(n)).map(([n]) => n);
@@ -337,8 +350,9 @@ export function g2bTemplate(found: readonly G2BEntry[], t: { id: string; version
     bindings: keys.map(k => { const a = aliases(k); return { value: value(k), key: k, ...(a.length ? { aliases: a } : {}) }; }),
     places: places.map((x, i) => ({ id: 'p' + (i + 1), kind: x.kind, value: value(keyOf(x)), ...(x.anchor ? { anchor: x.anchor.id } : { [x.kind === 'clickHere' ? 'name' : 'key']: x.name }), ...(x.where ? { where: x.where } : {}) })),
     slots: branches.map(b => ({ id: b.id, name: b.name, anchors: [b.anchor.id], parent: null })),
-    blocks: branches.flatMap(b => b.blocks.map(x => ({ id: x.id, slot: b.id, name: x.name, proto: x.proto, content: x.content,
-      ...(decision(b) && !x.fallback ? { when: { path: value(decision(b)!), op: 'in', value: x.values } } : {}) }))),
+    blocks: branches.flatMap(b => b.blocks.map(x => { const w = when(b, x); return { id: x.id, slot: b.id, name: x.name, proto: x.proto, content: x.content, ...(w ? { when: w } : {}) }; })),
+    ...(pairs.length ? { exclusive: pairs } : {}),
+    ...(renumber.length ? { options: { renumber: { patterns: [...renumber] } } } : {}),
   };
 }
 
