@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import {
   planBlockInsert, applyPlan, detectHeadings, headingRangeOf, charDelta, checkValueText, collectFields, compareToBaseline, compileDocument, draftAnchors, emptyTemplate, fieldRangeIn, findPlaceholders, generate,
   isValidPath, makeLineAnchor, makeRangeAnchor, makeWordAnchor, openPackage, parseDocument,
-  planApplyCharFormat, readDataset, readTemplate, remapAddress, resolvePathValue, sanitizeFileStem, validateDocument,
+  placeText, planApplyCharFormat, readDataset, readTemplate, readTypedValue, remapAddress, resolvePathValue, sanitizeFileStem, validateDocument, valueUnit,
   verifyPreservation, walkParagraphs, type CompileTarget, type Dataset, type HwpxDocument,
 } from '@hwpx-studio/engine';
 import { HostError, isObj, locate, markOf, resolveDrafts } from '../../../packages/viewer/src/host/index.ts';
@@ -195,11 +195,50 @@ function datasetOf(s: Session, work: Work): Dataset | undefined {
     if (Object.hasOwn(base.data, field) && base.data[field] != null) fail('DATA_ALIAS_CONFLICT', `'${field}' 필드는 데이터 키 '${i.key}'에 연결했는데 데이터에 '${field}' 값도 있습니다. 한 열만 남기세요.`);
     data[field] = value.text;
   }
-  return { data, derived: base.derived };
+  return typed(s, work.inputItems, { data, derived: base.derived });
+}
+
+type Shape = (value: string, following: string) => string | undefined;
+/**
+ * 값 형식(#181): Helper 서식 판(`g2bTemplate`)과 같은 값 표의 금액·날짜 값. 값을 읽는 경로(찾은 자리면 문서의 이름, 지정 자리면 연결한 키 = 확정한 편집 글의 `{{키}}`) →
+ * 엔진 형식(8.8.4 `readTypedValue`)으로 꾸미고 자리 바로 뒤 글로 "원" 단위를 정하는 함수(`placeText`, 읽지 못하는 값이면 undefined)와, 찾은 자리의 바로 뒤 글
+ */
+function formatsOf(s: Session, items: readonly InputItem[]): Map<string, { shape: Shape; following: string }> {
+  const t = g2bTemplate(g2bEntries(s, items).entries, { id: 't', version: 1, name: '', sha256: '' });
+  const values = new Map(t.values.map(v => [v.id, v])), keys = new Map(t.bindings.map(b => [b.value, b.key])), out = new Map<string, { shape: Shape; following: string }>();
+  for (const p of t.places as { kind: string; value: string; anchor?: string; name?: string; key?: string }[]) {
+    const { format, display } = values.get(p.value)! as { format: 'text' | 'money' | 'date'; display?: { unit: string } }, path = p.anchor ? keys.get(p.value)! : (p.name ?? p.key)!;
+    if (format === 'text' || !isValidPath(path) || out.has(path)) continue;
+    const at = p.anchor ? undefined : s.inputs?.find(x => x.kind === p.kind && (x.kind === 'placeholder' ? x.name.trim() : x.name) === path);
+    out.set(path, { following: at ? s.rows.find(r => r.id === at.row)!.text.slice(at.end) : '', shape: (value, following) => {
+      const read = readTypedValue(format, value, display);
+      return read.ok ? placeText(read.text, valueUnit(format, display), following) : undefined;
+    } });
+  }
+  return out;
+}
+/**
+ * 데이터의 금액·날짜 값을 엔진 형식으로 꾸민 사본(한 값은 어디서나 같은 글. 읽지 못하는 값 `미정` 등은 그대로). 엔진이 채우는 찾은 자리는 값마다 한 글이라
+ * "원" 단위는 그 값의 첫 찾은 자리 뒤 글로 정한다. 확정한 지정 자리는 `decorationsOf`가 자리마다 다시 정한다.
+ */
+// shortcut: 같은 금액 값의 찾은 {{키}}·누름틀이 여럿이고 바로 뒤 글("원" 유무)이 서로 다르면 그중 일부는 Helper와 "원" 하나가 다르다, 미리 보기를 2판 자리 채움으로 옮길 때 올린다
+function typed(s: Session, items: readonly InputItem[], dataset: Dataset): Dataset {
+  let data = dataset.data;
+  for (const [path, f] of formatsOf(s, items)) {
+    const raw = resolvePathValue({ data, derived: dataset.derived }, path, 'error'), text = raw.kind === 'text' ? f.shape(raw.text, f.following) : undefined;
+    if (text !== undefined) data = put(data, path.split('.'), text);
+  }
+  return { data, derived: dataset.derived };
+}
+/** 경로(점은 하위 항목)의 값을 바꾼 사본. 지나는 객체·배열만 복사하고, 프로토타입 없는 객체라 `__proto__` 같은 이름도 그냥 열이다 */
+function put(data: Record<string, unknown>, [head, ...rest]: string[], value: string): Record<string, unknown> {
+  const copy: Record<string, unknown> = Array.isArray(data) ? [...data] as unknown as Record<string, unknown> : Object.assign(Object.create(null), data), at = data[head!];
+  copy[head!] = rest.length ? put(typeof at === 'object' && at !== null ? at as Record<string, unknown> : Object.create(null), rest, value) : value;
+  return copy;
 }
 
 /**
- * 표 보기의 입력 항목(#146). 생성에는 확정한 자리의 타입 꾸밈과 누름틀·메일머지의 데이터 연결(#149)에만 쓰고(확정한 항목은 이미 편집 글의 `{{키}}`다) 작업 파일에 남겼다 되살린다.
+ * 표 보기의 입력 항목(#146). 생성에는 타입 꾸밈(금액·날짜는 모든 자리, #181)과 누름틀·메일머지의 데이터 연결(#149)에만 쓰고(확정한 항목은 이미 편집 글의 `{{키}}`다) 작업 파일에 남겼다 되살린다.
  * 위치는 원문 줄 글 기준이고, 확정한 항목은 이름이 있고 키가 규칙에 맞아야 한다(누름틀·메일머지는 필드 이름이 키).
  */
 function inputItemsOf(value: unknown, row: (id: unknown) => Row): InputItem[] {
@@ -239,7 +278,8 @@ function g2bEntries(s: Session, items: readonly InputItem[]): { entries: G2BEntr
   for (const r of items) {
     if (r.origin !== 'user' || r.status === 'excluded' || !r.name.trim()) continue;
     const row = s.rows.find(x => x.id === r.row)!, id = 'a' + (entries.filter(e => e.anchor).length + 1);
-    const anchor = r.start < r.end ? makeWordAnchor(s.doc!, id, row.sectionIndex, row.path, r.start, r.end) : row.text === '' ? makeLineAnchor(s.doc!, id, row.sectionIndex, row.path) : undefined;
+    // TXT에는 앵커가 없다(값 표 `typed`에만 쓴다)
+    const anchor = !s.doc ? { id, kind: 'word' as const } : r.start < r.end ? makeWordAnchor(s.doc, id, row.sectionIndex, row.path, r.start, r.end) : row.text === '' ? makeLineAnchor(s.doc, id, row.sectionIndex, row.path) : undefined;
     if (anchor) entries.push({ kind: anchor.kind, name: r.name.trim(), key: r.key, type: r.type, anchor, unit: /원\s*$/u.test(row.text.slice(r.start, r.end)) });
     else skipped++;
   }
@@ -260,20 +300,21 @@ function sampleOf(s: Session, index: unknown) {
 
 // ponytail: this projection only supports **bold** and {{path}}, not Markdown round trips.
 /**
- * 타입 꾸밈(#147): 확정해 `{{키}}`로 바꾼 자리(금액·날짜·수량)의 값 글을 원문 모양에 맞춘다. 열쇠는 그 `{{키}}`가 지금 편집 글에서 시작하는 위치다.
- * 문서에 원래 있던 `{{키}}`·누름틀·메일머지는 엔진이 채우므로 여기서 꾸미지 않는다(엔진 표시 형식 #131).
+ * 타입 꾸밈: 확정해 `{{키}}`로 바꾼 자리의 값 글. 금액·날짜는 Helper와 같은 엔진 값 형식이고 "원" 단위는 이 자리 바로 뒤 원문 글로 정한다(#181, `formatsOf`),
+ * 수량은 원문 단위(#147). 열쇠는 그 `{{키}}`가 지금 편집 글에서 시작하는 위치이고, 꾸밀 수 없는 값이면 undefined다.
  */
-function decorationsOf(items: readonly InputItem[], row: Row, current: string): Map<number, (value: string) => string> {
-  const out = new Map<number, (value: string) => string>(), reps = repsOf(items, row.id, row.text);
+function decorationsOf(items: readonly InputItem[], row: Row, current: string, formats: ReturnType<typeof formatsOf>): Map<number, (value: string) => string | undefined> {
+  const out = new Map<number, (value: string) => string | undefined>(), reps = repsOf(items, row.id, row.text);
   for (const i of items) {
-    if (i.row !== row.id || i.status !== 'confirmed' || !reps.some(r => r.start === i.start && r.end === i.end) || !['money', 'date', 'quantity'].includes(i.type)) continue;
-    const at = spanNow(row.text, current, reps, i.start, i.end);
-    if (at) out.set(at.start, value => decorateValue(i.type, value, row.text.slice(i.start, i.end), row.text.slice(i.end)));
+    if (i.row !== row.id || i.status !== 'confirmed' || !reps.some(r => r.start === i.start && r.end === i.end)) continue;
+    const at = spanNow(row.text, current, reps, i.start, i.end), following = row.text.slice(i.end), f = formats.get(i.key);
+    if (at && i.type === 'quantity') out.set(at.start, value => decorateValue(i.type, value, row.text.slice(i.start, i.end), following));
+    else if (at && f) out.set(at.start, value => f.shape(value, following));
   }
   return out;
 }
 
-function projected(input: string, dataset: Dataset | undefined, format = true, keepKeys = false, decorate?: Map<number, (value: string) => string>) {
+function projected(input: string, dataset: Dataset | undefined, format = true, keepKeys = false, decorate?: Map<number, (value: string) => string | undefined>) {
   let text = '', bold = false, start = 0, cursor = 0, filled = 0;
   const spans: { start: number; end: number }[] = [];
   const literal = (value: string) => format ? value.replace(/\r\n?/g, '\n') : value;
@@ -284,17 +325,21 @@ function projected(input: string, dataset: Dataset | undefined, format = true, k
       else start = text.length;
       bold = !bold;
     } else {
-      const path = match[1]!.trim();
-      if (keepKeys) {
+      const path = match[1]!.trim(), shape = decorate?.get(match.index);
+      // 키를 남기는 두 단계 생성에서도 꾸민 자리는 여기서 넣는다(자리마다 뒤 글로 꾸민다). 다음 단계가 다시 읽을 {{}}가 든 글은 넣지 않는다
+      const found = keepKeys && shape && dataset && isValidPath(path) ? resolvePathValue(dataset, path, 'error') : undefined;
+      const shaped = found?.kind === 'text' ? shape!(found.text) : undefined;
+      if (keepKeys && (shaped === undefined || /[{}]/.test(shaped))) {
         if (!isValidPath(path)) return fail('WORKBENCH_FIELD_NAME', '키에는 글자·숫자·밑줄을 사용하고, 하위 항목은 점으로 구분하세요. {{사업명}}처럼 공백 없는 이름을 넣어 주세요.');
         text += match[0];
       }
+      else if (shaped !== undefined) { text += shaped; filled++; }
       else if (!format && (!dataset || !isValidPath(path))) text += match[0];
       else {
         need(isValidPath(path) && dataset, 'WORKBENCH_DATA_REQUIRED');
         // Data is appended literally; its ** and {{}} are never parsed again.
-        const value = resolveValue(dataset, path), shape = decorate?.get(match.index);
-        text += shape ? shape(value) : value; filled++;
+        const value = resolveValue(dataset, path);
+        text += shape?.(value) ?? value; filled++;
       }
     }
     cursor = match.index + match[0].length;
@@ -332,13 +377,17 @@ const unlinked = (what: string): never => fail('WORKBENCH_UNLINKED', `연결 안
 function build(s: Session, work: Work, makeTemplate = false, library?: BlockLibrary, override?: Dataset) {
   need(s.doc, 'WORKBENCH_SOURCE');
   const dataset = makeTemplate ? undefined : override ?? datasetOf(s, work);
-  const compositionData=work.placements.length?undefined:dataset;
-  const template = emptyTemplate();
-  const formats: { row: Row; text: string; spans: { start: number; end: number }[]; block: boolean; keys: ReturnType<typeof findPlaceholders> }[] = [];
   const row = (id: string) => s.rows.find(r => r.id === id)!;
   const edits = work.edits.filter(e => e.text !== row(e.id).text);
+  // 원래 {{키}}가 있는 줄을 고치면(그 줄 안 지정 자리의 확정 포함) 엔진이 그 {{키}}를 따로 채워 편집과 겹친다(#180 TPL_CONFLICT):
+  // 블록 배치처럼 구조(편집·블록·배치)를 먼저 만들고 값은 다음 단계에서 한 번 채운다(꾸민 확정 자리는 `projected`가 먼저 넣는다)
+  const twoStage = work.placements.length > 0 || dataset !== undefined && edits.some(e => findPlaceholders(row(e.id).text).length > 0);
+  const compositionData = twoStage ? undefined : dataset;
+  const template = emptyTemplate();
+  const formats: { row: Row; text: string; spans: { start: number; end: number }[]; block: boolean; keys: ReturnType<typeof findPlaceholders> }[] = [];
+  const valueFormats = dataset ? formatsOf(s, work.inputItems) : new Map();
   for (const [i, edit] of edits.entries()) {
-    const r = row(edit.id), content = projected(edit.text, compositionData, true, makeTemplate||work.placements.length>0, decorationsOf(work.inputItems, r, edit.text)), id = `edit${i}`;
+    const r = row(edit.id), content = projected(edit.text, dataset, true, makeTemplate || twoStage, decorationsOf(work.inputItems, r, edit.text, valueFormats)), id = `edit${i}`;
     const partial = r.rangeEditable ? undefined : changedRange(s.doc, r, content.text);
     if (r.rangeEditable || partial) {
       const a = r.text.length ? makeWordAnchor(s.doc, id, r.sectionIndex, r.path, partial?.start ?? 0, partial?.end ?? r.text.length) : makeLineAnchor(s.doc, id, r.sectionIndex, r.path);
@@ -351,7 +400,7 @@ function build(s: Session, work: Work, makeTemplate = false, library?: BlockLibr
     formats.push({ row: r, ...content, block: false, keys: makeTemplate ? findPlaceholders(content.text).filter(k => !originalKeys.has(k.path)) : [] });
   }
   for (const [i, block] of work.blocks.entries()) {
-    const a = row(block.from), z = row(block.to), id = `block${i}`, content = projected(block.text, compositionData, true, makeTemplate||work.placements.length>0);
+    const a = row(block.from), z = row(block.to), id = `block${i}`, content = projected(block.text, compositionData, true, makeTemplate || twoStage);
     need(checkValueText(content.text, 'paragraphs') === undefined, 'WORKBENCH_TEXT');
     const anchor = makeRangeAnchor(s.doc, a.sectionIndex, a.path.slice(0, -1), a.path.at(-1)!, z.path.at(-1)!);
     need(anchor, 'WORKBENCH_RANGE'); template.anchors.push({ ...anchor, id });
@@ -363,7 +412,7 @@ function build(s: Session, work: Work, makeTemplate = false, library?: BlockLibr
     const anchor=makeRangeAnchor(s.doc,a.sectionIndex,a.path.slice(0,-1),a.path.at(-1)!,z.path.at(-1)!);need(anchor,'WORKBENCH_RANGE');
     template.anchors.push({...anchor,id});template.rules.push({id,do:{type:'inject',anchor:id,position:'replace',fragment:stored.fragment as unknown as Record<string,unknown>}});
   }
-  const result = generate(s.source, readTemplate(template), compositionData ?? readDataset({}), { missing: compositionData ? work.missing : 'keep', mode: 'baseline', allowNothingApplied: !template.rules.length && (!dataset || formats.some(f => f.spans.length)) });
+  const result = generate(s.source, readTemplate(template), compositionData ?? readDataset({}), { missing: compositionData ? work.missing : 'keep', mode: 'baseline', allowNothingApplied: twoStage || !template.rules.length && (!dataset || formats.some(f => f.spans.length)) });
   if (!result.ok || !('output' in result)) {
     if (result.report.plan.missingPaths.length) unlinked(`데이터에 없는 키 ${result.report.plan.missingPaths.length}개: ${result.report.plan.missingPaths.slice(0, 20).join(', ')}`);
     return fail(result.report.issues.find(i => i.severity === 'error')?.code ?? 'WORKBENCH_GENERATE', '문서 생성 검사를 통과하지 못했습니다.');
@@ -408,11 +457,11 @@ function build(s: Session, work: Work, makeTemplate = false, library?: BlockLibr
       return fail('WORKBENCH_TEMPLATE_INCOMPLETE', '누름틀로 만들지 못한 키가 있습니다. 키 전체가 같은 서식 안에 있도록 수정하세요. 일부만 만든 파일은 저장하지 않았습니다.');
     output = compiled.output;
   }
-  if(work.placements.length&&dataset){
+  if(twoStage&&dataset){
     const values=generate(output,emptyTemplate(),dataset,{missing:work.missing,mode:'baseline',allowNothingApplied:true});
     if(!values.ok||!('output' in values)){
       if(values.report.plan.missingPaths.length)unlinked(`데이터에 없는 키 ${values.report.plan.missingPaths.length}개: ${values.report.plan.missingPaths.slice(0,20).join(', ')}`);
-      return fail(values.report.issues.find(i=>i.severity==='error')?.code??'WORKBENCH_GENERATE','블록의 입력 값을 채우지 못했습니다. 데이터 항목을 확인하세요.');
+      return fail(values.report.issues.find(i=>i.severity==='error')?.code??'WORKBENCH_GENERATE','입력 값을 채우지 못했습니다. 데이터 항목을 확인하세요.');
     }
     output=values.output;filled+=values.report.plan.actions.filter(a=>a.type==='fill').reduce((n,a)=>n+a.targets,0);
   }
@@ -424,20 +473,20 @@ function build(s: Session, work: Work, makeTemplate = false, library?: BlockLibr
 }
 
 function buildText(s: Session, work: Work) {
-  const dataset = datasetOf(s, work);
+  const dataset = datasetOf(s, work), valueFormats = dataset ? formatsOf(s, work.inputItems) : new Map();
   const separators = [...s.sourceText!.matchAll(/\r\n|\r|\n/g)].map(m => m[0]);
   const edits = new Map(work.edits.filter(e => e.text !== s.rows.find(r => r.id === e.id)!.text).map(e => [e.id, e]));
   let text = '', filled = 0, ranges = 0;
   const left: string[] = [];
   for (let i = 0; i < s.rows.length; i++) {
     const row = s.rows[i]!, block = work.blocks.find(b => b.from === row.id), edit = edits.get(row.id);
-    const decorate = edit && !block ? decorationsOf(work.inputItems, row, edit.text) : undefined;
+    const decorate = edit && !block && dataset ? decorationsOf(work.inputItems, row, edit.text, valueFormats) : undefined;
     const content = (block ? block.text : edit ? edit.text : row.text).replace(/\{\{([^{}]*)\}\}/g, (token, key: string, at: number) => {
       const path = key.trim();
       if (/^[#/]/.test(path)) { ranges++; return token; }
       const value = dataset && isValidPath(path) ? resolvePathValue(dataset, path, 'error') : undefined;
       const shape = decorate?.get(at);
-      if (value?.kind === 'text') { filled++; return shape ? shape(value.text) : value.text; }
+      if (value?.kind === 'text') { filled++; return shape?.(value.text) ?? value.text; }
       left.push(token); return token;
     });
     if (block) i = s.rows.findIndex(r => r.id === block.to);

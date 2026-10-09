@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { compareToBaseline, isValidPath, openPackage, parseDocument, validateDocument, walkParagraphs } from '@hwpx-studio/engine';
+import { compareToBaseline, isValidPath, openPackage, parseDocument, placeText, readTypedValue, validateDocument, walkParagraphs } from '@hwpx-studio/engine';
 import { buildHwpx, mutateEntryText, readFixture } from '../../../packages/hwpx-engine/test/helpers.ts';
 import { gridTable, tableParagraph, textPara } from '../../../packages/hwpx-engine/test/table-helpers.ts';
 import { createWorkbench } from '../src/workbench.ts';
@@ -12,7 +12,7 @@ import { createApp } from '../src/server.ts';
 import {
   applyKeys, autoKey, changedSpan, confirmText, contextOf, isField, keptStatus, keyFor, mergeSaved, repsOf, samePlaceholder, spanNow, toCurrent, toOriginal, validKey, type InputItem,
 } from '../src/input-table.ts';
-import { decorateValue, suggestType as guess } from '../src/value-type.ts';
+import { suggestType as guess } from '../src/value-type.ts';
 const suggestType = (name: string, text: string) => guess(text, name).type;
 
 type Row = { id: string; sectionIndex: number; path: number[]; text: string; editable: boolean };
@@ -225,9 +225,9 @@ test('input table end to end: seeded 50 rounds designate dozens of places (body/
       if (first) assert.deepEqual(bytes, first); else first = bytes;
       for (const r of rows) {
         const mine = items.filter(i => i.row === r.id).sort((x, y) => x.start - y.start);
-        // 금액 이름(금액)의 항목은 타입 꾸밈(#147)을 거친다. 꾸밈 자체의 기대값은 value-type 시험이 따로 본다
+        // 금액 이름(금액)의 항목은 엔진 값 형식(#181): Helper 서식 판처럼 키마다 첫 지정의 타입, "원"으로 끝나는 지정 글이 있으면 단위 "원"(빈 지정은 서식 판에서 빠진다)
         let expected = '', at = 0;
-        for (const i of mine) { expected += r.text.slice(at, i.start) + decorateValue(i.type, value(i.key), r.text.slice(i.start, i.end), r.text.slice(i.end)); at = i.end; }
+        for (const i of mine) { expected += r.text.slice(at, i.start) + shown(items, i, value(i.key), rows); at = i.end; }
         assert.equal(textAt(bytes, r), expected + r.text.slice(at), 'round ' + round + ' ' + r.id);
       }
       const cmp = compareToBaseline(baseline, validateDocument(bytes)); newErrors += cmp.newErrors.length;
@@ -287,7 +287,7 @@ test('input table HTTP: the browser module is the same code after type stripping
     const typeFile = join(dir, 'value-type.mjs'); writeFileSync(typeFile, await types.text());
     const typed = await import(pathToFileURL(typeFile).href);
     assert.deepEqual(typed.suggestType('5개'), { type: 'quantity', unit: '개' });
-    assert.equal(typed.decorateValue('money', '1234000', '1,000', '원'), '1,234,000');
+    assert.equal(typed.decorateValue('quantity', '1200', '1,000부', ''), '1,200부');
   } finally { server.close(); rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -302,11 +302,18 @@ function typedSource() {
   return mutateEntryText(source, s.entryName, x => x.slice(0, start).replace('{{doc.title}}', '머리 금액 1,234,000원 · 2026. 10. 7.').replace('{{doc.owner}}', 'FOOTER_FIXED')
     + body.join('') + tableParagraph(gridTable([9000, 9000, 9000, 9000], 3, cells, { id: '3960' })) + textPara('OUTSIDE_FIXED') + x.slice(x.lastIndexOf('</hs:sec>')));
 }
+/** 지정 자리 값의 기대 글: 금액은 Helper 서식 판과 같은 값 표로 엔진 형식(키마다 첫 지정의 타입, "원"으로 끝나는 지정 글이 하나라도 있으면 단위 "원", 빈 지정은 빠진다) */
+function shown(items: readonly InputItem[], i: InputItem, value: string, rows: readonly Row[]): string {
+  const rowText = (x: InputItem) => rows.find(r => r.id === x.row)!.text, placed = items.filter(x => x.start < x.end && x.status !== 'excluded' && x.name.trim());
+  if (placed.find(x => x.key === i.key)?.type !== 'money') return value;
+  const unit = placed.some(x => x.key === i.key && /원\s*$/u.test(rowText(x).slice(x.start, x.end))) ? '원' : undefined, t = readTypedValue('money', value, unit ? { unit } : {});
+  return t.ok ? placeText(t.text, unit, rowText(i).slice(i.end)) : value;
+}
 const PLACES: [RegExp, 'money' | 'date' | 'quantity' | 'phone' | 'text'][] = [
   [/\d{1,3}(?:,\d{3})+원/g, 'money'], [/\d{4}(?:\. \d{1,2}\. \d{1,2}\.|-\d{2}-\d{2}|년 \d{1,2}월 \d{1,2}일)/g, 'date'], [/\d+개/g, 'quantity'], [/0\d{1,2}-\d{3,4}-\d{4}/g, 'phone'], [/홍길동/g, 'text'],
 ];
 
-test('type decoration end to end: seeded 50 rounds over 25 rows (body/cells/header) — amount commas with one 원, dates in the source shape, units, phones as given; determinism, new errors 0, source unchanged', t => {
+test('type decoration end to end: seeded 50 rounds over 25 rows (body/cells/header) — amount commas with one 원, dates in the engine form (#181), units, phones as given; determinism, new errors 0, source unchanged', t => {
   const source = typedSource(), sourceCopy = Buffer.from(source), baseline = validateDocument(source);
   const app = createWorkbench(), opened = open(app, source);
   const rows = opened.paragraphs.filter(r => r.editable && PLACES.some(([re]) => new RegExp(re.source).test(r.text)));
@@ -328,9 +335,10 @@ test('type decoration end to end: seeded 50 rounds over 25 rows (body/cells/head
         let value: unknown, text: string;
         if (type === 'money') { const n = 1 + next(2_000_000_000); value = [n, String(n), n + '원'][next(3)]; text = won.format(n) + (withWon ? '원' : ''); }
         else if (type === 'date') {
-          const y = 2020 + next(20), mo = 1 + next(12), da = 1 + next(28), orig = m[0];
+          const y = 2020 + next(20), mo = 1 + next(12), da = 1 + next(28);
           value = [`${y}-${two(mo)}-${two(da)}`, `${y}.${mo}.${da}`, `${y}년 ${mo}월 ${da}일`, `${y}${two(mo)}${two(da)}`][next(4)];
-          text = orig.includes('년') ? `${y}년 ${mo}월 ${da}일` : orig.includes('-') ? `${y}-${two(mo)}-${two(da)}` : `${y}. ${mo}. ${da}.`;
+          // 엔진 날짜 형식(Helper와 같은 YYYY. MM. DD.). 엔진이 읽지 못하는 꼴(`2026년 1월 5일`)은 받은 그대로
+          text = (value as string).includes('년') ? value as string : `${y}. ${two(mo)}. ${two(da)}.`;
         } else if (type === 'quantity') { const k = 1 + next(5000); value = String(k); text = k + '개'; }
         else if (type === 'phone') { value = ['0' + (2 + next(6)) + '-' + (100 + next(900)) + '-' + (1000 + next(9000)), '010' + String(next(1e8)).padStart(8, '0'), '0212345678'][next(3)]; text = value as string; }
         else { value = '김' + next(100) + ' & <값> ' + 'ㄱ'.repeat(next(200)); text = value as string; }
@@ -373,7 +381,7 @@ test('type decoration end to end: seeded 50 rounds over 25 rows (body/cells/head
   t.diagnostic(`seed=0x147d; rounds=50; rows=25; places=${places} (${Object.entries(counts).map(([k, v]) => k + ' ' + v).join(', ')}); generations=${generated}; deterministic_pairs=50; new_errors=${newErrors}; source unchanged`);
 });
 
-test('type decoration: the confirm sentences (1234000 → 1,234,000원 once; date keeps the source shape; leading zeros stay), a user-chosen type, TXT too, and only places confirmed in the workbench', () => {
+test('type decoration: the confirm sentences (1234000 → 1,234,000원 once; date in the engine form like Helper, #181; leading zeros stay), a user-chosen type, TXT too, and only places confirmed in the workbench', () => {
   const source = buildHwpx([[textPara('금액: 1,000원'), textPara('계약 금액 5,000,000 원정'), textPara('신청일: 2026. 10. 7.'), textPara('전화: 02-123-4567'), textPara('식별: 0101011234567'), textPara('원래 자리 {{총액}}원'), textPara('그대로 2026-10-07')].join('')]);
   const app = createWorkbench(), opened = open(app, source), [money, money2, date, phone, id, holder, plainDate] = opened.paragraphs as Row[];
   const item = (r: Row, value: string, key: string, type: InputItem['type'], extra: Partial<InputItem> = {}): InputItem => {
@@ -391,7 +399,7 @@ test('type decoration: the confirm sentences (1234000 → 1,234,000원 once; dat
   post(app, opened.session, 'generate', { ...blank, edits, inputItems: items });
   const out = output(app, opened.session);
   assert.deepEqual([money, money2, date, phone, id, holder, plainDate].map(r => textAt(out, r!)),
-    ['금액: 1,234,000원', '계약 금액 7,000,000 원정', '신청일: 2026. 11. 2.', '전화: 0212345678', '식별: 0101011234567', '원래 자리 1234000원', '그대로 2026-11-02']);
+    ['금액: 1,234,000원', '계약 금액 7,000,000 원정', '신청일: 2026. 11. 02.', '전화: 0212345678', '식별: 0101011234567', '원래 자리 1234000원', '그대로 2026-11-02']);
   // 같은 편집인데 타입이 글이면(옛 작업 파일 포함) 값 그대로
   post(app, opened.session, 'generate', { ...blank, edits, inputItems: items.map(i => ({ ...i, type: 'text' })) });
   assert.equal(textAt(output(app, opened.session), money!), '금액: 1234000');
@@ -401,5 +409,5 @@ test('type decoration: the confirm sentences (1234000 → 1,234,000원 once; dat
   const titems = [item(l1!, '1,000', '금액', 'money'), item(l2!, '2026년 10월 7일', '날짜', 'date'), item(l3!, '3 명', '수량', 'quantity')];
   const tedits = titems.map(i => { const r = (txt.paragraphs as Row[]).find(x => x.id === i.row)!, res = confirmText(r.text, r.text, [], [{ start: i.start, end: i.end, key: i.key }]); assert('text' in res); return { id: r.id, text: res.text }; });
   post(app, txt.session, 'data', { name: 'data.json', content: JSON.stringify({ 금액: '2500000원', 날짜: '2026-01-05', 수량: 12 }) });
-  assert.equal(post(app, txt.session, 'generate', { ...blank, edits: tedits, inputItems: titems }).text, '금액: 2,500,000원\n날짜 2026년 1월 5일 마감\n수량 12 명');
+  assert.equal(post(app, txt.session, 'generate', { ...blank, edits: tedits, inputItems: titems }).text, '금액: 2,500,000원\n날짜 2026. 01. 05. 마감\n수량 12 명');
 });

@@ -22,7 +22,7 @@ const wrong = (run: () => unknown, code: string) => assert.throws(run, (e: any) 
 const blank = { index: 0, edits: [] as { id: string; text: string }[], headings: [], blocks: [] };
 
 // 본문 18(짝수 줄: 누름틀 + {{사업명}}, 홀수 줄: 지정할 글, 끝 6줄: {{공고번호}} + {{사업명}}), 표 칸 12(지정할 금액), 머리말 1(지정할 글). 누름틀은 기관명 4·담당자 2.
-// 지정 자리는 원래 {{키}}가 없는 줄에만 둔다(원래 {{키}}가 있는 줄의 편집은 작업창 생성이 TPL_CONFLICT로 막는다. 이번 변경 전부터의 한계)
+// 지정 자리는 원래 {{키}}가 없는 줄에 둔다({{키}}가 있는 줄 안의 지정은 preview-parity 시험, #180)
 const FIELDS = ['기관명', '담당자', '기관명'];
 function linkSource(): Uint8Array {
   const source = readFixture('hancom/header-footer'), s = parseDocument(openPackage(source)).sections[0]!, start = s.paragraphs[0]!.element.end;
