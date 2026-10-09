@@ -687,13 +687,16 @@ export function createWorkbench(library?: BlockLibrary) {
         const s = sessionOf(input.session);
         if (path === '/api/workbench/block-preview') {
           if (!library) return fail('BLOCK_STORE', '블록 저장소를 사용할 수 없습니다.');
-          if (!s.doc || s.kind !== 'hwpx') return fail('BLOCK_HWPX', '이번 블록 저장은 HWPX 원문에서만 지원합니다.');
-          const from = s.rows.find(r => r.id === input.from), to = s.rows.find(r => r.id === input.to);
+          // 임시로 연 다른 문서(#153, 비교 문서 열기와 같은 읽기)는 이번 요청에서만 연다. 세션·작업은 그대로이고 저장할 초안만 이 세션에 둔다
+          const other = input.compare; need(other === undefined || isObj(other));
+          const src = other === undefined ? s : open(other.name, other.content);
+          if (!src.doc || src.kind !== 'hwpx') return fail('BLOCK_HWPX', '이번 블록 저장은 HWPX 원문에서만 지원합니다.');
+          const from = src.rows.find(r => r.id === input.from), to = src.rows.find(r => r.id === input.to);
           need(from && to, 'WORKBENCH_POSITION');
           if (!sameParent(from, to)) return fail('BLOCK_BOUNDARY', '표 칸이나 본문 경계를 넘는 범위는 저장할 수 없습니다. 같은 칸 안이나 같은 본문에서 선택하세요.');
           const selection = { sectionIndex: from.sectionIndex, parentPath: from.path.slice(0, -1),
             from: Math.min(from.path.at(-1)!, to.path.at(-1)!), to: Math.max(from.path.at(-1)!, to.path.at(-1)!) };
-          const draft = extractBlockDraft(s.doc, s.name, selection);
+          const draft = extractBlockDraft(src.doc, src.name, selection);
           s.blockPreviews ??= new Map();
           // One pending extraction per document bounds memory; an older dialog cannot save a newer selection.
           s.blockPreviews.clear(); s.blockPreviews.set(draft.id, draft);

@@ -35,6 +35,14 @@ export const validKey = (key: string): boolean => KEY.test(key);
 export const isField = (origin: ItemOrigin): boolean => origin === 'clickHere' || origin === 'mailMerge';
 /** 남은 상태(제외를 되돌릴 때): 사용자가 지정한 것은 지정, 문서에서 찾은 것은 추천 */
 export const keptStatus = (origin: ItemOrigin): ItemStatus => origin === 'user' ? 'designated' : 'recommended';
+/** 추천 목록 한 줄의 유지/제외 바꾸기: 확정은 그대로, 유지로 되돌리면 입력 항목은 `keptStatus`, 다른 종류는 추천 */
+export const reviewed = (r: { kind: string; origin?: ItemOrigin; status: string }, next: 'keep' | 'excluded'): string =>
+  r.status === 'confirmed' ? r.status : next === 'excluded' ? 'excluded' : r.kind === 'input' ? keptStatus(r.origin ?? 'user') : 'recommended';
+/** 끌기·Shift 범위(#152): 보이는 줄 id 목록에서 a부터 b까지(순서 무관, 없는 id면 빈 목록) */
+export function between(ids: readonly string[], a: string, b: string): string[] {
+  const i = ids.indexOf(a), j = ids.indexOf(b);
+  return i < 0 || j < 0 ? [] : ids.slice(Math.min(i, j), Math.max(i, j) + 1);
+}
 const keyText = (key: string) => '{{' + key + '}}';
 
 /**

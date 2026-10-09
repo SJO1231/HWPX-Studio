@@ -102,7 +102,7 @@ export function installBlockLibrary({selection, session, api, status, beforeOpen
           }catch(e){status(e.message,'error');body.append(element('p',e.message,'block-warning'));}
           finally{busy=false;place.disabled=false;}
         });
-        try{selection();}catch(e){place.disabled=true;place.title=e.message;body.append(element('p',e.message,'muted'));}
+        try{if(selection().compare)throw Error('원문 보기에서 넣을 범위를 고르세요.');}catch(e){place.disabled=true;place.title=e.message;body.append(element('p',e.message,'muted'));}
         body.append(place);
       }
 
@@ -164,5 +164,5 @@ export function installBlockLibrary({selection, session, api, status, beforeOpen
       el.disabled = Boolean(reason) || busy; el.title = reason || '선택한 문단 전체를 확인한 뒤 저장합니다.';
     }
   }
-  return {begin, refresh, manage, showItem, preview, dispose};
+  return {begin, refresh, manage, showItem, showList, preview, dispose};
 }
