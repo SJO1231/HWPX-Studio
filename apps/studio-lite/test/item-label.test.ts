@@ -74,6 +74,24 @@ test('item labels: colon 12 · row header 10 (row span) · heading 13; nearest f
   t.diagnostic(`colon=${hits.colon}/12; rowHeader=${hits.rowHeader}/10; heading=${hits.heading}/13; misses=0`);
 });
 
+test('#205 heading labels follow the edited tree (outline ids): a removed heading is skipped, an added one is used; no outline = detected tree', t => {
+  const app = createWorkbench(), opened = open(app, labelSource()), rows = opened.paragraphs;
+  const id = (text: string) => rows.find(r => r.text === text)!.id, index = (text: string) => rows.findIndex(r => r.text === text);
+  // 고친 트리: "3. 기타"를 빼고 본문 "예시 값 3 입니다"를 제목으로
+  const outline = [id('1. 사업 개요'), id('2. 표 자리'), id('예시 값 3 입니다')];
+  const ask = (i: number, tree?: string[]) => { const r = rows[index(`예시 값 ${i} 입니다`)]!, start = r.text.indexOf(`값 ${i}`); return post(app, opened.session, 'item-label', { row: r.id, start, end: start + `값 ${i}`.length, ...(tree ? { outline: tree } : {}) }).label as ItemLabel | undefined; };
+  let hits = 0;
+  for (let i = 0; i < 12; i++) {
+    const at = index(`예시 값 ${i} 입니다`);
+    assert.deepEqual(ask(i, outline), i <= 3 ? L('2. 표 자리', 'heading', at - index('2. 표 자리')) : L('예시 값 3 입니다', 'heading', i - 3), String(i)); hits++;
+    assert.deepEqual(ask(i), L('3. 기타', 'heading', i + 1));
+    assert.equal(ask(i, []), undefined);
+  }
+  wrong(() => post(app, opened.session, 'item-label', { row: id('예시 값 1 입니다'), start: 0, end: 1, outline: ['p:9:9'] }), 'WORKBENCH_POSITION');
+  wrong(() => post(app, opened.session, 'item-label', { row: id('예시 값 1 입니다'), start: 0, end: 1, outline: 'x' }), 'WORKBENCH_INPUT');
+  t.diagnostic(`edited-tree heading labels=${hits}/12; detected tree unchanged`);
+});
+
 test('colon labels: only the first place right after `label:` (spaces between), spaced labels, field marks', () => {
   const at = (text: string, value: string, from = 0) => colonLabelBefore(text, text.indexOf(value, from));
   const range = '① 접수 기간: 2026. 1. 5. 09:00 ~ 2026. 1. 9. 18:00';

@@ -2,11 +2,11 @@ import {viewerLines, lineAt} from '/viewer-lines.js';
 import { installBlockLibrary } from '/block-library.js';
 import {editorLayout, editorSelection, unitAt, replaceEditorText, groupEditorSelection, editorChange} from '/editor-model.js';
 import { createPageView, createLatest, toPagePoint } from '/packages/viewer/src/dom/index.ts';
-import {STATUS_LABEL, REL_LABEL, LABEL_MAX, isField, keptStatus, autoKey, repsOf, changedSpan, toOriginal, spanNow, contextOf, contextAround, mergeSaved, nameFromLabel, designated, rankKeys, planConfirm, dropRow, commitConfirm, linkNote, rowAria, itemOf, valueKey, linkTargets, sameValueCount, reviewed, between} from '/input-table.js';
+import {STATUS_LABEL, REL_LABEL, LABEL_MAX, isField, keptStatus, autoKey, repsOf, changedSpan, toOriginal, spanNow, contextOf, contextAround, mergeSaved, nameFromLabel, designated, rankKeys, planConfirm, dropRow, commitConfirm, linkNote, rowAria, itemOf, valueKey, linkTargets, sameValueCount, reviewed, between, sweepChanges} from '/input-table.js';
 import {VALUE_TYPES, TYPE_LABEL, suggestType} from '/value-type.js';
 import { loadRhwp, openDocument, runPosition, sameParagraph } from '/packages/viewer/src/rhwp/index.ts';
 import {FLAG_WAIT, flagRequest, flagRefusal, spanLabel} from '/range-flag.js';
-import {branchFlow, headingBlocks, applySimilar, moveSlot} from '/branch-flow.js';
+import {branchFlow, headingBlocks, applySimilar, moveSlot, inOrder, relevel} from '/branch-flow.js';
 
 const $ = (selector) => document.querySelector(selector);
 const state = {
@@ -55,10 +55,12 @@ function controls() {
   $('#undo').disabled=!available||!state.history.length; $('#redo').disabled=!available||!state.future.length;
   for(const button of document.querySelectorAll('[data-action]')) {
     const name=button.dataset.action;
+    // 비교 보기(#209): 바탕 문서에서 앞서 고른 것에 작용하는 항목은 끈다. 블록 저장·비교 글 복사·가져오기만
+    if(state.viewMode==='comparison'&&!['saveBlock','copySelection','importSelection'].includes(name)){button.disabled=true;button.title='비교 보기에서는 블록 저장·복사·가져오기만 씁니다.';continue;}
     // 깃발은 원문에서 누른 점이 있어야 한다(편집 글·목록에서 고른 것은 점이 없다)
     if(name==='flagStart'||name==='flagEnd'){const point=currentPick()?.point;button.disabled=!available||!point||name==='flagEnd'&&!state.flag;button.title=!button.disabled?'':!point?'원문에서 자리를 먼저 누르세요.':'시작 깃발을 먼저 찍으세요.';continue;}
     // 이것과 같은 것 전부(#151): 글이 있는 HWPX 문단 하나를 골랐을 때
-    if(name==='similar'){button.disabled=!available||state.kind!=='hwpx'||!headingName(state.chosen).trim();continue;}
+    if(name==='similar'){button.disabled=!available||state.kind!=='hwpx'||!headingName(state.chosen).trim();button.title='';continue;}
     if(name==='labelPick'){const target=labelTarget();button.disabled=!available||!target;button.textContent='참고 글 지정'+(target?' · '+(target.name.trim()||'이름 없음').slice(0,10):'');
       button.title=target?'선택한 글을 '+(target.name.trim()||'이름 없는')+' 항목의 라벨(참고 글)로 씁니다.':'입력 항목을 지정하거나 표에서 고른 뒤, 라벨로 쓸 다른 글을 고르세요.';continue;}
     button.disabled=name==='copyKey'?!available||!$('#key-select').value.trim():name==='importSelection'?!canEdit||!state.comparisonText:name==='copySelection'?!available:name==='dataDetail'?!available||!(canEdit||state.activeRecommendation?.kind==='input'):!canEdit;
@@ -858,10 +860,10 @@ function renderPlacements(){
   const box=$('#block-placements');box.replaceChildren();box.hidden=!state.placements.length;
   if(!state.placements.length)return;
   const title=document.createElement('strong');title.textContent='배치한 블록 · 생성 결과에만 반영';box.append(title);
-  for(const [i,p] of state.placements.entries()){
+  for(const p of inOrder(state.paragraphs.map(r=>r.id),state.placements)){
     const row=document.createElement('div'),label=document.createElement('span'),remove=document.createElement('button');
     label.textContent=(state.placementNames[p.id]??'저장 블록')+' · 판 '+p.version+' · 문단 '+(state.paragraphs.findIndex(r=>r.id===p.from)+1)+'–'+(state.paragraphs.findIndex(r=>r.id===p.to)+1);
-    remove.type='button';remove.textContent='배치 취소';remove.disabled=state.busy;remove.onclick=()=>{remember();state.placements.splice(i,1);changed();renderEditor();renderHeadingTree();};row.append(label,remove);box.append(row);for(const message of state.placementWarnings[p.id+':'+p.from]??[]){const note=document.createElement('p');note.className='placement-warning';note.textContent=message;box.append(note);}
+    remove.type='button';remove.textContent='배치 취소';remove.disabled=state.busy;remove.onclick=()=>{remember();state.placements.splice(state.placements.indexOf(p),1);changed();renderEditor();renderHeadingTree();};row.append(label,remove);box.append(row);for(const message of state.placementWarnings[p.id+':'+p.from]??[]){const note=document.createElement('p');note.className='placement-warning';note.textContent=message;box.append(note);}
   }
 }
 function uiNode(tag,text,className){const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(className)e.className=className;return e;}
@@ -869,7 +871,8 @@ function headingOf(id){const index=state.paragraphs.findIndex(p=>p.id===id);retu
 function renderHeadingTree(){
   const tree=$('#heading-tree');tree.replaceChildren();const parents=[];
   for(const h of state.outline){const d=uiNode('details',undefined,'heading-node');d.dataset.row=h.id;const summary=uiNode('summary',h.name);summary.style.paddingLeft=Math.min(3,Math.max(0,h.level-1))*8+'px';d.append(summary);
-    const jump=uiNode('button','원문으로');jump.type='button';jump.onclick=()=>{selectRow(h.id);setCurrentHeading(h.id);};d.append(jump);while(parents.length&&parents.at(-1).level>=h.level)parents.pop();(parents.at(-1)?.node??tree).append(d);parents.push({level:h.level,node:d});
+    const jump=uiNode('button','원문으로');jump.type='button';jump.onclick=()=>{selectRow(h.id);setCurrentHeading(h.id);};d.append(jump);
+    for(const [text,by] of [['단계 올림',-1],['단계 내림',1]]){const b=uiNode('button',text);b.type='button';b.title='지금 단계 '+h.level;b.disabled=h.level+by<1||h.level+by>99;b.onclick=()=>setLevel(h.id,by);d.append(b);}while(parents.length&&parents.at(-1).level>=h.level)parents.pop();(parents.at(-1)?.node??tree).append(d);parents.push({level:h.level,node:d});
     summary.addEventListener('click',e=>{e.preventDefault();setCurrentHeading(h.id);});
     summary.addEventListener('dragenter',()=>{if(dragSlot!==undefined)d.open=true;});
   }
@@ -893,6 +896,13 @@ function renderHeadingTree(){
   // 분기점은 선택 사항이다: 없으면 "분기 없음"만(4c.7)
   if(state.session&&state.kind==='hwpx'&&!state.branches.length)tree.append(uiNode('p','분기 없음','rail-empty'));
   followHeading();
+}
+/** 제목 단계 바꾸기(#205): 트리 모양과 블록 후보를 고친 단계로 다시(같은 범위였던 후보 상태는 그대로). 원문은 그대로, 실행 취소 한 번 */
+function setLevel(id,by){
+  if(state.busy)return;remember();state.outline=relevel(state.outline,id,by);
+  const blocks=blockRecs();state.recommendations=[...state.recommendations.filter(r=>r.kind!=='block'),...blocks];
+  touched();renderHeadingTree();setCurrentHeading(id);renderRecommendations();controls();
+  status('제목 단계 '+state.outline.find(h=>h.id===id).level+' · 블록 후보 '+blocks.length+'개. 원문은 그대로입니다.','success');
 }
 /** 흐름 트리 끌어 놓기(#153): 문서 순서 from번째 블록 자리 항목을 to번째로(요구 8.3-5: 분기점·배치의 순서가 블록 순서). 원문 글은 그대로, 실행 취소 한 번 */
 function moveSlotTo(from,to){
@@ -982,7 +992,7 @@ function renderRecommendations(){
     d.append(actions);root.append(d);
   }
   if(!groups.size)root.append(uiNode('p',state.session?'추천 없음 · 원문에서 직접 고를 수 있습니다.':'문서를 열면 추천이 표시됩니다.','rail-empty'));
-  $('#review-undo').disabled=state.busy||!state.reviewHistory.length;
+  for(const id of ['review-undo','table-undo'])$('#'+id).disabled=state.busy||!state.reviewHistory.length;
   const blocks=state.recommendations.filter(r=>r.kind==='block'),checked=blocks.filter(r=>r.status==='recommended');const save=$('#save-checked-blocks');save.hidden=!blocks.length;save.disabled=state.busy||!checked.length;save.textContent='체크한 블록 '+checked.length+'개 저장';
 }
 /** 유지/제외 바꾸기. 유지로 되돌리면 사용자가 지정한 것은 지정, 문서에서 찾은 것은 추천이다. 확정한 줄은 바꾸지 않는다 */
@@ -1043,7 +1053,7 @@ async function designate(name=''){
     if(!r&&inputItems().some(x=>x.row===at.row&&x.status!=='excluded'&&(x.start<at.end&&at.start<x.end||x.start===at.start)))throw Error('이미 지정한 자리와 겹칩니다. 목록에서 그 줄을 고르세요.');
     if(!r){const session=state.session,revision=state.revision;
       // 글자 모양 검사와 가까운 라벨(#148: 같은 문단 앞 "라벨:" → 같은 표 행 왼쪽 라벨 칸 → 위 제목)을 함께 묻는다
-      const [problem,found]=await Promise.all([rangeProblem(paragraph(at.row),{start:at.start,end:at.end}),api('item-label',{session,...at}).catch(()=>({}))]);
+      const [problem,found]=await Promise.all([rangeProblem(paragraph(at.row),{start:at.start,end:at.end}),api('item-label',{session,...at,outline:state.outline.map(h=>h.id)}).catch(()=>({}))]);
       if(session!==state.session||revision!==state.revision)return;if(problem)throw Error(problem);
       remember();r=itemRec(designated(at,found.label));retype(r);state.recommendations.push(r);sortRecs();}
     else remember();}
@@ -1260,15 +1270,17 @@ $('#designate-input').onclick=()=>designateOnly($('#detail-name').value);
 $('#remote-form').onsubmit=e=>{e.preventDefault();const name=$('#remote-name').value;if(name.trim())confirmInput(name,$('#detail-key').value);else designateOnly('');};
 $('#remote-designate').onclick=()=>designateOnly($('#remote-name').value);
 $('#remote-close').onclick=hideMenu;
-$('#review-undo').onclick=()=>{const old=state.reviewHistory.pop();if(old)for(const r of state.recommendations)if(r.status!=='confirmed'&&old.has(r.id))r.status=old.get(r.id);touched();renderInputs();controls();};
+$('#review-undo').onclick=$('#table-undo').onclick=()=>{const old=state.reviewHistory.pop();if(old)for(const r of state.recommendations)if(r.status!=='confirmed'&&old.has(r.id))r.status=old.get(r.id);touched();renderInputs();controls();};
 // ── 여러 줄 끌기·Shift 범위(#152): 체크 칸을 누른 채 끌면 지나간 줄이, Shift+누름은 앞서 누른 줄부터 그 줄까지 모두 첫 줄의 새 상태(유지/제외)가 된다. 확정 줄은 그대로, 되돌리기 한 번에 끌기 전으로 ──
 let sweep,sweepAnchor;
 function installSweep(root,rowSel,idOf){
   const shown=()=>[...root.querySelectorAll(rowSel)].filter(l=>l.offsetParent),boxOf=l=>l.querySelector('input[type=checkbox]');
   const paint=()=>{const on=new Set(between(sweep.ids,sweep.from,sweep.to));for(const [l,was] of sweep.was){const box=boxOf(l);if(!box.disabled)box.checked=on.has(idOf(l))?sweep.next==='keep':was;}};
   root.addEventListener('pointerdown',e=>{
-    const box=e.target.closest?.('input[type=checkbox]'),line=box?.closest(rowSel);if(!line||box.disabled||e.button!==0||state.busy)return;
-    e.preventDefault();const lines=shown(),ids=lines.map(idOf),id=idOf(line),shift=e.shiftKey&&sweepAnchor?.root===root&&ids.includes(sweepAnchor.id);
+    const box=e.target.closest?.('input[type=checkbox]'),line=box?.closest(rowSel);if(!line||e.button!==0||state.busy)return;
+    const lines=shown(),ids=lines.map(idOf),id=idOf(line),shift=e.shiftKey&&sweepAnchor?.root===root&&ids.includes(sweepAnchor.id);
+    // 확정 줄(체크 칸 꺼짐)은 Shift 범위의 끝으로만 쓴다(그 줄은 건너뛴다)
+    if(box.disabled&&!shift)return;e.preventDefault();
     sweep={root,ids,from:shift?sweepAnchor.id:id,to:id,next:shift?sweepAnchor.next:box.checked?'excluded':'keep',was:new Map(lines.map(l=>[l,boxOf(l).checked]))};paint();
   });
   // 마우스로 누른 체크 토글은 끌기가 맡는다(키보드 Space는 그대로)
@@ -1276,7 +1288,7 @@ function installSweep(root,rowSel,idOf){
   document.addEventListener('pointermove',e=>{if(sweep?.root!==root)return;const line=document.elementFromPoint(e.clientX,e.clientY)?.closest(rowSel),id=line&&idOf(line);if(id&&id!==sweep.to&&sweep.ids.includes(id)){sweep.to=id;paint();}});
   // 바꾸기는 click(위에서 막음)이 지난 뒤에 한다: 먼저 다시 그리면 떨어져 나간 체크 칸이 토글된다
   document.addEventListener('pointerup',()=>{if(sweep?.root!==root)return;const s=sweep;sweep=undefined;sweepAnchor={root,id:s.to,next:s.next};setTimeout(()=>{
-    const ids=new Set(between(s.ids,s.from,s.to)),items=state.recommendations.filter(r=>ids.has(r.id)&&r.status!=='confirmed');
+    const items=sweepChanges(state.recommendations,s.ids,s.from,s.to,s.next);
     if(!items.length){renderInputs();return;}reviewChange(items,s.next);status((s.next==='keep'?'유지 ':'제외 ')+items.length+'줄','success');});});
   document.addEventListener('pointercancel',()=>{if(sweep?.root===root){sweep=undefined;renderInputs();}});
 }

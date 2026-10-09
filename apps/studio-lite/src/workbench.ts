@@ -72,7 +72,7 @@ function inputsOf(s: Session): Input[] {
   for (const x of out) { const label = labelOf(s, s.rows.find(r => r.id === x.row)!, x.start); if (label) x.label = label; }
   return out.sort((a, b) => (order.get(a.row) ?? 0) - (order.get(b.row) ?? 0) || a.start - b.start);
 }
-const labelOf = (s: Session, row: Row, start: number) => labelAt(s.doc, s.rows, s.headings ?? [], row, start);
+const labelOf = (s: Session, row: Row, start: number, headings = s.headings ?? []) => labelAt(s.doc, s.rows, headings, row, start);
 
 function placementInfo(s:Session,selected:Placement,library:BlockLibrary){
   need(s.doc,'BLOCK_HWPX');
@@ -776,7 +776,10 @@ export function createWorkbench(library?: BlockLibrary) {
           const row = s.rows.find(r => r.id === input.row); need(row, 'WORKBENCH_POSITION');
           const start = input.start as number, end = input.end as number;
           need(Number.isInteger(start) && Number.isInteger(end) && start >= 0 && start <= end && end <= row.text.length, 'WORKBENCH_POSITION');
-          const label = labelOf(s, row, start);
+          // 위 제목은 화면의 제목 트리(#205: 고친 트리의 문단 id들, 이름은 탐지와 같은 글 앞 40자)로 찾는다. 없으면 탐지 트리
+          need(input.outline === undefined || Array.isArray(input.outline) && input.outline.length <= 3000);
+          const headings = (input.outline as unknown[] | undefined)?.map(id => { const h = s.rows.find(r => r.id === id); need(h, 'WORKBENCH_POSITION'); return { id: h.id, name: h.text.replaceAll('\uFFFC', '').slice(0, 40) }; });
+          const label = labelOf(s, row, start, headings);
           return label ? { label } : {};
         }
         if (path === '/api/workbench/check-input') {
