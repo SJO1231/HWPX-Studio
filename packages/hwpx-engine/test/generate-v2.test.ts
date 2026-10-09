@@ -217,7 +217,8 @@ test("8.8.13 5단계: 정상 템플릿은 앵커 전부 exact, 지문 없는 cel
   const base = ok(r);
   assert.equal(base.report.anchors.length, k.t.anchors.length);
   assert.deepEqual([...new Set(base.report.anchors.map((x) => x.state))], ["exact"]);
-  assert.deepEqual(base.report.warnings, []);
+  // 경고는 where·occurrence 시험용으로 일부러 남긴 필드의 미등록뿐이다(#134)
+  assert.deepEqual(base.report.warnings.map((w) => w.where), ["clickHere:이름", "mailMerge:재공고", "mailMerge:사유 설명"]);
   const run = (edit: (anchors: Record<string, any>[]) => void): StudioGenerateResult => {
     const t = withRaw(k, (raw) => edit(raw["anchors"] as Record<string, any>[]));
     return generateFromTemplate(k.bytes, t, record, { ...c, template: caseOf(t, record).template }, loaderOf(k.blobs));
@@ -228,7 +229,7 @@ test("8.8.13 5단계: 정상 템플릿은 앵커 전부 exact, 지문 없는 cel
     return a;
   };
   const unverified = ok(run((anchors) => delete byId(anchors, "a14")["print"]));
-  assert.deepEqual(unverified.report.warnings.map((w) => w.code), ["ANCHOR_UNVERIFIED"]);
+  assert.deepEqual(unverified.report.warnings.map((w) => w.code).filter((code) => code !== "PLACE_UNREGISTERED"), ["ANCHOR_UNVERIFIED"]);
   assert.equal(unverified.report.anchors.find((x) => x.anchor === "a14")?.state, "unverified");
   assert.ok(bytesEqual(out(unverified), out(base)));
   const broken = run((anchors) => {
@@ -375,7 +376,7 @@ test("W8: 등록되지 않은 {{ }}는 unregistered: error면 PLACE_UNREGISTERED
   assert.match(r.report.issues.find((i) => i.code === "PLACE_UNREGISTERED")?.message ?? "", /미등록 키/);
   const t = withRaw(k, (raw) => (raw["options"] = { ...raw["options"], unregistered: "keep" }));
   const res = ok(generateFromTemplate(k.bytes, t, record, c(t), loaderOf(k.blobs)));
-  assert.equal(res.report.warnings.filter((w) => w.code === "PLACE_UNREGISTERED").length, 1);
+  assert.equal(res.report.warnings.filter((w) => w.code === "PLACE_UNREGISTERED" && w.where?.startsWith("{{") === true).length, 1);
   assert.ok(allTexts(reparse(out(res))).includes("끝 {{ 미등록 키 }} 조항"));
 });
 

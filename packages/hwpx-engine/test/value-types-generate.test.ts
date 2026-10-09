@@ -106,7 +106,8 @@ function typedTemplate(bytes: Uint8Array): StudioTemplate {
     schema: "hwpx-studio/template@2", id: "t00000131", version: 1, meta: { name: "타입 7종(시험)" },
     source: { kind: "hwpx", sha256: sha256Hex(bytes) }, anchors: [],
     values, bindings: names.map((name) => ({ value: id.get(name), key: name })), places, slots: [], blocks: [],
-    options: { missing: "error", unregistered: "error" },
+    // unregistered 생략: 미등록 {{ }}는 막고 이 시험이 자리로 쓰지 않는 누름틀은 경고만(#134. "error"라고 적으면 필드도 막는다)
+    options: { missing: "error" },
   };
   const t = readStudioTemplate(JSON.stringify(raw));
   assert.ok(t.schema === "hwpx-studio/template@2");

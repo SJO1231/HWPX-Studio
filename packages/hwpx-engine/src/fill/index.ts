@@ -28,6 +28,7 @@ export { generateBatch, planBatchNames, safeFileStem, sanitizeFileStem, type Bat
 export { findCandidates, isLabelText, colonLabel, type Candidate, type CandidateKind, type AnchorDraft } from "./candidates.ts";
 export { draftAnchors, type DraftBlock, type DraftedAnchor, type DraftRequest } from "./draft.ts";
 export { generateFromTemplate } from "./generate-studio.ts";
+export { listUnregisteredPlaces } from "./unregistered.ts";
 export type { BlobLoader, CoveredPlace, StudioGenerateOptions, StudioGenerateReport, StudioGenerateResult, StudioLedger, StudioValueReport } from "./studio-common.ts";
 export { checkAnchors, planRelocation, redraftAnchor, type AnchorAddress, type AnchorCheck, type AnchorCheckState, type RedraftInput } from "./check-anchors.ts";
 export {
