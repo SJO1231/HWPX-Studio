@@ -1209,7 +1209,6 @@ $('#block-library-dialog').addEventListener('close',()=>{if(!$('#library-list').
 renderHeadingTree();renderRecommendations();
 
 // ── 분기점(#7): 고른 범위를 분기점으로(원문은 그대로), 저장소 블록을 후보로, 경우 표(결정 값 → 블록, 기본 블록), 이 업무 건의 직접 고름 ──
-// shortcut: 크게 보기 흐름도(분기점 → 경우 → 블록 한눈에, M.4·M.5)는 2차다, 분기점 묶음 2차에서 왼쪽 "크게 보기"에 붙인다
 /** 지금 범위를 분기점으로 만들 수 없는 까닭(없으면 undefined): 블록 저장과 같은 범위 조건 + 다른 분기점·넣은 블록과 겹치지 않음 */
 function branchProblem(){
   let range;try{range=blockSelection();}catch(e){return e.message;}
