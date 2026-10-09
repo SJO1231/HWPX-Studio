@@ -3,18 +3,18 @@ import { HwpxError, makeIssue, type Issue } from "../errors.ts";
 import { planImport } from "../fragment/import.ts";
 import type { ImportOptions, InsertPoint } from "../fragment/types.ts";
 import { parseDocument } from "../model/document.ts";
-import type { HwpxDocument, ParagraphNode } from "../model/types.ts";
+import type { FieldInfo, HwpxDocument, ParagraphNode } from "../model/types.ts";
 import { openPackage } from "../package/open.ts";
 import { createHwpxArchive } from "../package/zip-write.ts";
 import type { BlockProto } from "../template/studio-types.ts";
 import { compareToBaseline, validateDocument, type ValidationReport } from "../validate/index.ts";
 import { encodeUtf8 } from "../xml/parse.ts";
-import type { BlockPreviewField, BlockPreviewPlace, PreviewFieldKind } from "./block-preview-types.ts";
+import type { BlockPreviewField, BlockPreviewPlace } from "./block-preview-types.ts";
 import { blockFragment } from "./block-store.ts";
 import { collectFields, fieldRangeIn } from "./fields.ts";
 import { fieldSpans } from "./generate-studio.ts";
 import { explainInherited } from "./inherited.ts";
-import { findLooseKeys, nfc } from "./studio-common.ts";
+import { fieldInput, findLooseKeys, nfc } from "./studio-common.ts";
 
 export type { BlockPreviewField, BlockPreviewPlace, PreviewFieldKind } from "./block-preview-types.ts";
 
@@ -116,15 +116,14 @@ function blankDocument(): { bytes: Uint8Array; report: ValidationReport } {
 
 // ── 입력 항목 자리 ─────────────────────────────────────────────
 
-/** 문서의 입력 항목 자리 전부(문서 순서): 누름틀(이름 있음)·메일머지(키 있음)와 그 표시 구간 밖의 느슨한 `{{ 키 }}`(8.8.5·8.8.17과 같은 범위) */
-function inputPlaces(doc: HwpxDocument): BlockPreviewPlace[] {
+/** 문서의 입력 항목 자리 전부(문서 순서): 누름틀(이름 있음)·메일머지(키 있음)와 그 표시 구간 밖의 느슨한 `{{ 키 }}`(8.8.5·8.8.17과 같은 범위). `skip`이 참인 필드·키는 뺀다(#134 미등록 목록) */
+export function inputPlaces(doc: HwpxDocument, skip?: { field: (info: FieldInfo) => boolean; key: (key: string) => boolean }): BlockPreviewPlace[] {
   const fields = collectFields(doc);
   const places: BlockPreviewPlace[] = [];
   for (const f of fields) {
-    const { type } = f.info;
-    const kind: PreviewFieldKind | undefined = type === "CLICK_HERE" && f.info.name !== "" ? "clickHere" : type === "MAILMERGE" && f.info.mergeKey !== undefined ? "mailMerge" : undefined;
-    if (kind === undefined) continue;
-    const name = nfc(kind === "clickHere" ? f.info.name : (f.info.mergeKey ?? ""));
+    const input = fieldInput(f.info);
+    if (input === undefined || skip?.field(f.info) === true) continue;
+    const { kind, name } = input;
     const first = fieldRangeIn(f, f.paragraph);
     const start = first?.from ?? f.paragraph.pieces[f.begin.pieceIndex]?.logicalEnd ?? 0;
     const place: BlockPreviewPlace = { kind, name, sectionIndex: f.info.sectionIndex, path: [...f.info.path], start, end: start };
@@ -139,7 +138,7 @@ function inputPlaces(doc: HwpxDocument): BlockPreviewPlace[] {
     for (const p of list) {
       const own = spans.get(p) ?? [];
       for (const h of findLooseKeys(p.logicalText)) {
-        if (!own.some((s) => h.start < s.until && h.end > s.from)) places.push({ kind: "placeholder", name: nfc(h.key), sectionIndex, path: [...p.path], start: h.start, end: h.end });
+        if (!own.some((s) => h.start < s.until && h.end > s.from) && skip?.key(h.key) !== true) places.push({ kind: "placeholder", name: nfc(h.key), sectionIndex, path: [...p.path], start: h.start, end: h.end });
       }
       for (const sub of p.subLists) walk(sectionIndex, sub.paragraphs);
     }

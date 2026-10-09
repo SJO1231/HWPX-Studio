@@ -23,6 +23,7 @@ import { generateStudioText } from "./generate-studio-text.ts";
 import {
   EMPTY_DATASET,
   engineAnchor,
+  fieldInput,
   findLooseKeys,
   finish,
   hasErrors,
@@ -236,6 +237,7 @@ function generateStudioHwpx(bytes: Uint8Array, t: StudioTemplate, record: Record
   const fields2 = collectFields(doc2);
   const hits = placeholderHits(doc2, fields2);
   const claimed = new Set<Hit>();
+  const claimedFields = new Set<FieldTarget>();
   const anchorsById = new Map(t.anchors.map((a) => [a.id, a]));
   const placeAnchors = new Map<string, Anchor>();
   for (const p of t.places) {
@@ -323,6 +325,7 @@ function generateStudioHwpx(bytes: Uint8Array, t: StudioTemplate, record: Record
     } else if (p.kind === "clickHere" || p.kind === "mailMerge") {
       if (p.where !== undefined && !selected.has(p.where)) continue;
       for (const [k, f] of (fieldTargets(p) ?? []).entries()) {
+        claimedFields.add(f);
         const id = `${p.id}@${k}`;
         const anchor: Anchor = p.kind === "clickHere" ? { id, kind: "field", name: f.info.name, occurrence: f.info.occurrence } : { id, kind: "field", mergeKey: f.info.mergeKey ?? "", occurrence: f.info.occurrence };
         targets.push({ anchor, after: fieldAfter(f) });
@@ -359,6 +362,14 @@ function generateStudioHwpx(bytes: Uint8Array, t: StudioTemplate, record: Record
   const unregistered = new Map<string, number>();
   for (const h of hits) if (!claimed.has(h)) unregistered.set(h.key, (unregistered.get(h.key) ?? 0) + 1);
   issues.push(...unregisteredIssues(unregistered, t.options?.unregistered ?? "error"));
+  // 등록되지 않은 누름틀·메일머지(#134): 조립본에서 어느 필드 자리도 맡지 않은 것. 정책을 생략하면 경고다(기존 템플릿 호환), error라고 적어야 막는다
+  const left = { clickHere: new Map<string, number>(), mailMerge: new Map<string, number>() };
+  for (const f of fields2) {
+    const input = fieldInput(f.info);
+    if (input !== undefined && !claimedFields.has(f)) left[input.kind].set(input.name, (left[input.kind].get(input.name) ?? 0) + 1);
+  }
+  const fieldPolicy = t.options?.unregistered === "error" ? "error" : "keep";
+  issues.push(...unregisteredIssues(left.clickHere, fieldPolicy, "clickHere"), ...unregisteredIssues(left.mailMerge, fieldPolicy, "mailMerge"));
   if (hasErrors(issues)) return failed();
 
   let output = assembled;

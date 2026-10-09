@@ -17,6 +17,7 @@ import type {
   ValuePlace,
 } from "../template/studio-types.ts";
 import type { Anchor, Dataset, ReportSkip } from "../template/types.ts";
+import type { FieldInfo } from "../model/types.ts";
 import type { TextReport } from "../text/types.ts";
 import { decodeUtf8 } from "../xml/parse.ts";
 import type { Move } from "./anchor-types.ts";
@@ -222,14 +223,23 @@ export function valueFor(v: BoundValue): { issue: { code: string; message: strin
 /** 값 id → 단위(percent의 %, money는 display.unit을 줄 때만. 표시 설정 반영). 자리 바로 뒤 글이 같은 단위로 시작하면 단위를 뗀다(8.8.4, `placeText`) */
 export const unitsOf = (t: StudioTemplate): Map<string, string | undefined> => new Map(t.values.map((d) => [d.id, valueUnit(d.format, d.display)]));
 
-/** 등록되지 않은 `{{ }}`의 정책에 따른 이슈(키별 건수) */
-export function unregisteredIssues(counts: ReadonlyMap<string, number>, policy: "error" | "keep"): Issue[] {
+/** 필드가 입력 항목이면 그 종류와 이름(NFC): 이름 있는 누름틀(`clickHere`), 키 있는 메일머지(`mailMerge`). 그 밖의 필드는 undefined(8.8.5) */
+export function fieldInput(info: FieldInfo): { kind: "clickHere" | "mailMerge"; name: string } | undefined {
+  if (info.type === "CLICK_HERE" && info.name !== "") return { kind: "clickHere", name: nfc(info.name) };
+  return info.type === "MAILMERGE" && info.mergeKey !== undefined ? { kind: "mailMerge", name: nfc(info.mergeKey) } : undefined;
+}
+
+/** 등록되지 않은 자리의 정책에 따른 이슈(종류 안 이름별 건수). `where`는 `{{ }}`면 `{{키}}`, 필드면 `clickHere:이름`·`mailMerge:키`다 */
+export function unregisteredIssues(counts: ReadonlyMap<string, number>, policy: "error" | "keep", kind: "placeholder" | "clickHere" | "mailMerge" = "placeholder"): Issue[] {
+  const field = kind === "clickHere" ? "누름틀" : "메일머지 필드";
   return [...counts].map(([key, n]) =>
     makeIssue(
       policy === "error" ? "error" : "warning",
       "PLACE_UNREGISTERED",
-      `등록되지 않은 자리 {{ ${key} }} ${n}곳이 있습니다${policy === "error" ? "(템플릿 places에 placeholder 자리로 등록해야 합니다)" : "(unregistered: keep이라 그대로 둡니다)"}.`,
-      `{{${key}}}`,
+      kind === "placeholder"
+        ? `등록되지 않은 자리 {{ ${key} }} ${n}곳이 있습니다${policy === "error" ? "(템플릿 places에 placeholder 자리로 등록해야 합니다)" : "(unregistered: keep이라 그대로 둡니다)"}.`
+        : `등록되지 않은 ${field} ${key} ${n}곳이 있습니다${policy === "error" ? `(템플릿 places에 ${kind} 자리로 등록해야 합니다)` : "(채우지 않고 그대로 둡니다. 막으려면 options.unregistered: error)"}.`,
+      kind === "placeholder" ? `{{${key}}}` : `${kind}:${key}`,
     ),
   );
 }
