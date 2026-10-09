@@ -369,7 +369,7 @@ test('columns: 라벨 사전의 Helper 층을 통째로 바꾸고(없으면 그�
 test('엔진 코드 → 창구 이름, Studio 설정 원인(연결 겹침·서식 다시 확인·프로필), 1판 프로필은 2판 요청에 PROFILE_INVALID', async () => {
   for (const [codes, want] of [
     [['DATA_MISSING'], 'MISSING_FIELDS'], [['DATA_FORMAT'], 'INVALID_FIELDS'], [['DATA_NOT_SCALAR'], 'INVALID_FIELDS'], [['VALUE_CONTROL_CHAR'], 'INVALID_FIELDS'],
-    [['DATA_ALIAS_CONFLICT', 'DATA_FORMAT'], 'PROFILE_MAPPING_CONFLICT'], [['SEL_UNDECIDED'], 'UNDECIDED'], [['SEL_RECHECK'], 'TEMPLATE_RECHECK'],
+    [['DATA_ALIAS_CONFLICT', 'DATA_FORMAT'], 'PROFILE_MAPPING_CONFLICT'], [['SEL_UNDECIDED'], 'UNDECIDED'], [['SEL_EXCLUSIVE'], 'UNDECIDED'], [['SEL_RECHECK'], 'TEMPLATE_RECHECK'],
     [['TPL_SOURCE_MISMATCH'], 'TEMPLATE_RECHECK'], [['TPL_FRAGMENT_MISSING'], 'TEMPLATE_RECHECK'], [['ANCHOR_NOT_FOUND'], 'TEMPLATE_RECHECK'], [['PLACE_UNREGISTERED'], 'TEMPLATE_RECHECK'],
     [['FRAG_SCHEMA'], 'TEMPLATE_RECHECK'], [['GATE_NEW_ERRORS'], 'GENERATION_FAILED'], [['FILL_SKIPPED'], 'GENERATION_FAILED'], [['PKG_NOT_ZIP'], 'GENERATION_FAILED'],
   ] as const) assert.equal(windowCode(codes), want, codes.join());
@@ -527,6 +527,34 @@ test('분기 값: 조건에만 쓰는 열이 비면 UNDECIDED(valueMissing)와 �
     const c = await send('confirm', 'confirm', [{ values: { ...rest, 업종제한: 'Y' } }, { values: { ...rest, 업종제한: 'Y' }, selections: { '업종 제한': 'b1' }, meta: { identity: ['확정'] } }]);
     assert.deepEqual(c.results[0]!.undecided, [{ slot: '업종 제한', reason: 'needConfirm', candidates: [{ block: 'b1', label: '업종 제한 있음' }] }]);
     assert.equal(c.results[1]!.status, 'success'); assert(texts(readFileSync(c.results[1]!.path!)).join('\n').includes(`바. 업종 제한: ${rest['업종']} 업종을 등록한`));
+  } finally { db.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('#196 배타: 함께 고를 수 없는 두 분기가 모두 조건 블록이면 UNDECIDED(exclusive, 결정 열·두 분기의 후보), selections로 한쪽을 기본 블록으로 고르면 성공', async () => {
+  const { t, bytes } = syntheticTemplate();
+  const root = mkdtempSync(join(tmpdir(), 'studio-g2b2-excl-')), db = new DatabaseSync(':memory:');
+  try {
+    const doc = reparse(bytes), raw = JSON.parse(JSON.stringify(t));
+    const path = doc.sections[0]!.paragraphs.find(p => p.logicalText === '사. 설명: {{설명}}')!.path;
+    const rate = t.values.find(v => v.name === '하한율')!.id;
+    raw.id = 't00000196'; raw.anchors.push({ ...line(doc, 'a2', path), id: 'a2' });
+    raw.slots.push({ id: 's2', name: '설명 조항', anchors: ['a2'], parent: null });
+    raw.blocks.push({ id: 'b3', slot: 's2', name: '하한율 높음', content: { text: '사. 설명: {{설명}} (하한율 높음)' }, when: { path: rate, op: 'ge', value: 80 } }, { id: 'b4', slot: 's2', name: '기본 설명', content: { text: '사. 설명: {{설명}}' } });
+    raw.exclusive = [['s1', 's2']];
+    const g = createG2B2(db);
+    g.saveTemplate({ template: raw, source: Buffer.from(bytes).toString('base64') });
+    g.saveProfile({ id: 'excl', label: '배타', templateId: 't00000196', version: 1, outputDirectory: root });
+    const values: Record<string, unknown> = { ...syntheticItem(t, rng(0x196), 0).values, 업종제한: 'Y', 하한율: '87.745%' };
+    const r = await g.generate({ format: 'studio-generate', version: 2, requestId: 'excl', profileId: 'excl', items: [{ values }, { values, selections: { '설명 조항': 'b4' }, meta: { identity: ['풀기'] } }] });
+    assert.deepEqual({ status: r.results[0]!.status, code: r.results[0]!.code, undecided: r.results[0]!.undecided }, {
+      status: 'needs-input', code: 'UNDECIDED', undecided: [
+        { slot: '업종 제한', reason: 'exclusive', candidates: [{ block: 'b1', label: '업종 제한 있음' }, { block: 'b2', label: '업종 제한 없음' }], fields: ['업종제한'] },
+        { slot: '설명 조항', reason: 'exclusive', candidates: [{ block: 'b3', label: '하한율 높음' }, { block: 'b4', label: '기본 설명' }], fields: ['하한율'] },
+      ],
+    });
+    assert.equal(r.results[1]!.status, 'success');
+    const all = texts(readFileSync(r.results[1]!.path!)).join('\n');
+    assert(all.includes(`바. 업종 제한: ${values['업종']} 업종을 등록한`) && !all.includes('(하한율 높음)'));
   } finally { db.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
