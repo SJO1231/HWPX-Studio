@@ -50,8 +50,9 @@ export function createApp(database=':memory:') {
         const result=workbench.get(path,url.searchParams)??quick.get(path,url.searchParams);
         if(result)return send(200,result.body,'type' in result && typeof result.type==='string'?result.type:'application/vnd.hancom.hwpx',result.name?{'Content-Disposition':`attachment; filename="document.hwpx"; filename*=UTF-8''${encodeURIComponent(result.name)}`}:{});
         if(path==='/api/block/preview') {
-          const item=blockLibrary.get(url.searchParams.get('id'));
-          const preview=previewBlock({block:item.id},id=>blockLibrary.material(id,item.version));
+          // version이 있으면 그 판(분기점 후보는 핀한 판을 본다, #7)
+          const item=blockLibrary.get(url.searchParams.get('id')),version=url.searchParams.has('version')?Number(url.searchParams.get('version')):item.version;
+          const preview=previewBlock({block:item.id},id=>blockLibrary.material(id,version));
           return send(200,{...preview,warnings:preview.warnings.map(w=>({...w,message:blockMessage(w.code)}))});
         }
         if(path==='/api/blocks')return send(200,{blocks:blockLibrary.list(url.searchParams.get('q')??'')});
