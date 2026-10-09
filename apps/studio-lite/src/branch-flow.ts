@@ -37,10 +37,15 @@ export function branchFlow(order: readonly string[], outline: readonly Heading[]
  * 자리(바탕 문서의 범위)는 그대로이고 항목이 자리를 바꾼다: 새 순서의 k번째 항목이 k번째 범위를 받는다. 원문 글은 옮기지 않는다. 항목의 `from`·`to`를 고쳐 쓴다
  */
 export function moveSlot(order: readonly string[], items: readonly { from: string; to: string }[], from: number, to: number): void {
-  const at = new Map(order.map((id, i) => [id, i])), sorted = [...items].sort((a, b) => at.get(a.from)! - at.get(b.from)!);
+  const sorted = inOrder(order, items);
   const ranges = sorted.map(x => [x.from, x.to] as const);
   sorted.splice(to, 0, ...sorted.splice(from, 1));
   sorted.forEach((x, k) => { [x.from, x.to] = ranges[k]!; });
+}
+/** 넣은 블록·분기점을 범위가 시작하는 문서 순서로(끌기·배치 목록, #209) */
+export function inOrder<T extends { from: string }>(order: readonly string[], items: readonly T[]): T[] {
+  const at = new Map(order.map((id, i) => [id, i]));
+  return [...items].sort((a, b) => at.get(a.from)! - at.get(b.from)!);
 }
 
 // ── 제목 트리(#151 "이것과 같은 것 전부")와 제목별 블록 후보(#78). 블록 후보는 서버가 아니라 여기서 트리로 계산한다(트리를 고칠 수 있으므로) ──
@@ -73,3 +78,7 @@ export function applySimilar(order: readonly string[], outline: readonly Heading
   const kept = picks.filter(p => p.keep).map(p => outline.find(h => h.id === p.id) ?? { id: p.id, name: p.name, level: p.level });
   return [...outline.filter(h => !touched.has(h.id)), ...kept].sort((a, b) => at.get(a.id)! - at.get(b.id)!);
 }
+
+/** 제목 단계 바꾸기(#205): `id` 제목의 단계를 `by`만큼 옮긴다(1~99, 작업 파일 `outline`의 범위). 블록 후보는 부르는 쪽이 `headingBlocks`로 다시 계산한다 */
+export const relevel = (outline: readonly Heading[], id: string, by: number): Heading[] =>
+  outline.map(h => h.id === id ? { ...h, level: Math.min(99, Math.max(1, h.level + by)) } : h);

@@ -7,8 +7,8 @@ import {openPackage,parseDocument,validateDocument,compareToBaseline,walkParagra
 import {buildHwpx} from '../../../packages/hwpx-engine/test/helpers.ts';
 import {textPara} from '../../../packages/hwpx-engine/test/table-helpers.ts';
 import {createBlockLibrary,extractBlockDraft} from '../src/block-library.ts';
-import {moveSlot} from '../src/branch-flow.ts';
-import {between,reviewed} from '../src/input-table.ts';
+import {inOrder,moveSlot} from '../src/branch-flow.ts';
+import {between,reviewed,sweepChanges} from '../src/input-table.ts';
 import {createWorkbench} from '../src/workbench.ts';
 
 const random=(seed:number)=>()=>(seed=(Math.imul(seed,1664525)+1013904223)>>>0)/2**32;
@@ -17,10 +17,13 @@ const textsOf=(bytes:Uint8Array)=>parseDocument(openPackage(bytes)).sections.fla
 test('#152 sweep: 60 lines, 50 random drags/shift ranges set one state, keep confirmed lines, undo restores the whole sweep',t=>{
   const next=random(152),kinds=['input','input','block','place'] as const;
   const lines=Array.from({length:60},(_,i)=>({id:'r'+i,kind:kinds[i%4]!,origin:(i%8===0?'user':'placeholder') as 'user'|'placeholder',status:i%7===3?'confirmed':i%8===0?'designated':'recommended'}));
-  const ids=lines.map(l=>l.id),confirmed=lines.filter(l=>l.status==='confirmed').map(l=>l.id);let changedLines=0;
+  const ids=lines.map(l=>l.id),confirmed=lines.filter(l=>l.status==='confirmed').map(l=>l.id);let changedLines=0,counted=0;
   for(let n=0;n<50;n++){
     const a=Math.floor(next()*60),b=Math.floor(next()*60),to=next()<.5?'excluded':'keep',before=new Map(lines.map(l=>[l.id,l.status]));
     const range=between(ids,'r'+a,'r'+b);assert.equal(range.length,Math.abs(a-b)+1);assert.deepEqual(between(ids,'r'+b,'r'+a),range);
+    // #209: 바뀌는 줄만(상태줄 "제외 n줄"의 n) — 범위 안, 확정 아님, 지금 상태와 다름(모형: 제외로는 제외 아닌 줄, 유지로는 제외 줄)
+    const changes=sweepChanges(lines,ids,'r'+a,'r'+b,to);
+    assert.deepEqual(changes.map(l=>l.id),lines.filter(l=>range.includes(l.id)&&l.status!=='confirmed'&&(to==='excluded'?l.status!=='excluded':l.status==='excluded')).map(l=>l.id));counted+=changes.length;
     // 화면의 reviewChange와 같다: 범위 줄을 한 번에 바꾸고 되돌리기 표는 하나
     for(const l of lines.filter(l=>range.includes(l.id)))l.status=reviewed(l,to);
     for(const l of lines){
@@ -33,7 +36,10 @@ test('#152 sweep: 60 lines, 50 random drags/shift ranges set one state, keep con
     if(n%5===4){for(const l of lines)l.status=before.get(l.id)!;assert.deepEqual(new Map(lines.map(l=>[l.id,l.status])),before);}
   }
   assert.deepEqual(lines.filter(l=>l.status==='confirmed').map(l=>l.id),confirmed);assert.deepEqual(between(ids,'r1','missing'),[]);
-  t.diagnostic(`lines=60; sweeps=50; changed=${changedLines}; confirmed kept=${confirmed.length}; undo checks=10`);
+  // #209: Shift 끝이 확정 줄(r10)이어도 그 줄만 건너뛰고 범위를 바꾼다. 이미 제외한 줄은 다시 세지 않는다
+  for(const l of lines)l.status=l.status==='confirmed'?l.status:'recommended';lines[5]!.status='excluded';
+  assert.equal(lines[10]!.status,'confirmed');assert.deepEqual(sweepChanges(lines,ids,'r4','r10',`excluded`).map(l=>l.id),['r4','r6','r7','r8','r9']);
+  t.diagnostic(`lines=60; sweeps=50; changed=${changedLines}; counted=${counted}; confirmed kept=${confirmed.length}; undo checks=10`);
 });
 
 /** 바탕 문서: 머리 + (자리 k, 고정 k) × 6. 블록 k는 다른 문서의 "블록 k …" 두 문단 */
@@ -63,6 +69,8 @@ test('#153 tree order: 6 slots (5 stored blocks + 1 branch), 50 random drags cha
       const result=app.post('/api/workbench/generate',work) as any;assert.equal(result.ok,true);generations++;
       const bytes=app.get('/api/workbench/result',new URLSearchParams({session:opened.session}))!.body,texts=textsOf(bytes);
       assert.deepEqual(texts.filter(x=>x.startsWith('블록 ')&&x.includes('첫 줄')).map(x=>Number(x[3])),model);
+      // #209: 위쪽 배치 목록(넣은 블록만)은 문서 순서 = 모형에서 분기점 블록(5)을 뺀 것
+      assert.deepEqual(inOrder(order,placements).map(p=>protos.indexOf(p.id)),model.filter(k=>k!==5));
       assert.deepEqual(texts.filter(x=>/^(바탕|고정)/.test(x)),['바탕 머리','고정 0','고정 1','고정 2','고정 3','고정 4','고정 5']);
       assert(!texts.some(x=>x.startsWith('자리 ')));
       assert.equal(compareToBaseline(validateDocument(base),validateDocument(bytes)).newErrors.length,0);

@@ -9,7 +9,7 @@ import {buildHwpx,MINIMAL_HEADER} from '../../../packages/hwpx-engine/test/helpe
 import {textPara} from '../../../packages/hwpx-engine/test/table-helpers.ts';
 import {plainOf} from '../../studio/src/messages.ts';
 import {createBlockLibrary,extractBlockDraft} from '../src/block-library.ts';
-import {applySimilar,headingBlocks} from '../src/branch-flow.ts';
+import {applySimilar,headingBlocks,relevel} from '../src/branch-flow.ts';
 import {createWorkbench} from '../src/workbench.ts';
 
 /** 글자모양: 0 보통(1000), 1 큰 글자(1200, 굵지 않음), 2 굵게(1000) */
@@ -98,6 +98,26 @@ test('같은 유형 ✓: 체크한 것만 제목 트리에(새 제목은 고른 
   wrong(()=>app.post('/api/workbench/save',{...work,outline:[...work.outline,work.outline[0]]}),'WORKBENCH_DUPLICATE');
   wrong(()=>app.post('/api/workbench/save',{...work,outline:[{id:'p:0:9999',level:1}]}),'WORKBENCH_POSITION');
   for(const bad of [{id:ids[0],level:0},{id:ids[0],level:1.5},{id:ids[0],level:1,name:'x'},'x'])wrong(()=>app.post('/api/workbench/save',{...work,outline:[bad]}),'WORKBENCH_INPUT');
+});
+
+test('#205 제목 단계 올림·내림: 무작위 50번, 블록 후보 = 고친 단계의 범위(모형), 1·99에서 멈춤, 다른 제목·원래 트리 그대로',t=>{
+  const lines=model(),app=createWorkbench(),opened=app.post('/api/workbench/open',{name:'synthetic.hwpx',content:Buffer.from(source(lines)).toString('base64')}) as Opened;
+  const ids=opened.paragraphs.map(p=>p.id),before=structuredClone(opened.outline),levels=new Map(opened.outline.map(h=>[h.id,h.level]));
+  let outline=opened.outline,seed=205,changed=0;const next=()=>(seed=(Math.imul(seed,1664525)+1013904223)>>>0)/2**32;
+  for(let n=0;n<50;n++){
+    const h=outline[Math.floor(next()*outline.length)]!,by=next()<.5?-1:1,old=levels.get(h.id)!;
+    outline=relevel(outline,h.id,by);levels.set(h.id,Math.min(99,Math.max(1,old+by)));if(levels.get(h.id)!==old)changed++;
+    assert.deepEqual(outline.map(x=>[x.id,x.level]),opened.outline.map(x=>[x.id,levels.get(x.id)]));
+    // 모형: 제목부터 다음에 나오는 단계가 같거나 높은 제목의 앞까지
+    const lv=ids.map(id=>levels.get(id)??0);
+    assert.deepEqual(headingBlocks(opened.paragraphs,outline).map(b=>[b.from,b.to,b.paragraphCount]),lv.flatMap((v,i)=>{if(!v)return [];let j=i+1;while(j<lv.length&&!(lv[j]!&&lv[j]!<=v))j++;return [[ids[i],ids[j-1],j-i]];}));
+  }
+  // 1장 제목을 한 단계 내리면 그 범위가 다음 "가." 소제목 앞까지 줄고, 다시 올리면 원래대로
+  const one=opened.outline[0]!,base=headingBlocks(opened.paragraphs,opened.outline)[0]!,down=headingBlocks(opened.paragraphs,relevel(opened.outline,one.id,1))[0]!;
+  assert(down.paragraphCount<base.paragraphCount);assert.deepEqual(headingBlocks(opened.paragraphs,relevel(relevel(opened.outline,one.id,1),one.id,-1))[0],base);
+  assert.equal(relevel([{id:'a',name:'a',level:1}],'a',-1)[0]!.level,1);assert.equal(relevel([{id:'a',name:'a',level:99}],'a',1)[0]!.level,99);
+  assert.deepEqual(opened.outline,before);
+  t.diagnostic(`headings=${outline.length}; moves=50; level changes=${changed}; blocks = model`);
 });
 
 test('#203 구조 단계 오류(구역 설정 문단을 덮는 블록 넣기)는 데이터 키가 다 있어도 "연결 안 된 자리"가 아니라 그 까닭(FILL_SECTION_PROPS 쉬운 말)으로 알린다',()=>{

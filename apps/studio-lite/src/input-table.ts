@@ -43,6 +43,11 @@ export function between(ids: readonly string[], a: string, b: string): string[] 
   const i = ids.indexOf(a), j = ids.indexOf(b);
   return i < 0 || j < 0 ? [] : ids.slice(Math.min(i, j), Math.max(i, j) + 1);
 }
+/** 끌기·Shift 범위로 실제로 바뀌는 줄(#209): a부터 b까지에서 확정 줄(끝이어도 건너뛴다)과 이미 그 상태인 줄은 뺀다 */
+export function sweepChanges<T extends { id: string; kind: string; origin?: ItemOrigin; status: string }>(rows: readonly T[], ids: readonly string[], a: string, b: string, next: 'keep' | 'excluded'): T[] {
+  const on = new Set(between(ids, a, b));
+  return rows.filter(r => on.has(r.id) && reviewed(r, next) !== r.status);
+}
 const keyText = (key: string) => '{{' + key + '}}';
 
 /**
