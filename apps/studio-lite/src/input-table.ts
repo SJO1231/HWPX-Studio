@@ -300,34 +300,45 @@ export function linkTargets<T extends InputItem>(all: readonly T[], item: T, key
 
 /**
  * 서식 판의 자리 하나: 문서에서 찾은 누름틀·메일머지·`{{키}}`(`name`은 문서의 이름), 또는 지정한 자리(`anchor`는 word·line 앵커, `name`은 표시 이름). `key`는 연결한 데이터 키,
- * `unit`은 지정 원문이 "원"으로 끝남, `pattern`은 지정 원문의 날짜 모양(`datePattern`)
+ * `unit`은 지정 원문이 "원"으로 끝남, `pattern`은 지정 원문의 날짜 모양(`datePattern`), `where`는 그 블록 안에서만 쓰는 자리(분기점 후보 블록에만 있는 입력 항목, 엔진 8.8.5)
  */
-export type G2BEntry = { kind: Exclude<ItemOrigin, 'user'> | 'word' | 'line'; name: string; key?: string; type?: ValueType; anchor?: { id: string }; unit?: boolean; pattern?: string };
+export type G2BEntry = { kind: Exclude<ItemOrigin, 'user'> | 'word' | 'line'; name: string; key?: string; type?: ValueType; anchor?: { id: string }; unit?: boolean; pattern?: string; where?: string };
+/**
+ * 분기점(#7) 하나: 슬롯(이름·범위 앵커)과 후보 블록(저장소 원형 판을 핀하고 그 내용을 복사). `key`는 결정 값의 데이터 키이고,
+ * 블록의 `values`는 결정 값이 이것일 때 고르는 경우, `fallback`은 기본 블록이다(경우 표. 조건은 여기에만 둔다, 요구 8.8-4)
+ */
+export type G2BBranch = { id: string; name: string; anchor: { id: string }; key?: string; blocks: { id: string; name: string; proto: { id: string; version: number }; content: unknown; values: string[]; fallback: boolean }[] };
 /**
  * Helper 프로필(#173)의 서식 판 template@2. 값은 연결한 데이터 키(없으면 이름)마다 하나이고 연결의 `key`가 그 키다(같은 이름은 같은 값, #149).
  * 이름이 키와 다르면 이름을 `aliases`에 둬 서식의 이름 그대로 오는 열도 받는다(다른 값의 키이거나 두 값에 걸친 이름은 빼서 엔진 `TPL_KEY_CONFLICT`를 피한다).
  * 자리: 찾은 것은 문서의 이름 그대로, 지정한 것은 앵커 자리. 값 형식은 표의 타입이 금액·날짜면 money·date, 나머지 text이고,
  * 금액 지정 자리의 원문이 "원"으로 끝나면 `display.unit: "원"`(엔진이 자리 뒤가 "원"이면 뗀다), 날짜 지정 자리의 원문에 날짜 모양이 있으면 `display.pattern`(#186).
  * 판 번호·id는 부르는 쪽이 정한다(저장된 판은 바뀌지 않는다).
+ * 분기점(#7)은 슬롯·블록이 된다. 결정 키가 있으면 기본 블록 밖의 블록은 `when: 결정 값 in [경우 값들]`(경우가 없으면 빈 목록이라 늘 거짓), 기본 블록은 조건 없음(엔진 `fallback`).
+ * 결정 키가 없으면 모든 블록이 조건 없음이라 후보가 둘 이상이면 업무 건마다 직접 고른다(엔진 `undecided` → 수동 선택).
  */
 // shortcut: 금액 지정 원문의 앞 글(`금 `)은 빠지고 같은 날짜 키의 지정 원문 모양이 여럿이면 첫 모양이다(display에 앞 글 설정이 없고 꼴은 값마다 하나), 엔진 display가 앞 글·자리별 꼴을 받으면 올린다
-export function g2bTemplate(found: readonly G2BEntry[], t: { id: string; version: number; name: string; sha256: string }) {
+// shortcut: 경우 조건은 결정 값 하나의 같음(`in`)뿐이다(범위·여러 값 조합·상호 배타·참조 번호 재정렬은 #63·#58 경우 계약 예약, 8.9-12), 경우 계약이 정해지면 올린다
+export function g2bTemplate(found: readonly G2BEntry[], t: { id: string; version: number; name: string; sha256: string }, branches: readonly G2BBranch[] = []) {
   const nfc = (s: string) => s.normalize('NFC'), keyOf = (x: G2BEntry) => nfc(x.key?.trim() || x.name);
-  const keys = [...new Set(found.map(keyOf))], value = (k: string) => 'v' + (keys.indexOf(k) + 1);
+  const decision = (b: G2BBranch) => b.key ? nfc(b.key.trim()) : undefined;
+  const keys = [...new Set([...found.map(keyOf), ...branches.flatMap(b => decision(b) ?? [])])], value = (k: string) => 'v' + (keys.indexOf(k) + 1);
   const owners = new Map<string, Set<string>>();
   for (const x of found) if (nfc(x.name) !== keyOf(x)) owners.set(nfc(x.name), (owners.get(nfc(x.name)) ?? new Set()).add(keyOf(x)));
   const aliases = (k: string) => [...owners].filter(([n, of]) => of.size === 1 && of.has(k) && !keys.includes(n)).map(([n]) => n);
-  const places = [...new Map(found.map(x => [x.anchor?.id ?? x.kind + '\n' + x.name, x])).values()];
+  const places = [...new Map(found.map(x => [x.anchor?.id ?? x.kind + '\n' + x.name + '\n' + (x.where ?? ''), x])).values()];
   return {
-    schema: 'hwpx-studio/template@2', id: t.id, version: t.version, meta: { name: t.name }, source: { kind: 'hwpx', sha256: t.sha256 }, anchors: places.flatMap(x => x.anchor ? [x.anchor] : []),
+    schema: 'hwpx-studio/template@2', id: t.id, version: t.version, meta: { name: t.name }, source: { kind: 'hwpx', sha256: t.sha256 }, anchors: [...places.flatMap(x => x.anchor ? [x.anchor] : []), ...branches.map(b => b.anchor)],
     values: keys.map(k => {
       const xs = found.filter(x => keyOf(x) === k), type = xs[0]?.type, pattern = xs.find(x => x.pattern)?.pattern;
       return { id: value(k), name: k, format: type === 'money' || type === 'date' ? type : 'text',
         ...(type === 'money' && xs.some(x => x.unit) ? { display: { unit: '원' } } : type === 'date' && pattern ? { display: { pattern } } : {}) };
     }),
     bindings: keys.map(k => { const a = aliases(k); return { value: value(k), key: k, ...(a.length ? { aliases: a } : {}) }; }),
-    places: places.map((x, i) => ({ id: 'p' + (i + 1), kind: x.kind, value: value(keyOf(x)), ...(x.anchor ? { anchor: x.anchor.id } : { [x.kind === 'clickHere' ? 'name' : 'key']: x.name }) })),
-    slots: [], blocks: [],
+    places: places.map((x, i) => ({ id: 'p' + (i + 1), kind: x.kind, value: value(keyOf(x)), ...(x.anchor ? { anchor: x.anchor.id } : { [x.kind === 'clickHere' ? 'name' : 'key']: x.name }), ...(x.where ? { where: x.where } : {}) })),
+    slots: branches.map(b => ({ id: b.id, name: b.name, anchors: [b.anchor.id], parent: null })),
+    blocks: branches.flatMap(b => b.blocks.map(x => ({ id: x.id, slot: b.id, name: x.name, proto: x.proto, content: x.content,
+      ...(decision(b) && !x.fallback ? { when: { path: value(decision(b)!), op: 'in', value: x.values } } : {}) }))),
   };
 }
 

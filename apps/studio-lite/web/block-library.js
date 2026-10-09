@@ -39,7 +39,7 @@ export function installBlockLibrary({selection, session, api, status, beforeOpen
     const fallback=message=>{note.textContent='미리보기를 표시하지 못했습니다. '+message;if(!box.querySelector('.block-excerpt'))box.append(element('h3','원문 일부'),element('pre',item.excerpt,'block-excerpt'));};
     const cleanup=()=>{active=false;resize?.disconnect();view?.destroy();doc?.free();};previews.set(box,cleanup);
     try {
-      const result=await get('/api/block/preview?id='+encodeURIComponent(item.id));
+      const result=await get('/api/block/preview?id='+encodeURIComponent(item.id)+(item.version?'&version='+item.version:''));
       if(!active)return;await loadRhwp({wasmUrl:'/vendor/rhwp/rhwp_bg.wasm'});if(!active)return;
       doc=openDocument(Uint8Array.from(atob(result.hwpx),c=>c.charCodeAt(0)));
       const count=result.fields.reduce((n,f)=>n+f.count,0);note.textContent='블록 단독 미리보기 · 읽기 전용 · 입력 '+count+' · '+doc.pageCount()+'쪽';

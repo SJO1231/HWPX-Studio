@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
-  planBlockInsert, applyPlan, detectHeadings, headingRangeOf, charDelta, checkValueText, collectFields, compareToBaseline, compileDocument, draftAnchors, emptyTemplate, fieldRangeIn, findPlaceholders, generate,
+  buildBlockPreviewDocument, planBlockInsert, applyPlan, detectHeadings, headingRangeOf, charDelta, checkValueText, collectFields, compareToBaseline, compileDocument, draftAnchors, emptyTemplate, fieldRangeIn, findPlaceholders, generate,
   generateFromTemplate, isValidPath, listUnregisteredPlaces, lookupPath, makeLineAnchor, makeRangeAnchor, makeWordAnchor, openPackage, parseDocument,
   placeText, planApplyCharFormat, readDataset, readStudioTemplate, readTemplate, readTypedValue, remapAddress, resolvePathValue, sanitizeFileStem, validateDocument, valueUnit,
   verifyPreservation, walkParagraphs, type CompileTarget, type Dataset, type HwpxDocument, type StudioTemplate,
@@ -10,7 +10,8 @@ import { toRhwpPosition, type RhwpPosition } from '../../../packages/viewer/src/
 import { extractBlockDraft, type BlockDraft, type BlockLibrary } from './block-library.ts';
 import { parseCsv } from './core.ts';
 import { analyzePlaces, describeLeftover, findLeftovers, leftoverOf, listKeys, parseQuickData, type QuickData } from './quick.ts';
-import { CONTEXT, ITEM_KEYS, LABEL_MAX, LABEL_RELS, g2bTemplate, isField, repsOf, spanNow, validKey, type G2BEntry, type InputItem } from './input-table.ts';
+import { CONTEXT, ITEM_KEYS, LABEL_MAX, LABEL_RELS, g2bTemplate, isField, repsOf, spanNow, validKey, type G2BBranch, type G2BEntry, type InputItem } from './input-table.ts';
+import { UNDECIDED_REASON, selectBranches } from './selection.ts';
 import { labelAt } from './item-label.ts';
 import { VALUE_TYPES, datePattern, decorateValue } from './value-type.ts';
 
@@ -26,7 +27,13 @@ type Edit = { id: string; text: string };
 type Heading = { id: string; level: 1 | 2 };
 type Block = { id: string; from: string; to: string; text: string; alias: string };
 type Placement = {id:string;version:number;from:string;to:string};
-type Work = { edits: Edit[]; headings: Heading[]; blocks: Block[]; placements: Placement[]; inputItems: InputItem[]; index: number; missing: "error" | "keep"; samples?: Record<string, string> };
+/**
+ * 분기점(#7): 범위(from–to, 원문은 그대로)와 후보 블록(저장소 원형 id·판 핀), 경우 표(결정 키, 값 → 블록, 기본 블록), 업무 건 번호마다 직접 고른 블록.
+ * 블록은 원형 id로 적고, 서식 판의 블록 id는 `<분기점 id>-<원형 id>`다
+ */
+// shortcut: 직접 고름은 업무 건 번호에 남는다(데이터를 다시 올려 순서가 바뀌면 다른 건에 붙는다), 이번 건 case@1 저장(#25·#63) 때 행 해시로 올린다
+type Branch = { id: string; name: string; from: string; to: string; blocks: { id: string; version: number }[]; key?: string; cases: { value: string; block: string }[]; fallback?: string; picks: Record<string, string> };
+type Work = { edits: Edit[]; headings: Heading[]; blocks: Block[]; placements: Placement[]; branches: Branch[]; inputItems: InputItem[]; index: number; missing: "error" | "keep"; samples?: Record<string, string> };
 type Session = { workspaceId?: string; kind: 'hwpx' | 'text'; name: string; source: Uint8Array; doc?: HwpxDocument; sourceText?: string; rows: Row[]; headings?: { id: string; name: string }[]; data?: QuickData; dataContent?: string; output?: Uint8Array; blockPreviews?: Map<string, BlockDraft>; pins?: Set<string>; inputs?: Input[] };
 const rowId = (section: number, path: number[]) => `p:${section}:${path.join('.')}`;
 const sameParent = (a: Row, b: Row) => a.sectionIndex === b.sectionIndex && a.path.length === b.path.length && a.path.slice(0, -1).every((n, i) => n === b.path[i]);
@@ -156,16 +163,81 @@ function workOf(s: Session, input: Record<string, unknown>): Work {
     const a=row(b.from),z=row(b.to);need(s.kind==='hwpx'&&sameParent(a,z)&&a.path.at(-1)!<=z.path.at(-1)!,'BLOCK_BOUNDARY');
     return {id:b.id,version:b.version as number,from:a.id,to:z.id};
   });
+  const branches = branchesIn(s, input.branches, row);
   const occupied=new Set<string>();
-  for(const b of [...blocks,...placements]){const a=row(b.from),z=row(b.to);const covered=s.rows.filter(r=>r.sectionIndex===a.sectionIndex&&r.path.length>=a.path.length&&a.path.slice(0,-1).every((n,i)=>r.path[i]===n)&&r.path[a.path.length-1]!>=a.path.at(-1)!&&r.path[a.path.length-1]!<=z.path.at(-1)!);
-    for(const r of covered){need(!occupied.has(r.id),'WORKBENCH_OVERLAP');occupied.add(r.id);if(placements.includes(b as Placement))need(!edits.some(e=>e.id===r.id),'WORKBENCH_OVERLAP');}
+  for(const b of [...blocks,...placements,...branches]){const a=row(b.from),z=row(b.to);const covered=s.rows.filter(r=>r.sectionIndex===a.sectionIndex&&r.path.length>=a.path.length&&a.path.slice(0,-1).every((n,i)=>r.path[i]===n)&&r.path[a.path.length-1]!>=a.path.at(-1)!&&r.path[a.path.length-1]!<=z.path.at(-1)!);
+    for(const r of covered){need(!occupied.has(r.id),'WORKBENCH_OVERLAP');occupied.add(r.id);if(!blocks.includes(b as Block))need(!edits.some(e=>e.id===r.id),'WORKBENCH_OVERLAP');}
   }
   need(input.missing === undefined || input.missing === "error" || input.missing === "keep");
   // 견본 값(#149): 데이터 없이 표에 적은 값. 열쇠(데이터 키, 없으면 이름) → 글
   need(input.samples === undefined || isObj(input.samples) && Object.keys(input.samples).length <= 3000);
   const samples = input.samples === undefined ? undefined : Object.fromEntries(Object.entries(input.samples).map(([k, v]) => { need(k.trim() !== '' && k.length <= 500 && typeof v === 'string'); return [text(k), text(v)]; }));
-  return { edits, headings, blocks, placements, inputItems: inputItemsOf(input.inputItems, row), index, missing: input.missing ?? "error", ...(samples ? { samples } : {}) };
+  return { edits, headings, blocks, placements, branches, inputItems: inputItemsOf(input.inputItems, row), index, missing: input.missing ?? "error", ...(samples ? { samples } : {}) };
 
+}
+
+/** 작업 꼴의 분기점(#7): HWPX만, 같은 본문·칸 안 범위, 후보는 원형 id·판, 경우 표·기본·직접 고름은 후보만 가리킨다. id·이름(NFC)은 서로 달라야 한다 */
+function branchesIn(s: Session, value: unknown, row: (id: unknown) => Row): Branch[] {
+  need(value === undefined || Array.isArray(value) && value.length <= 50);
+  const label = (v: unknown, max: number): v is string => typeof v === 'string' && v.trim() !== '' && v.length <= max && checkValueText(v) === undefined;
+  const branches = ((value as unknown[] | undefined) ?? []).map((b): Branch => {
+    need(isObj(b) && Object.keys(b).every(k => ['id', 'name', 'from', 'to', 'blocks', 'key', 'cases', 'fallback', 'picks'].includes(k)) && typeof b.id === 'string' && /^s[0-9]{1,6}$/.test(b.id) && label(b.name, 80));
+    const a = row(b.from), z = row(b.to);
+    need(s.kind === 'hwpx' && sameParent(a, z) && a.path.at(-1)! <= z.path.at(-1)!, 'BLOCK_BOUNDARY');
+    need(Array.isArray(b.blocks) && b.blocks.length <= 20 && b.blocks.every(x => isObj(x) && Object.keys(x).length === 2 && typeof x.id === 'string' && /^k[0-9a-f]{8}$/.test(x.id) && Number.isInteger(x.version) && (x.version as number) > 0));
+    const blocks = (b.blocks as { id: string; version: number }[]).map(x => ({ id: x.id, version: x.version })), ids = blocks.map(x => x.id);
+    need(new Set(ids).size === ids.length, 'WORKBENCH_DUPLICATE');
+    const known = (v: unknown): v is string => typeof v === 'string' && ids.includes(v);
+    need((b.key === undefined || label(b.key, 500)) && (b.cases === undefined || Array.isArray(b.cases) && b.cases.length <= 200) && (b.fallback === undefined || known(b.fallback)) && (b.picks === undefined || isObj(b.picks)));
+    const cases = ((b.cases as unknown[] | undefined) ?? []).map(c => { need(isObj(c) && Object.keys(c).length === 2 && typeof c.value === 'string' && c.value.length <= 500 && checkValueText(c.value) === undefined && known(c.block)); return { value: c.value, block: c.block }; });
+    need(new Set(cases.map(c => c.value)).size === cases.length, 'WORKBENCH_DUPLICATE');
+    const picks = Object.fromEntries(Object.entries((b.picks as Record<string, unknown> | undefined) ?? {}).map(([k, v]) => { need(/^\d{1,6}$/.test(k) && known(v)); return [k, v]; }));
+    return { id: b.id, name: b.name.trim(), from: a.id, to: z.id, blocks, ...(b.key === undefined ? {} : { key: b.key.trim() }), cases, ...(b.fallback === undefined ? {} : { fallback: b.fallback }), picks };
+  });
+  need(new Set(branches.map(b => b.id)).size === branches.length && new Set(branches.map(b => b.name.normalize('NFC'))).size === branches.length, 'WORKBENCH_DUPLICATE');
+  return branches;
+}
+
+/** 열린 작업이 쓰는 저장소 원형(배치·분기점 후보). 저장 전에도 그 블록의 삭제를 막는다 */
+const pinsOf = (work: Work) => new Set([...work.placements.map(p => p.id), ...work.branches.flatMap(b => b.blocks.map(c => c.id))]);
+
+/** 분기점의 서식 판 꼴(슬롯 앵커 = 범위, 후보 = 저장소 원형 판 핀과 그 내용 복사)과 조각 덩어리 */
+function branchesOf(s: Session, work: Work, library: BlockLibrary | undefined) {
+  const blobs = new Map<string, Uint8Array>(), materials: { block: string; m: ReturnType<BlockLibrary['material']> }[] = [];
+  const branches = work.branches.map((b): G2BBranch => {
+    need(library && s.doc, 'BLOCK_STORE');
+    const a = s.rows.find(r => r.id === b.from)!, z = s.rows.find(r => r.id === b.to)!;
+    const anchor = makeRangeAnchor(s.doc, a.sectionIndex, a.path.slice(0, -1), a.path.at(-1)!, z.path.at(-1)!); need(anchor, 'WORKBENCH_RANGE');
+    return { id: b.id, name: b.name, anchor: { ...anchor, id: b.id + '-r' }, ...(b.key === undefined ? {} : { key: b.key }), blocks: b.blocks.map(c => {
+      const m = library.material(c.id, c.version);
+      materials.push({ block: `${b.id}-${c.id}`, m }); if ('fragment' in m.proto.content) blobs.set(m.proto.content.fragment, m.blob);
+      return { id: `${b.id}-${c.id}`, name: m.item.name, proto: { id: m.proto.id, version: m.proto.version }, content: m.proto.content, values: b.cases.filter(x => x.block === c.id).map(x => x.value), fallback: b.fallback === c.id };
+    }) };
+  });
+  return { branches, blobs, materials };
+}
+
+/**
+ * 고른 업무 건의 분기점 선택(엔진 `selectSlots`, 이번 건의 직접 고름이 우선): 분기점마다 상태와 고른 블록(원형 id·이름).
+ * 결정 값은 생성과 같은 데이터(업무 건 행, 없으면 견본 값)에서 연결 키로 읽는다
+ */
+function branchStates(s: Session, work: Work, library: BlockLibrary | undefined) {
+  if (!work.branches.length) return [];
+  const { branches } = branchesOf(s, work, library);
+  const t = readStudioTemplate(JSON.stringify(g2bTemplate([], { id: 't00000000', version: 1, name: 'branches', sha256: hash(s.source) }, branches))) as StudioTemplate;
+  const dataset = datasetOf(s, work), record: Record<string, unknown> = {};
+  if (dataset) for (const b of t.bindings) { const k = 'key' in b ? b.key : b.path, f = lookupPath(dataset, k); if (f.found && f.value !== null) record[k] = f.value; }
+  const picks = Object.fromEntries(work.branches.flatMap(b => b.picks[String(work.index)] ? [[b.id, `${b.id}-${b.picks[String(work.index)]}`]] : []));
+  return selectBranches(t, record, picks, work.index).map(x => {
+    const b = work.branches.find(y => y.id === x.slot)!, block = x.block?.slice(b.id.length + 1);
+    return { id: b.id, name: b.name, state: x.state, ...(block ? { block, blockName: branches.find(y => y.id === b.id)!.blocks.find(y => y.id === x.block)!.name, version: b.blocks.find(y => y.id === block)!.version } : {}), ...(x.reason ? { reason: x.reason, why: UNDECIDED_REASON[x.reason] ?? x.reason } : {}), ...(x.blocked ? { blocked: x.blocked } : {}), ...(x.differs ? { differs: true } : {}) };
+  });
+}
+/** 생성에 넣을 분기점 블록: 고른 블록을 그 범위의 저장 블록 배치로. 하나라도 못 정하면 막는다(`SEL_UNDECIDED`, 분기점 이름과 쉬운 까닭) */
+function branchPlacements(s: Session, work: Work, library: BlockLibrary | undefined): Placement[] {
+  const states = branchStates(s, work, library), open = states.filter(x => x.blocked);
+  if (open.length) fail('SEL_UNDECIDED', `이 업무 건에서 분기점 블록을 정하지 못했습니다: ${open.map(x => `${x.name}(${x.why})`).join(', ')}. 분기 표에서 이 업무 건의 블록을 고르세요.`);
+  return states.map(x => { const b = work.branches.find(y => y.id === x.id)!; return { id: x.block!, version: x.version!, from: b.from, to: b.to }; });
 }
 
 /** 견본 값의 데이터(키의 점은 하위 항목). 프로토타입 없는 객체라 `__proto__` 같은 키도 그냥 열이다 */
@@ -555,7 +627,7 @@ export function createWorkbench(library?: BlockLibrary) {
         if (path === '/api/workbench/restore') {
           need(typeof input.workspace !== 'string' || Buffer.byteLength(input.workspace) <= 20 * 1024 * 1024, 'WORKBENCH_WORKSPACE');
           const raw: unknown = typeof input.workspace === 'string' ? JSON.parse(input.workspace) : input.workspace;
-          need(isObj(raw) && raw.schema === schema && (raw.kind === 'text' || raw.kind === 'hwpx') && Object.keys(raw).every(k => ['schema', 'kind', 'name', 'source', 'sha256', 'data', 'edits', 'headings', 'blocks', 'placements', 'inputItems', 'index', 'missing', 'samples', 'workspaceId'].includes(k)), 'WORKBENCH_WORKSPACE');
+          need(isObj(raw) && raw.schema === schema && (raw.kind === 'text' || raw.kind === 'hwpx') && Object.keys(raw).every(k => ['schema', 'kind', 'name', 'source', 'sha256', 'data', 'edits', 'headings', 'blocks', 'placements', 'branches', 'inputItems', 'index', 'missing', 'samples', 'workspaceId'].includes(k)), 'WORKBENCH_WORKSPACE');
           const s = open(raw.name, raw.source); need(raw.kind === s.kind, 'WORKBENCH_WORKSPACE'); need(raw.sha256 === hash(s.source), 'WORKBENCH_SOURCE_HASH');
           if (raw.data !== undefined) { const parsed = parseData(raw.data, 'data.json'); s.data = parsed.data; s.dataContent = parsed.content; }
           need(raw.workspaceId===undefined||typeof raw.workspaceId==='string'&&/^[0-9a-f-]{36}$/.test(raw.workspaceId),'WORKBENCH_WORKSPACE');
@@ -563,8 +635,16 @@ export function createWorkbench(library?: BlockLibrary) {
           const work = workOf(s, raw);
           // A saved work may outlive a deleted block: open it without that placement and say so.
           const missing=work.placements.filter(p=>{need(library,'BLOCK_STORE');try{p.id=library.material(p.id,p.version).proto.id;return false;}catch(e){if(e instanceof HostError&&e.code==='BLOCK_NOT_FOUND')return true;throw e;}});
-          work.placements=work.placements.filter(p=>!missing.includes(p));s.pins=new Set(work.placements.map(p=>p.id));
-          return { ...registered(s), ...work, ...(missing.length?{notice:`저장소에서 지워진 블록 ${missing.length}개의 배치를 빼고 열었습니다. 그 범위는 원문 그대로입니다.`}:{}), placementNames:Object.fromEntries(work.placements.map(p=>{need(library,'BLOCK_STORE');return [p.id,library.material(p.id,p.version).item.name];})), placementWarnings:Object.fromEntries(work.placements.map(p=>{need(library,'BLOCK_STORE');return [p.id+':'+p.from,placementInfo(s,p,library).warnings];})), dataInfo: dataInfo(s) };
+          work.placements=work.placements.filter(p=>!missing.includes(p));
+          // 분기점 후보도 같다: 지워진 블록과 그 블록을 가리키던 경우·기본·직접 고름을 빼고 연다
+          let lost=0;
+          for(const b of work.branches)for(const c of [...b.blocks]){
+            need(library,'BLOCK_STORE');try{library.material(c.id,c.version);continue;}catch(e){if(!(e instanceof HostError&&e.code==='BLOCK_NOT_FOUND'))throw e;}
+            lost++;b.blocks=b.blocks.filter(x=>x!==c);b.cases=b.cases.filter(x=>x.block!==c.id);if(b.fallback===c.id)delete b.fallback;for(const [k,v] of Object.entries(b.picks))if(v===c.id)delete b.picks[k];
+          }
+          s.pins=pinsOf(work);
+          const notice=[missing.length?`저장소에서 지워진 블록 ${missing.length}개의 배치를 빼고 열었습니다. 그 범위는 원문 그대로입니다.`:'',lost?`저장소에서 지워진 블록 ${lost}개를 분기점 후보에서 뺐습니다.`:''].filter(Boolean).join(' ');
+          return { ...registered(s), ...work, ...(notice?{notice}:{}), placementNames:Object.fromEntries(work.placements.map(p=>{need(library,'BLOCK_STORE');return [p.id,library.material(p.id,p.version).item.name];})), placementWarnings:Object.fromEntries(work.placements.map(p=>{need(library,'BLOCK_STORE');return [p.id+':'+p.from,placementInfo(s,p,library).warnings];})), dataInfo: dataInfo(s) };
         }
         const s = sessionOf(input.session);
         if (path === '/api/workbench/block-preview') {
@@ -621,8 +701,19 @@ export function createWorkbench(library?: BlockLibrary) {
         if (path === '/api/workbench/sample') return sampleOf(s, input.index);
         if (path === '/api/workbench/g2b-template') {
           need(s.doc && (input.id === undefined || typeof input.id === 'string' && /^t[0-9a-f]{8}$/.test(input.id)));
-          const { entries, skipped } = g2bEntries(s, workOf(s, input).inputItems), sha256 = hash(s.source);
-          return { template: g2bTemplate(entries, { id: (input.id as string | undefined) ?? 't' + sha256.slice(0, 8), version: 1, name: s.name.replace(/\.hwpx$/i, ''), sha256 }), skipped };
+          const work = workOf(s, input), { entries, skipped } = g2bEntries(s, work.inputItems), sha256 = hash(s.source), { branches, blobs, materials } = branchesOf(s, work, library);
+          // 후보 블록 안 입력 항목(`{{키}}`·누름틀·메일머지)도 자리로 둔다: 문서에 같은 종류·이름이 있으면 그 자리가 맡고(미리 보기 값 단계 `fillValues`와 같다),
+          // 블록에만 있으면 그 블록이 골라졌을 때만 쓰는 자리(`where`)라 고르지 않은 블록의 값은 요구하지 않는다
+          const own = entries.slice();
+          for (const { block, m } of materials) for (const f of buildBlockPreviewDocument(m.proto, m.blob).fields)
+            if (!own.some(e => e.kind === f.kind && e.name.normalize('NFC') === f.name.normalize('NFC'))) entries.push({ kind: f.kind, name: f.name, where: block });
+          return { template: g2bTemplate(entries, { id: (input.id as string | undefined) ?? 't' + sha256.slice(0, 8), version: 1, name: s.name.replace(/\.hwpx$/i, ''), sha256 }, branches), skipped,
+            blobs: Object.fromEntries([...blobs].map(([k, v]) => [k, Buffer.from(v).toString('base64')])) };
+        }
+        if (path === '/api/workbench/branch-state') {
+          // 고른 블록의 넣기 경고(자리 문단과 서식이 다름 등, 블록 넣기와 같은 판정. 표시만 하고 바꾸지 않는다)
+          const work = workOf(s, input);
+          return { states: branchStates(s, work, library).map(x => { const b = work.branches.find(y => y.id === x.id)!; return x.block ? { ...x, warnings: placementInfo(s, { id: x.block, version: x.version!, from: b.from, to: b.to }, library!).warnings } : x; }) };
         }
         // 등록 안 된 누름틀·메일머지(#134): 위 서식 판이 맡지 않아 Helper 생성이 채우지 않는 필드(엔진 판정)
         if (path === '/api/workbench/unregistered') return { places: s.doc ? listUnregisteredPlaces(s.doc, g2bTemplate(g2bEntries(s, workOf(s, input).inputItems).entries, { id: 't', version: 1, name: '', sha256: '' }) as unknown as StudioTemplate).filter(p => p.kind !== 'placeholder') : [] };
@@ -656,17 +747,19 @@ export function createWorkbench(library?: BlockLibrary) {
           if (makeTemplate && s.kind !== 'hwpx') return fail('WORKBENCH_TEMPLATE_HWPX', '실제 누름틀은 HWPX 문서에서 만들 수 있습니다. TXT에서는 {{키}}를 그대로 사용하세요.');
           const work = workOf(s, input);
           for(const p of work.placements){need(library,'BLOCK_STORE');p.id=library.material(p.id,p.version).proto.id;}
-          s.pins=new Set(work.placements.map(p=>p.id));
+          s.pins=pinsOf(work);
           if (path.endsWith('/save')) {
-            library?.saveWorkspace(s.workspaceId!,s.name,work.placements);
+            library?.saveWorkspace(s.workspaceId!,s.name,[...work.placements,...work.branches.flatMap(b=>b.blocks)]);
             return { name: `${sanitizeFileStem(s.name.replace(/\.txt$/i, ''))}.workspace.json`, workspace: JSON.stringify({ schema, workspaceId:s.workspaceId, kind: s.kind, name: s.name, source: Buffer.from(s.source).toString('base64'), sha256: hash(s.source), ...(s.dataContent === undefined ? {} : { data: s.dataContent }), ...work }) };
           }
-          const result = s.kind === 'text' ? buildText(s, work) : build(s, work, makeTemplate, library);
+          // 분기점(#7)은 고른 업무 건에서 고른 블록을 그 범위에 넣는 배치가 된다(못 정하면 막는다). 누름틀 서식 만들기에는 넣지 않는다
+          const built = s.kind === 'hwpx' && !makeTemplate && work.branches.length ? { ...work, placements: [...work.placements, ...branchPlacements(s, work, library)] } : work;
+          const result = s.kind === 'text' ? buildText(s, work) : build(s, built, makeTemplate, library);
           let notes = result.notes, unresolved = 'unresolved' in result ? result.unresolved : undefined;
           if (s.kind === 'hwpx' && !makeTemplate) {
             // 결과에 남은 {{…}}(혼합 서식·이름 규칙 밖·자리 유지 등): 기본 정책은 생성 막기, 자리 유지면 알림(빠른 생성과 같은 판정)
             const dataset = datasetOf(s, work);
-            const left = leftoverOf(result.output, dataset, masked => { try { return build(s, work, false, library, masked).output; } catch { return undefined; } });
+            const left = leftoverOf(result.output, dataset, masked => { try { return build(s, built, false, library, masked).output; } catch { return undefined; } });
             if (left.count && work.missing === 'error') unlinked(describeLeftover(left));
             if (left.count) { unresolved = left.count; notes = [...notes, `채우지 못한 {{…}} 자리가 결과에 그대로 남았습니다(${describeLeftover(left)})`]; }
           }
