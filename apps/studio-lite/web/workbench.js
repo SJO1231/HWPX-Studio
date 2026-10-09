@@ -464,7 +464,9 @@ async function generate(asTemplate = false, busyMessage = '') {
       status('생성은 완료됐지만 화면 표시가 어렵습니다. 내려받기로 확인해주세요. ' + errorMessage(error), 'error'); return;
     }
     const notes = Array.isArray(result.notes) && result.notes.length ? ' · ' + result.notes.join(' · ') : '';
-    status(asTemplate ? '누름틀 ' + result.promoted + '개를 만들었습니다. 서식 HWPX 저장을 누르세요.' : textTemplate ? '글을 반영했습니다. 미연결 ' + result.unresolved + '곳은 {{키}}로 남겼습니다. 데이터를 연결하면 값을 채울 수 있습니다.' + notes : '생성 완료 · ' + result.changed + '개 편집, ' + result.filled + '곳 채움' + notes, left ? 'warn' : 'success');
+    // 등록 안 된 누름틀·메일머지(#134, 데이터 메뉴의 알림과 같은 글)
+    const unregistered = !asTemplate && state.unregistered ? ' · ' + state.unregistered : '';
+    status(asTemplate ? '누름틀 ' + result.promoted + '개를 만들었습니다. 서식 HWPX 저장을 누르세요.' : textTemplate ? '글을 반영했습니다. 미연결 ' + result.unresolved + '곳은 {{키}}로 남겼습니다. 데이터를 연결하면 값을 채울 수 있습니다.' + notes : '생성 완료 · ' + result.changed + '개 편집, ' + result.filled + '곳 채움' + notes + unregistered, left || unregistered ? 'warn' : 'success');
   } catch (error) {
     state.output = undefined; disposeResult(); $('#output-info').textContent = ''; status(errorMessage(error), 'error');
     // 분기점 블록을 이 업무 건에서 못 정하면 그 분기 표를 열어 직접 고르게 한다
@@ -1147,7 +1149,22 @@ function renderKeyNotice(){
   const used=[...new Set(inputItems().filter(r=>r.status!=='excluded').map(valueKey).filter(Boolean))],missing=state.records?used.filter(k=>!paths.includes(k)):[],only=state.records?usable.filter(p=>!used.includes(p)):[];
   note.hidden=!missing.length;note.textContent='템플릿에만 있는 키 '+missing.length+'개 · '+missing.slice(0,8).join(', ')+(missing.length>8?' …':'');
   extra.hidden=!only.length;extra.querySelector('summary').textContent='데이터에만 있는 키 '+only.length+'개';extra.querySelector('p').textContent=only.join(', ');
+  void renderUnregistered();
   return missing.length;
+}
+/** 등록 안 된 누름틀·메일머지(#134): 추천 목록에서 제외해 Helper 서식 판이 맡지 않는 필드(같은 이름이 남아 있으면 맡는다. 판정은 서버의 엔진). 제외가 바뀔 때만 묻는다 */
+const unregisteredChecks=createLatest(),FIELD_KIND={mailMerge:'메일머지',clickHere:'누름틀'};
+async function renderUnregistered(){
+  const box=$('#unregistered'),seen=state.session+'|'+inputItems().filter(r=>r.status==='excluded'&&isField(r.origin)).map(r=>r.id).join();
+  if(!state.session||state.kind!=='hwpx'){box.hidden=true;state.unregistered='';return;}
+  if(seen===state.unregisteredSeen)return;
+  state.unregisteredSeen=seen;const ticket=unregisteredChecks.begin();
+  let places;try{({places}=await api('unregistered',snapshot()));}catch{state.unregisteredSeen=undefined;return;}
+  if(!unregisteredChecks.current(ticket))return;
+  const names=new Map(),count=kind=>places.filter(p=>p.kind===kind).length;
+  for(const p of places){const k=FIELD_KIND[p.kind]+' '+p.name;names.set(k,(names.get(k)??0)+1);}
+  state.unregistered=places.length?'Helper 서식 판에 등록 안 된 '+['mailMerge','clickHere'].filter(count).map(k=>FIELD_KIND[k]+' '+count(k)+'곳').join(' · ')+'(Helper 생성은 채우지 않음)':'';
+  box.hidden=!places.length;box.querySelector('summary').textContent=state.unregistered;box.querySelector('p').textContent=[...names].map(([k,n])=>k+' '+n+'곳').join(', ');
 }
 function showRemote(){if(!state.chosen||state.busy)return;const el=$('#selection-remote');el.hidden=false;$('#remote-name').value=$('#detail-name').value;const p=state.pointer??{x:$('.original-pane').getBoundingClientRect().left+30,y:150};const r=el.getBoundingClientRect();el.style.left=Math.max(8,Math.min(p.x,innerWidth-r.width-8))+'px';el.style.top=Math.max(55,Math.min(p.y+8,innerHeight-r.height-35))+'px';}
 let libraryRequest=0;

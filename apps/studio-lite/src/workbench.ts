@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
   buildBlockPreviewDocument, planBlockInsert, applyPlan, detectHeadings, headingRangeOf, charDelta, checkValueText, collectFields, compareToBaseline, compileDocument, draftAnchors, emptyTemplate, fieldRangeIn, findPlaceholders, generate,
-  generateFromTemplate, isValidPath, lookupPath, makeLineAnchor, makeRangeAnchor, makeWordAnchor, openPackage, parseDocument,
+  generateFromTemplate, isValidPath, listUnregisteredPlaces, lookupPath, makeLineAnchor, makeRangeAnchor, makeWordAnchor, openPackage, parseDocument,
   placeText, planApplyCharFormat, readDataset, readStudioTemplate, readTemplate, readTypedValue, remapAddress, resolvePathValue, sanitizeFileStem, validateDocument, valueUnit,
   verifyPreservation, walkParagraphs, type CompileTarget, type Dataset, type HwpxDocument, type StudioTemplate,
 } from '@hwpx-studio/engine';
@@ -715,6 +715,8 @@ export function createWorkbench(library?: BlockLibrary) {
           const work = workOf(s, input);
           return { states: branchStates(s, work, library).map(x => { const b = work.branches.find(y => y.id === x.id)!; return x.block ? { ...x, warnings: placementInfo(s, { id: x.block, version: x.version!, from: b.from, to: b.to }, library!).warnings } : x; }) };
         }
+        // 등록 안 된 누름틀·메일머지(#134): 위 서식 판이 맡지 않아 Helper 생성이 채우지 않는 필드(엔진 판정)
+        if (path === '/api/workbench/unregistered') return { places: s.doc ? listUnregisteredPlaces(s.doc, g2bTemplate(g2bEntries(s, workOf(s, input).inputItems).entries, { id: 't', version: 1, name: '', sha256: '' }) as unknown as StudioTemplate).filter(p => p.kind !== 'placeholder') : [] };
         if (path === '/api/workbench/item-label') {
           // 지정한 자리의 가장 가까운 라벨(#148): 같은 문단 앞 `라벨:` → 같은 표 행 왼쪽 라벨 칸 → 위 제목
           const row = s.rows.find(r => r.id === input.row); need(row, 'WORKBENCH_POSITION');
