@@ -178,6 +178,7 @@ DataNode     = { part: "data" | "derived", depth, key, path: string | null, type
 | `POST /api/g2b/generate` 답장 | `{ requestId, status: success·needs-input·error·partial, warnings, results: [{ itemIndex, status, path?, reused?, code?, message?, missingFields?, invalidFields?, undecided?, warnings? }], summary: { succeeded, needsInput, failed, timings, totalMs } }`. 요청 전체 오류(400·409·413·415)는 `{ requestId?, code, message }`이고 1판의 `{ error }` 꼴은 없앤다 |
 | 오류 이름 | 요청 `INVALID_REQUEST`·`REQUEST_CONFLICT`·`UNKNOWN_PROFILE`. 건별 입력 필요 `MISSING_FIELDS`·`INVALID_FIELDS`·`UNDECIDED`. Studio 설정 원인 `PROFILE_MAPPING_CONFLICT`·`TEMPLATE_RECHECK`·`PROFILE_INVALID`. 실패 `GENERATION_FAILED`·`OUTPUT_ERROR` |
 | `/quick` 입력 | Helper 내보내기 파일은 생성 요청과 같은 꼴(`requestId`·`profileId` 비워도 됨) + `columns`이고 `/quick`은 이 파일만 읽는다. 옛 `g2b-helper-document` v1·1판 요청 꼴 읽기는 없앤다 |
+| 등록 안 된 누름틀·메일머지(#134) | 성공 건의 엔진 경고 `PLACE_UNREGISTERED`(8.8.12)는 그 건의 `warnings`(`field` = 이름, 메시지에 종류·이름·곳 수)로만 낸다(최상위는 비움). 작업창은 추천 목록에서 같은 이름을 모두 제외해 서식 판이 맡지 않는 필드를 엔진 `listUnregisteredPlaces`(`POST /api/workbench/unregistered`)로 세어 데이터 메뉴의 키 알림 아래 "Helper 서식 판에 등록 안 된 메일머지 n곳"(펼치면 이름별 곳 수)과 생성 완료 알림에 보인다. `/quick`은 템플릿 없이 이름으로 모든 필드를 채우므로 해당 없다 |
 
 재시도(같은 번호·지문은 같은 응답 또는 `reused: true`, 다른 지문은 409)·`dryRun`·기록(값·파일 바이트 저장 금지)·파일 이름·라벨 사전 두 층은 엔진 명세 8.8.14가 정한다. **1판 제거 시점**: 1판 다리(지금 `apps/studio-lite/src/g2b.ts`)는 2판이 양쪽 같은 서식·같은 파일로 끝까지 시험된 뒤(한글 열기, 100건 시간 측정, 최상위 경고 0) 옛 `/template` Grid·kordoc과 함께 한 번에 제거한다. 병행 기간은 없다(#11·#36·#133).
 

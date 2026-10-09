@@ -44,6 +44,7 @@ const TABLE: Readonly<Record<string, string>> = {
   TYPE_MISMATCH: "요청의 열 타입이 서식에 정한 타입과 달라 서식 타입으로 읽었습니다.",
   ALLOW_EMPTY_UNUSED: "allowEmpty에 적은 열을 서식이 쓰지 않아 무시했습니다.",
   SELECTION_UNKNOWN_SLOT: "selections에 적은 분기 이름이 서식에 없어 무시했습니다.",
+  PLACE_UNREGISTERED: "서식에 자리로 등록하지 않은 누름틀·메일머지·{{키}}가 문서에 있어 채우지 않았습니다. 채우려면 Studio에서 서식의 자리로 등록해 주세요.",
 
   // ── 앵커(채울 자리 지정) ─────────────────────────────────────────
   ANCHOR_AMBIGUOUS: "문서에서 같은 모양의 자리가 여러 곳이라 어느 곳인지 정할 수 없었습니다.",
