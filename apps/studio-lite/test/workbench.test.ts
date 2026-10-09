@@ -79,7 +79,8 @@ test('linked workspace: 25 addressed paragraphs in body/cells/header, seeded 50 
     let first:Uint8Array|undefined;
     for(let repeat=0;repeat<2;repeat++) {
       const result=post(app,opened.session,'generate',{...blank(),index,edits}) as any;
-      assert.equal(result.ok,true);assert.equal(result.filled,25);assert.equal(result.changed,25);
+      // #190: 값은 늘 편집 뒤 Helper 2판처럼 자리마다 채운다(편집 25 + 키 5개 x 25곳). 바이트는 한 번에 채운 결과와 같다
+      assert.equal(result.ok,true);assert.equal(result.filled,25+5*25);assert.equal(result.changed,25);
       const bytes=output(app,opened.session);assert.deepEqual(bytes,direct.output);
       if(first)assert.deepEqual(bytes,first);else first=bytes;
       const outputDoc=parseDocument(openPackage(bytes));
@@ -95,8 +96,8 @@ test('linked workspace: 25 addressed paragraphs in body/cells/header, seeded 50 
       generated++;filled+=result.filled;newErrors+=cmp.newErrors.length;
     }
   }
-  assert.equal(generated,100);assert.equal(filled,2500);assert.deepEqual(Buffer.from(source),sourceCopy);assert.equal(JSON.stringify(records),dataBefore);
-  t.diagnostic('seed=0x5a17c0de; records=50; targets=25; generations=100; direct_pairs=100; deterministic_pairs=50; filled=2500; new_errors='+newErrors+'; source/data unchanged');
+  assert.equal(generated,100);assert.equal(filled,15000);assert.deepEqual(Buffer.from(source),sourceCopy);assert.equal(JSON.stringify(records),dataBefore);
+  t.diagnostic('seed=0x5a17c0de; records=50; targets=25; generations=100; direct_pairs=100; deterministic_pairs=50; filled=15000; new_errors='+newErrors+'; source/data unchanged');
 });
 
 test('linked workspace: text key and bold are one-pass; data markup stays literal and original paragraph style survives',()=>{

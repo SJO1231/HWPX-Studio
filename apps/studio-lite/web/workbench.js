@@ -649,6 +649,8 @@ async function saveG2BTemplate(id){
     catch(error){if(error.code!=='REQUEST_CONFLICT')throw error;}
   }
 }
+/** "서식 판" 표시: 마지막으로 저장·다시 확인한 판(프로필 저장이 이 판을 쓴다) */
+function showTemplate(t){state.g2bTemplate=t;$('#g2b-template').textContent=t.version+'판 · '+t.name;$('#g2b-template').title=t.id+' '+t.version+'판 · '+t.name;}
 const skippedNote=t=>t.skipped?' · 빈 구간이라 넣지 못한 지정 '+t.skipped+'곳':'';
 async function helperTask(message,run){
   if(state.busy)return;setBusy(true,message);
@@ -663,7 +665,7 @@ async function renderProfiles(){
       const recheck=uiNode('button','다시 확인'),remove=uiNode('button','삭제'),where=uiNode('small',p.templateId+' '+p.version+'판 · '+p.outputDirectory+' · '+p.id);
       recheck.type=remove.type='button';recheck.dataset.recheck='true';where.title=where.textContent;
       // GET 꼴(fileName 없음)으로 판만 바꿔 보낸다. 저장된 파일 이름 규칙은 서버가 둔다(#149)
-      recheck.onclick=()=>helperTask('서식을 다시 확인하는 중입니다.',async()=>{const t=await saveG2BTemplate(p.templateId);if(t.version===p.version)return p.label+' · 서식이 그대로입니다('+t.version+'판).';await api('/api/g2b/profiles',{...p,version:t.version});return p.label+' · '+p.version+'판에서 '+t.version+'판으로 바꿨습니다.';});
+      recheck.onclick=()=>helperTask('서식을 다시 확인하는 중입니다.',async()=>{const t=await saveG2BTemplate(p.templateId);showTemplate(t);if(t.version===p.version)return p.label+' · 서식이 그대로입니다('+t.version+'판).';await api('/api/g2b/profiles',{...p,version:t.version});return p.label+' · '+p.version+'판에서 '+t.version+'판으로 바꿨습니다.';});
       remove.onclick=()=>{if(window.confirm(p.label+' 프로필을 지울까요?'))void helperTask('프로필을 지우는 중입니다.',async()=>{await api('/api/g2b/profiles/delete',{id:p.id});return p.label+' 프로필을 지웠습니다.';});};
       const li=uiNode('li');li.append(uiNode('strong',p.label),where,recheck,remove);return li;
     }));
@@ -672,7 +674,7 @@ async function renderProfiles(){
 }
 $('#helper-menu').addEventListener('toggle',()=>{if($('#helper-menu').open)void renderProfiles();});
 $('#save-g2b-template').addEventListener('click',()=>helperTask('서식 판을 저장하는 중입니다.',async()=>{
-  const t=await saveG2BTemplate();state.g2bTemplate=t;$('#g2b-template').textContent=t.version+'판 · '+t.name;$('#g2b-template').title=t.id+' '+t.version+'판 · '+t.name;
+  const t=await saveG2BTemplate();showTemplate(t);
   return '서식 판을 저장했습니다 · '+t.version+'판'+skippedNote(t);
 }));
 $('#profile-form').addEventListener('submit',event=>{event.preventDefault();const t=state.g2bTemplate;if(!t)return;void helperTask('프로필을 저장하는 중입니다.',async()=>{
@@ -1030,6 +1032,8 @@ async function confirmItems(list){
   for(const [id,text] of plan.texts){if(text===paragraph(id).text)state.edits.delete(id);else state.edits.set(id,text);}
   commitConfirm(plan.ready);for(const x of plan.ready)state.detailDrafts.set(x.item.row,{name:x.name,key:x.key});
   if(plan.texts.size){changed();renderEditor();}else touched();
+  // 선택은 고른 항목의 새 자리({{키}})로 옮긴다(옛 길이로 남으면 상세 발췌가 `{{구`처럼 잘린다)
+  if(state.activeRecommendation?.kind==='input')caretToItem(state.activeRecommendation);
   renderInputs();controls();return {done:plan.ready.length,failed:plan.failed};
 }
 function reportConfirm(result,one){
@@ -1074,7 +1078,7 @@ async function loadSample(){
 }
 /* 표 보기(크게 보기): 입력 항목 한 줄씩. 이름·키는 바로 적고 Enter/↓로 다음 줄, ✓로 확정. 줄에 들어가면 원문 그 자리로 이동·강조 */
 function openTable(){if(!state.session)return;hideMenu();state.tableOpen=true;state.tableRow=undefined;document.body.classList.add('table-open');$('#input-table').hidden=false;renderInputTable();const first=inputItems().find(r=>r.status!=='confirmed'&&r.status!=='excluded')??inputItems()[0];if(first)focusTableRow(first,'name');}
-function closeTable(){state.tableOpen=false;state.tableRow=undefined;document.body.classList.remove('table-open');$('#input-table').hidden=true;renderRecommendations();}
+function closeTable(){state.tableOpen=false;state.tableRow=undefined;document.body.classList.remove('table-open');$('#input-table').hidden=true;renderRecommendations();renderSelectionDetail(true);}
 function focusTableRow(r,field){const tr=$('#input-rows').querySelector('tr[data-item="'+CSS.escape(r.id)+'"]');const el=tr?.querySelector('[data-field="'+field+'"]');if(el){el.focus();el.scrollIntoView({block:'nearest'});showItem(r);}}
 function showItem(r){
   if(state.tableRow===r.id)return;state.tableRow=r.id;
@@ -1098,7 +1102,7 @@ function renderInputTable(){
     // 누름틀·메일머지는 글을 바꾸지 않으므로 확정한 뒤에도 연결할 데이터 키를 바꿀 수 있다(#149)
     key.readOnly=r.status==='confirmed'&&!isField(r.origin)||r.origin==='placeholder'&&!row?.editable;if(r.keyAuto)key.title='이름과 같은 데이터 키 · 연결 후보';else if(isField(r.origin))key.title=FORMS[r.origin]+' · 연결할 데이터 키';
     key.onfocus=()=>orderKeyList(r);
-    name.oninput=()=>{r.name=name.value;r.nameAuto=false;name.classList.remove('auto');name.title='';const a2=rowAria(r.name);ok.setAttribute('aria-label',a2.ok);keep.setAttribute('aria-label',a2.keep);
+    name.oninput=()=>{r.name=name.value;r.nameAuto=false;state.detailDrafts.delete(r.row);name.classList.remove('auto');name.title='';const a2=rowAria(r.name);ok.setAttribute('aria-label',a2.ok);keep.setAttribute('aria-label',a2.keep);
       retype(r);showType();if(!isField(r.origin)&&r.status!=='confirmed'){const a=autoKey(r.name,r.key,r.keyAuto,paths);if(a.key!==r.key||a.auto!==r.keyAuto){r.key=a.key;r.keyAuto=a.auto;key.value=a.key;key.classList.toggle('auto',a.auto);key.title=a.auto?'이름과 같은 데이터 키 · 연결 후보':'';}}showSample();touched();scheduleList();};
     // 데이터 키(#149): 같은 이름의 항목도 같은 키를 받는다(같은 이름은 같은 값). 다른 줄의 칸은 다음에 표를 다시 그릴 때 보인다
     key.oninput=()=>{const v=key.value.trim(),group=linkTargets(items,r,v);for(const x of typeof group==='string'?[r]:group){x.key=v;x.keyAuto=false;}key.classList.remove('auto');key.title='';showSample();if(isField(r.origin))changed();else touched();};
@@ -1224,8 +1228,10 @@ function createBranch(){
 async function openBranch(id){
   const b=state.branches.find(x=>x.id===id);if(!b)return;
   selectRow(b.from,{fromPick:true});state.detailLibrary=undefined;state.detailBranch=id;document.body.classList.remove('detail-collapsed');$('#detail-toggle').textContent='접기';$('#detail-toggle').setAttribute('aria-expanded','true');renderHeadingTree();void renderBranch();
-  await showRowInSource(b.from);const order=rowOrder();
-  if(state.detailBranch===id&&state.viewMode==='source')displaySourceMarks(state.paragraphs.slice(order.get(b.from),order.get(b.to)+1).filter(p=>p.position).map(p=>({id:p.id,kind:'selection',position:p.position,endOffset:p.text.length})));
+  await showRowInSource(b.from);const order=rowOrder();if(state.detailBranch!==id)return;
+  // 범위 강조를 그 첫 문단의 표식으로 남긴다(원문을 다시 그려도, 생성 미리 보기에서 돌아와도 범위 전체)
+  const marks=state.paragraphs.slice(order.get(b.from),order.get(b.to)+1).filter(p=>p.position).map(p=>({id:p.id,kind:'selection',position:p.position,endOffset:p.text.length}));state.marks.set(b.from,marks);
+  if(state.viewMode==='source')displaySourceMarks(marks);
 }
 /** 분기점 고치기: 실행 취소 한 번, 이전 결과는 버리고 이 업무 건의 선택을 다시 묻는다 */
 function editBranch(change){remember();change();changed();void refreshBranches();}

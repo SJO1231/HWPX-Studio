@@ -121,23 +121,28 @@ test('#133 Helper 내보내기 파일 무작위 50건×2회: 결정성·엔진 �
   t.diagnostic('seed=0x126c; form=helperExport(studio-generate v2); rows=50; places=46(filled 42, leftover 4: mixed run 1, off-rule 2, bad-key mailmerge 1); keep_generations=100; deterministic_pairs=50; direct_equal=50; error_blocked=50; new_errors=0; brace_values_not_counted=true');
 });
 
-test('#126 작업창 HWPX: 같은 합성 서식에서 남은 자리는 기본 정책이면 막고 자리 유지면 알림, 데이터에 없는 키는 키 이름과 함께 막음',()=>{
+test('#126 #190 작업창 HWPX: 같은 합성 서식에서 남은 자리는 기본 정책이면 막고 자리 유지면 알림, 데이터에 없는 키는 키 이름과 함께 막음, 혼합 서식 {{키}}는 정책과 관계없이 막음',()=>{
   const bytes=synthetic(),app=createWorkbench();
   const opened=app.post('/api/workbench/open',{name:'synthetic.hwpx',content:Buffer.from(bytes).toString('base64')}) as any;
   const work={session:opened.session,index:0,edits:[],headings:[],blocks:[]};
   assert.deepEqual(opened.inputs.filter((x:any)=>x.usable===false).map((x:any)=>x.name.trim()).sort(),['계약 방법(수의)','담당 부서','추정가격(원)'].sort());
   const next=rng(0x126d),row=rowOf(next,0);
   app.post('/api/workbench/data',{session:opened.session,name:'helper.json',content:JSON.stringify({format:'studio-generate',version:2,requestId:'',profileId:'',items:[{values:row}]})});
-  assert.throws(()=>app.post('/api/workbench/generate',work),(e:any)=>e.code==='WORKBENCH_UNLINKED'&&e.message.includes('남은 자리 4곳: {{혼합.키}} 1곳, {{추정가격(원)}} 1곳, {{담당 부서}} 1곳, {{계약 방법(수의)}} 1곳')&&!e.message.includes('SYN_'));
+  // #190: 값 단계는 늘 Helper 2판과 같은 생성이다. 규칙 밖 이름도 서식 판의 키라 데이터에 없으면 키 이름과 함께 막고, 혼합 서식 {{키}}는 자리 유지여도 막는다(키 이름과 곳 수)
+  assert.throws(()=>app.post('/api/workbench/generate',work),(e:any)=>e.code==='WORKBENCH_UNLINKED'&&e.message.includes('데이터에 없는 키 3개: 추정가격(원), 담당 부서, 계약 방법(수의)')&&!e.message.includes('SYN_'));
   assert.throws(()=>app.get('/api/workbench/result',new URLSearchParams({session:opened.session})),(e:any)=>e.code==='WORKBENCH_RESULT');
-  const kept=app.post('/api/workbench/generate',{...work,missing:'keep'}) as any;
+  const items=opened.inputs.map((x:any)=>({row:x.row,start:x.start,end:x.end,name:x.name.trim(),key:x.usable?x.name.trim():'',type:'text',status:x.name.trim()==='혼합.키'?'excluded':'recommended',origin:x.kind}));
+  // 금액 값 표가 없을 때(입력 항목 없음·글)와 있을 때(금액 타입) 같은 판정
+  for(const type of [undefined,'text','money'])assert.throws(()=>app.post('/api/workbench/generate',{...work,missing:'keep',...(type?{inputItems:items.map((i:any)=>({...i,status:'recommended',type:i.name==='금액'?type:'text'}))}:{})}),(e:any)=>e.code==='FILL_SKIPPED'&&e.message.includes('{{키}} 자리 1곳(혼합.키)')&&!e.message.includes('SYN_'));
+  // 혼합 서식 {{키}}를 추천 목록에서 제외하면 서식 판에 없는 자리라 그대로 남는다(남은 자리 알림)
+  const kept=app.post('/api/workbench/generate',{...work,missing:'keep',inputItems:items}) as any;
   assert.equal(kept.ok,true);assert.equal(kept.unresolved,4);assert.equal(kept.filled,FILLED);assert(kept.notes.some((n:string)=>n.includes('남은 자리 4곳')));
   const out=app.get('/api/workbench/result',new URLSearchParams({session:opened.session}))!.body;
   const direct=generate(bytes,emptyTemplate(),readDataset(row),{missing:'keep',mode:'baseline'});assert(direct.ok&&!direct.dryRun);assert.deepEqual(out,direct.output);
   assert.deepEqual(compareToBaseline(validateDocument(bytes),validateDocument(out)).newErrors,[]);
   app.post('/api/workbench/data',{session:opened.session,name:'missing.json',content:JSON.stringify([{...row,비고:null}])});
-  assert.throws(()=>app.post('/api/workbench/generate',work),(e:any)=>e.code==='WORKBENCH_UNLINKED'&&e.message.includes('데이터에 없는 키 1개: 비고'));
-  const partial=app.post('/api/workbench/generate',{...work,missing:'keep'}) as any;assert.equal(partial.unresolved,4+2,'비고 {{…}} 2곳이 더 남는다');
+  assert.throws(()=>app.post('/api/workbench/generate',work),(e:any)=>e.code==='WORKBENCH_UNLINKED'&&e.message.includes('데이터에 없는 키 4개: 비고, 추정가격(원)'));
+  const partial=app.post('/api/workbench/generate',{...work,missing:'keep',inputItems:items}) as any;assert.equal(partial.unresolved,4+2,'비고 {{…}} 2곳이 더 남는다');
   assert.deepEqual(app.get('/api/workbench/source',new URLSearchParams({session:opened.session}))!.body,bytes);
 });
 

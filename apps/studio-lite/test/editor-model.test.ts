@@ -187,7 +187,8 @@ test('continuous editor HWPX integration: 32 body/cell locations, seeded 50 mode
     }
     // insertText blocks intentionally reject tabs; inline paragraph edits above
     // retain them. Do not conceal this public-engine boundary by dropping tabs.
-    assert.throws(()=>app.post('/api/workbench/generate',{session:opened.session,index:0,headings:[],...work,blocks:work.blocks.map(b=>b.id==='b-merge'?{...b,text:'{{tabValue}}'}:b)}),(e:any)=>e.code==='WORKBENCH_TEXT');
+    // (#190: a data value with a tab now arrives in the value stage, so the boundary is the block's own text.)
+    assert.throws(()=>app.post('/api/workbench/generate',{session:opened.session,index:0,headings:[],...work,blocks:work.blocks.map(b=>b.id==='b-merge'?{...b,text:'탭\t글'}:b)}),(e:any)=>e.code==='WORKBENCH_TEXT');
     assert.throws(()=>app.get('/api/workbench/result',new URLSearchParams({session:opened.session})),(e:any)=>e.code==='WORKBENCH_RESULT');
     assert.equal(JSON.stringify(data),dataBefore);
   }

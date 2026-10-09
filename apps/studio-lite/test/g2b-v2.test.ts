@@ -384,7 +384,7 @@ test('엔진 코드 → 창구 이름, Studio 설정 원인(연결 겹침·서�
     assert.equal((await app.studio('/api/g2b/templates', { ...NOTICE, template: t3 })).http, 200);
     assert.equal((await app.studio('/api/g2b/profiles', { id: 'recheck', label: '다시 확인', templateId: 't0e5a0003', version: 1, outputDirectory: dir })).http, 200);
     const recheck = await app.post('/api/g2b/generate', { ...req('recheck', [item()]), profileId: 'recheck' });
-    assert.deepEqual([recheck.body.status, recheck.body.results[0].code], ['error', 'TEMPLATE_RECHECK']); assert(recheck.body.results[0].message.includes('PLACE_UNREGISTERED'));
+    assert.deepEqual([recheck.body.status, recheck.body.results[0].code], ['error', 'TEMPLATE_RECHECK']); assert(recheck.body.results[0].message.includes('PLACE_UNREGISTERED · {{연락처}}'));
     // 프로필: 출력 폴더가 사라짐 → 모든 건 PROFILE_INVALID(기록하지 않아 Studio에서 고친 뒤 같은 번호로 다시 보낼 수 있다)
     const gone = join(root, 'gone'); assert.equal((await app.studio('/api/g2b/profiles', { id: 'gone', label: '사라질 폴더', templateId: 't0e5a0001', version: 1, outputDirectory: gone })).http, 200);
     rmSync(gone, { recursive: true });
@@ -680,6 +680,9 @@ test('#134 작업창: 추천 목록에서 같은 이름을 모두 제외한 누�
     for (const p of listed) tally.set(`${p.kind}:${p.name}`, (tally.get(`${p.kind}:${p.name}`) ?? 0) + 1);
     assert.deepEqual([...tally].sort(), [['clickHere:성명', 1], ['mailMerge:담당자', 4], ['mailMerge:연락처', 3]]);
 
+    // #192: 제외한 {{키}}는 서식 판에 없어 Helper 생성이 막히므로 서식 판을 만들지 않고 키 이름과 함께 알린다
+    const keyOut = await app.post('/api/workbench/g2b-template', work((i, n) => fieldsOut(i, n) || i.name === 'project.name'));
+    assert.equal(keyOut.http, 400); assert.equal(keyOut.body.code, 'WORKBENCH_UNREGISTERED_KEY'); assert(keyOut.body.error.startsWith('생성 막힘: {{키}} 1개(project.name).'), keyOut.body.error);
     // 같은 제외로 만든 서식 판(화면의 "서식 판 저장")으로 2판 생성 → 건마다 같은 이름·곳 수의 경고
     const { template } = (await app.post('/api/workbench/g2b-template', work(fieldsOut))).body;
     assert.equal((await app.studio('/api/g2b/templates', { template, source: MAILMERGE.toString('base64') })).http, 200);

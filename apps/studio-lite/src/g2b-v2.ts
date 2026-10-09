@@ -281,7 +281,9 @@ function produce(p: Plan, e: Extract<Evaluated, { record: unknown }>, itemIndex:
     const code = windowCode(codes);
     const fields = [...new Set(issues.filter(i => i.where?.startsWith('value:')).map(i => (p.columnsOf.get(i.where!.slice(6)) ?? [i.where!.slice(6)])[0]!))];
     const extra: Partial<Result> = code === 'MISSING_FIELDS' ? { missingFields: fields } : code === 'INVALID_FIELDS' ? { invalidFields: fields.map(f => ({ field: f, type: p.t.values.find(v => v.id === p.valueOf.get(f))?.format ?? 'text' })) } : {};
-    return { result: fail(itemIndex, code, `(엔진: ${codes.join(', ')})`, e.warnings, extra) };
+    // 등록 안 된 {{키}}(#192)는 어느 키인지 함께(엔진 `where` = `{{키}}`)
+    const unregistered = [...new Set(issues.filter(i => i.code === 'PLACE_UNREGISTERED').map(i => i.where))];
+    return { result: fail(itemIndex, code, `(엔진: ${codes.join(', ')}${unregistered.length ? ` · ${unregistered.join(', ')}` : ''})`, e.warnings, extra) };
   }
   // 등록 안 된 자리(#134)는 그 건의 경고로(최상위 warnings는 정상 요청에서 비어 있어야 한다). 이 건의 경고 목록에 더한다
   e.warnings.push(...r.report.warnings.filter(w => w.code === 'PLACE_UNREGISTERED').map(unregistered));

@@ -220,8 +220,8 @@ test('input table end to end: seeded 50 rounds designate dozens of places (body/
     let first: Uint8Array | undefined;
     for (let repeat = 0; repeat < 2; repeat++) {
       const result = post(app, restored.session, 'generate', { ...blank, index, edits, inputItems: items });
-      // 금액 값 표가 있으면(이름 금액) 값은 Helper 2판처럼 편집 뒤 자리마다 따로 채운다(#186): 편집 줄 + 확정 자리
-      assert.equal(result.ok, true); assert.equal(result.filled, edits.length + (items.some(i => i.key === '금액') ? items.length : 0));
+      // 값은 늘 Helper 2판처럼 편집 뒤 자리마다 따로 채운다(#186·#190): 편집 줄 + 확정 자리
+      assert.equal(result.ok, true); assert.equal(result.filled, edits.length + items.length);
       const bytes = output(app, restored.session);
       if (first) assert.deepEqual(bytes, first); else first = bytes;
       for (const r of rows) {
