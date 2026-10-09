@@ -306,7 +306,7 @@ export type G2BEntry = { kind: Exclude<ItemOrigin, 'user'> | 'word' | 'line'; na
  * 자리: 찾은 것은 문서의 이름 그대로, 지정한 것은 앵커 자리. 값 형식은 표의 타입이 금액·날짜면 money·date, 나머지 text이고,
  * 금액 지정 자리의 원문이 "원"으로 끝나면 `display.unit: "원"`(엔진이 자리 뒤가 "원"이면 뗀다). 판 번호·id는 부르는 쪽이 정한다(저장된 판은 바뀌지 않는다).
  */
-// shortcut: 지정 자리의 날짜는 엔진 기본 표시(YYYY. MM. DD.)이고 원문의 앞 글(`금 `)은 빠진다(작업창 생성은 원문 모양을 따른다), 원문 모양을 display.pattern으로 옮길 때 올린다
+// shortcut: 지정 자리의 날짜는 엔진 기본 표시(YYYY. MM. DD.)이고 원문의 앞 글(`금 `)은 빠진다(작업창 미리 보기도 이 값 표로 같은 글, #181), 원문 모양을 display.pattern으로 옮길 때 올린다
 export function g2bTemplate(found: readonly G2BEntry[], t: { id: string; version: number; name: string; sha256: string }) {
   const nfc = (s: string) => s.normalize('NFC'), keyOf = (x: G2BEntry) => nfc(x.key?.trim() || x.name);
   const keys = [...new Set(found.map(keyOf))], value = (k: string) => 'v' + (keys.indexOf(k) + 1);

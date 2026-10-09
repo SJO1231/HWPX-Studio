@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { placeText, readTypedValue } from '@hwpx-studio/engine';
 import { decorateValue, suggestType, TYPE_LABEL, VALUE_TYPES, type ValueType } from '../src/value-type.ts';
 
 // 타입 추천 규칙 표(#147): 타입마다 10개 이상, 경계 사례 포함. [원문 글, 타입, 단위?]
@@ -84,44 +83,10 @@ test('value type rules: seeded 140 synthetic values (7 kinds x 20) are recommend
   t.diagnostic(`seed=0x147a; values=${n}; mismatches=0`);
 });
 
-test('value decoration: amount commas and no doubled 원, date in the original shape, quantity unit; phone/id/text untouched', () => {
-  // 금액: 쉼표, 원문 수 모양의 앞뒤 글(원·금)을 따르고, 자리 뒤가 "원"이면 붙이지 않는다(확인 문장 4)
-  assert.equal(decorateValue('money', '1234000', '1,234,000원', ''), '1,234,000원');
-  assert.equal(decorateValue('money', '1234000', '1,234,000', '원 (부가세 포함)'), '1,234,000');
-  assert.equal(decorateValue('money', '1234000원', '1,234,000', '원'), '1,234,000', 'value 원 + following 원 → once');
-  assert.equal(decorateValue('money', '1234000원', '{{금액}}', '원'), '1,234,000');
-  assert.equal(decorateValue('money', '1234000원', '{{금액}}', ''), '1,234,000', 'no number shape in the source: the value unit goes, like the engine (#172)');
-  assert.equal(decorateValue('money', '1234000', '{{금액}}', ' 원'), '1,234,000');
-  assert.equal(decorateValue('money', '2000000', '금 1,000,000원', ''), '금 2,000,000원');
-  assert.equal(decorateValue('money', '₩2,000,000', '1,000원정', ''), '2,000,000원정');
-  assert.equal(decorateValue('money', '-1234', '1,000원', ''), '-1,234원');
-  assert.equal(decorateValue('money', '007', '1,000', ''), '7');
-  assert.equal(decorateValue('money', '0', '1,000원', ''), '0원');
-  assert.equal(decorateValue('money', '12345678901234567890', '1원', ''), '12,345,678,901,234,567,890원', 'big numbers stay exact');
-  assert.equal(decorateValue('money', '1234.5', '1원', ''), '1,234.5원');
-  for (const v of ['미정', '', '1,000원 및 2,000원', '2026-10-07', '약 일천만원']) assert.equal(decorateValue('money', v, '1,000원', ''), v, v);
-  // 부호는 값의 것을 지킨다(원문 앞 글로 덮지 않음, 부호 뒤 빈칸은 붙인다)
-  assert.equal(decorateValue('money', '△1234', '1,000원', ''), '△1,234원');
-  assert.equal(decorateValue('money', '- 1234', '금 1,000원', ''), '금 -1,234원');
-  assert.equal(decorateValue('money', '1,2,3', '1,000원', ''), '1,2,3', 'commas that are not groups of three: left as given');
-  // 날짜: 원문의 구분 글·공백·끝 글·0 채움·요일(새 날짜로 다시 셈)(확인 문장 5)
-  const d = (value: string, original: string) => decorateValue('date', value, original, '');
-  assert.equal(d('2026-11-02', '2026. 10. 7.'), '2026. 11. 2.');
-  assert.equal(d('2026. 1. 5.', '2026-10-07'), '2026-01-05');
-  assert.equal(d('2026-11-02', '2026.10.15'), '2026.11.02', 'both two-digit, compact → zero padded');
-  assert.equal(d('2026-11-02', '2026. 10. 15.'), '2026. 11. 2.', 'both two-digit, spaced → not padded');
-  assert.equal(d('2026-01-05', '2026년 10월 7일'), '2026년 1월 5일');
-  assert.equal(d('2026-11-02', '2026년10월07일'), '2026년11월02일');
-  assert.equal(d('2026-11-02', '2026. 10. 7.(수)'), '2026. 11. 2.(월)');
-  assert.equal(d('2026-10-07', '2026/1/5'), '2026/10/7');
-  assert.equal(d('2026-11-02', ' 2026. 10. 7. '), ' 2026. 11. 2. ', 'spaces inside the chosen place stay');
-  assert.equal(d('20261102', '2026. 10. 7.'), '2026. 11. 2.');
-  assert.equal(d('2026년 11월 2일', '2026-10-07'), '2026-11-02');
-  for (const [v, o] of [['2026-02-30', '2026. 10. 7.'], ['다음 달', '2026. 10. 7.'], ['2026-11-02 10:00', '2026. 10. 7.'], ['다음 달', '{{계약일}}']]) assert.equal(d(v!, o!), v, `${v} / ${o}`);
-  // 원문에 날짜 서식이 없으면 기본 YYYY. MM. DD.(사용자 결정 2026-10-09)
-  assert.equal(d('2026-11-02', '{{계약일}}'), '2026. 11. 02.');
-  assert.equal(d('2026년 1월 5일', ''), '2026. 01. 05.');
-  assert.equal(d('20261231', '미정'), '2026. 12. 31.');
+test('value decoration: quantity keeps the source unit; amount and date are left to the engine value format (#181); phone/id/text untouched', () => {
+  // 금액·날짜는 서버가 엔진 값 형식으로 꾸민다(Helper 2판과 같은 글). 여기서는 받은 그대로
+  assert.equal(decorateValue('money', '1234000', '1,234,000원', ''), '1234000');
+  assert.equal(decorateValue('date', '2026-11-02', '2026. 10. 7.', ''), '2026-11-02');
   // 수량: 원문 단위, 자리 뒤가 단위면 붙이지 않음, 원문 수에 쉼표가 있을 때만 쉼표
   assert.equal(decorateValue('quantity', '7', '5개', ''), '7개');
   assert.equal(decorateValue('quantity', '7', '5', '개'), '7');
@@ -133,14 +98,4 @@ test('value decoration: amount commas and no doubled 원, date in the original s
   for (const type of ['phone', 'text', 'longText', 'time'] as const)
     for (const v of ['02-123-4567', '0212345678', '010-0000-0000', '0101011234567', '007', '14:00', '1234000'])
       assert.equal(decorateValue(type, v, '02-999-9999', '원'), v, `${type} ${v}`);
-});
-
-test('#172 amount without a number shape in the source matches the engine money default: the value unit goes, the source unit after the place is kept once', () => {
-  const engine = (value: string, following: string) => { const t = readTypedValue('money', value); assert(t.ok); return placeText(t.text, undefined, following); };
-  let n = 0;
-  for (const value of ['1234000원', '1,234,000', '금 1,234,000원', '-1234', '₩12,000', '1234000원정', '12345678901234567890', '0원'])
-    for (const following of ['', '원', ' 원(부가세 포함)', '(부가세 포함)']) { assert.equal(decorateValue('money', value, '{{금액}}', following), engine(value, following), value + ' / ' + following); n++; }
-  assert.equal(n, 32);
-  // 원문이 수 모양이면 전처럼 원문 모양("원" 한 번)
-  assert.equal(decorateValue('money', '1234000원', '1,000원', ''), '1,234,000원');
 });
