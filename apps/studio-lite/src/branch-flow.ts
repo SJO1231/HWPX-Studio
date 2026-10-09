@@ -31,3 +31,34 @@ export function branchFlow(order: readonly string[], outline: readonly Heading[]
   ];
   return items.sort((x, y) => x.pos - y.pos || x.rank - y.rank).map(x => x.node);
 }
+
+// ── 제목 트리(#151 "이것과 같은 것 전부")와 제목별 블록 후보(#78). 블록 후보는 서버가 아니라 여기서 트리로 계산한다(트리를 고칠 수 있으므로) ──
+type Row = { id: string; sectionIndex: number; path: readonly number[] };
+export type HeadingBlock = { from: string; to: string; name: string; paragraphCount: number };
+
+/**
+ * 제목별 블록 후보: 제목 문단부터 같은 문단 목록에서 다음에 나오는 단계가 같거나 높은 제목의 앞 문단까지(없으면 목록 끝).
+ * 엔진 `headingRangeOf`와 같은 규칙을 화면의 제목 트리(탐지 + 사용자가 고친 것)에 쓴다. 탐지 그대로면 결과도 엔진과 같다
+ */
+export function headingBlocks(rows: readonly Row[], outline: readonly Heading[]): HeadingBlock[] {
+  const listOf = (r: Row) => r.sectionIndex + ':' + r.path.slice(0, -1).join('.'), lists = new Map<string, Row[]>();
+  for (const r of rows) { const k = listOf(r); if (!lists.has(k)) lists.set(k, []); lists.get(k)!.push(r); }
+  const byId = new Map(rows.map(r => [r.id, r])), levels = new Map(outline.map(h => [h.id, h.level]));
+  return outline.flatMap(h => {
+    const a = byId.get(h.id); if (!a) return [];
+    const list = lists.get(listOf(a))!, i = list.indexOf(a);
+    let j = i + 1;
+    while (j < list.length && !((levels.get(list[j]!.id) ?? Infinity) <= h.level)) j++;
+    return [{ from: a.id, to: list[j - 1]!.id, name: h.name, paragraphCount: j - i }];
+  });
+}
+
+/**
+ * 같은 유형 ✓(#151): 제안 가운데 체크한(`keep`) 문단은 제목 트리에 두고(이미 제목이면 그 단계 그대로, 아니면 제안의 `level`), 뺀 문단은 트리에서 뺀다.
+ * 제안에 없는 제목은 그대로. 문서 순서(`order`)
+ */
+export function applySimilar(order: readonly string[], outline: readonly Heading[], picks: readonly (Heading & { keep: boolean })[]): Heading[] {
+  const touched = new Set(picks.map(p => p.id)), at = new Map(order.map((id, i) => [id, i]));
+  const kept = picks.filter(p => p.keep).map(p => outline.find(h => h.id === p.id) ?? { id: p.id, name: p.name, level: p.level });
+  return [...outline.filter(h => !touched.has(h.id)), ...kept].sort((a, b) => at.get(a.id)! - at.get(b.id)!);
+}
