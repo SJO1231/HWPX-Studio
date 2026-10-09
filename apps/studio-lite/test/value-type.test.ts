@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { decorateValue, suggestType, TYPE_LABEL, VALUE_TYPES, type ValueType } from '../src/value-type.ts';
+import { datePattern, decorateValue, suggestType, TYPE_LABEL, VALUE_TYPES, type ValueType } from '../src/value-type.ts';
+import { readTypedValue } from '@hwpx-studio/engine';
 
 // 타입 추천 규칙 표(#147): 타입마다 10개 이상, 경계 사례 포함. [원문 글, 타입, 단위?]
 const TABLE: [string, ValueType, string?][] = [
@@ -98,4 +99,16 @@ test('value decoration: quantity keeps the source unit; amount and date are left
   for (const type of ['phone', 'text', 'longText', 'time'] as const)
     for (const v of ['02-123-4567', '0212345678', '010-0000-0000', '0101011234567', '007', '14:00', '1234000'])
       assert.equal(decorateValue(type, v, '02-999-9999', '원'), v, `${type} ${v}`);
+});
+
+test('#186 date shape → engine display.pattern: separators and end kept, one-digit month or day → M·D, else MM·DD; no date shape → none (engine default)', () => {
+  const table: [string, string | undefined][] = [
+    ['2026. 11. 2.', 'YYYY. M. D.'], ['2026. 1. 5.', 'YYYY. M. D.'], ['2025. 12. 31.', 'YYYY. MM. DD.'], ['2026. 01. 05.', 'YYYY. MM. DD.'], ['2026-11-02', 'YYYY-MM-DD'],
+    ['2026/1/5', 'YYYY/M/D'], ['2026.10.07', 'YYYY.MM.DD'], ['2026년 10월 7일', 'YYYY년 M월 D일'], ['2026년10월17일', 'YYYY년MM월DD일'], ['2026. 10. 7.(수)', 'YYYY. M. D.'], ['2026. 12. 31', 'YYYY. MM. DD'],
+    ['20261007', undefined], ['2026. 2. 30.', undefined], ['1,234,000원', undefined], ['', undefined], ['{{계약일}}', undefined], ['2026.\t1.\t5.', undefined],
+  ];
+  for (const [text, want] of table) assert.equal(datePattern(text), want, JSON.stringify(text));
+  // 엔진 표시: 같은 날짜가 원문 모양대로
+  const shown = (pattern: string) => { const r = readTypedValue('date', '2027-01-05', { pattern }); assert(r.ok); return r.text; };
+  assert.deepEqual(['2026. 11. 2.', '2025. 12. 31.', '2026-11-02', '2026년 10월 7일'].map(t => shown(datePattern(t)!)), ['2027. 1. 5.', '2027. 01. 05.', '2027-01-05', '2027년 1월 5일']);
 });

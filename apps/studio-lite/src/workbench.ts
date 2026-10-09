@@ -1,9 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
   planBlockInsert, applyPlan, detectHeadings, headingRangeOf, charDelta, checkValueText, collectFields, compareToBaseline, compileDocument, draftAnchors, emptyTemplate, fieldRangeIn, findPlaceholders, generate,
-  isValidPath, makeLineAnchor, makeRangeAnchor, makeWordAnchor, openPackage, parseDocument,
-  placeText, planApplyCharFormat, readDataset, readTemplate, readTypedValue, remapAddress, resolvePathValue, sanitizeFileStem, validateDocument, valueUnit,
-  verifyPreservation, walkParagraphs, type CompileTarget, type Dataset, type HwpxDocument,
+  generateFromTemplate, isValidPath, lookupPath, makeLineAnchor, makeRangeAnchor, makeWordAnchor, openPackage, parseDocument,
+  placeText, planApplyCharFormat, readDataset, readStudioTemplate, readTemplate, readTypedValue, remapAddress, resolvePathValue, sanitizeFileStem, validateDocument, valueUnit,
+  verifyPreservation, walkParagraphs, type CompileTarget, type Dataset, type HwpxDocument, type StudioTemplate,
 } from '@hwpx-studio/engine';
 import { HostError, isObj, locate, markOf, resolveDrafts } from '../../../packages/viewer/src/host/index.ts';
 import { toRhwpPosition, type RhwpPosition } from '../../../packages/viewer/src/map/index.ts';
@@ -12,7 +12,7 @@ import { parseCsv } from './core.ts';
 import { analyzePlaces, describeLeftover, findLeftovers, leftoverOf, listKeys, parseQuickData, type QuickData } from './quick.ts';
 import { CONTEXT, ITEM_KEYS, LABEL_MAX, LABEL_RELS, g2bTemplate, isField, repsOf, spanNow, validKey, type G2BEntry, type InputItem } from './input-table.ts';
 import { labelAt } from './item-label.ts';
-import { VALUE_TYPES, decorateValue } from './value-type.ts';
+import { VALUE_TYPES, datePattern, decorateValue } from './value-type.ts';
 
 import { plainOf as plainBlock } from '../../studio/src/messages.ts';
 const MAX_SOURCE = 10 * 1024 * 1024;
@@ -195,46 +195,58 @@ function datasetOf(s: Session, work: Work): Dataset | undefined {
     if (Object.hasOwn(base.data, field) && base.data[field] != null) fail('DATA_ALIAS_CONFLICT', `'${field}' 필드는 데이터 키 '${i.key}'에 연결했는데 데이터에 '${field}' 값도 있습니다. 한 열만 남기세요.`);
     data[field] = value.text;
   }
-  return typed(s, work.inputItems, { data, derived: base.derived });
+  return { data, derived: base.derived };
 }
 
 type Shape = (value: string, following: string) => string | undefined;
 /**
  * 값 형식(#181): Helper 서식 판(`g2bTemplate`)과 같은 값 표의 금액·날짜 값. 값을 읽는 경로(찾은 자리면 문서의 이름, 지정 자리면 연결한 키 = 확정한 편집 글의 `{{키}}`) →
- * 엔진 형식(8.8.4 `readTypedValue`)으로 꾸미고 자리 바로 뒤 글로 "원" 단위를 정하는 함수(`placeText`, 읽지 못하는 값이면 undefined)와, 찾은 자리의 바로 뒤 글
+ * 엔진 형식(8.8.4 `readTypedValue`, 원문 날짜 모양 `display.pattern` 포함)으로 꾸미고 자리 바로 뒤 글로 "원" 단위를 정하는 함수(`placeText`, 읽지 못하는 값이면 undefined).
+ * TXT 미리 보기는 자리마다 이 함수를 쓰고, HWPX는 이 값 표가 있으면 값을 `fillValues`(Helper 2판 생성)로 채운다.
  */
-function formatsOf(s: Session, items: readonly InputItem[]): Map<string, { shape: Shape; following: string }> {
+function formatsOf(s: Session, items: readonly InputItem[]): Map<string, Shape> {
   const t = g2bTemplate(g2bEntries(s, items).entries, { id: 't', version: 1, name: '', sha256: '' });
-  const values = new Map(t.values.map(v => [v.id, v])), keys = new Map(t.bindings.map(b => [b.value, b.key])), out = new Map<string, { shape: Shape; following: string }>();
+  const values = new Map(t.values.map(v => [v.id, v])), keys = new Map(t.bindings.map(b => [b.value, b.key])), out = new Map<string, Shape>();
   for (const p of t.places as { kind: string; value: string; anchor?: string; name?: string; key?: string }[]) {
-    const { format, display } = values.get(p.value)! as { format: 'text' | 'money' | 'date'; display?: { unit: string } }, path = p.anchor ? keys.get(p.value)! : (p.name ?? p.key)!;
+    const { format, display } = values.get(p.value)! as { format: 'text' | 'money' | 'date'; display?: { unit?: string; pattern?: string } }, path = p.anchor ? keys.get(p.value)! : (p.name ?? p.key)!;
     if (format === 'text' || !isValidPath(path) || out.has(path)) continue;
-    const at = p.anchor ? undefined : s.inputs?.find(x => x.kind === p.kind && (x.kind === 'placeholder' ? x.name.trim() : x.name) === path);
-    out.set(path, { following: at ? s.rows.find(r => r.id === at.row)!.text.slice(at.end) : '', shape: (value, following) => {
+    out.set(path, (value, following) => {
       const read = readTypedValue(format, value, display);
       return read.ok ? placeText(read.text, valueUnit(format, display), following) : undefined;
-    } });
+    });
   }
   return out;
 }
 /**
- * 데이터의 금액·날짜 값을 엔진 형식으로 꾸민 사본(한 값은 어디서나 같은 글. 읽지 못하는 값 `미정` 등은 그대로). 엔진이 채우는 찾은 자리는 값마다 한 글이라
- * "원" 단위는 그 값의 첫 찾은 자리 뒤 글로 정한다. 확정한 지정 자리는 `decorationsOf`가 자리마다 다시 정한다.
+ * 값 단계(#186): 조립본의 `{{키}}`·누름틀·메일머지를 Helper 2판 창구와 같은 엔진 생성(`generateFromTemplate`)으로 자리마다 채운다(금액 "원"은 자리 바로 뒤 글로, 8.8.4).
+ * 서식 판은 같은 `g2bTemplate`이고 확정한 지정 자리는 편집 글의 `{{키}}`로, 그 밖의 `{{키}}`·필드(직접 적은 것·블록 안의 것)는 글 값으로 더한다.
+ * 데이터는 연결 키(없으면 별칭)의 값을 담은 한 행이다. 엔진이 읽지 못하는 금액·날짜 값(`미정` 등)은 그 값만 글로 넣는다(창구는 `INVALID_FIELDS`).
  */
-// shortcut: 같은 금액 값의 찾은 {{키}}·누름틀이 여럿이고 바로 뒤 글("원" 유무)이 서로 다르면 그중 일부는 Helper와 "원" 하나가 다르다, 미리 보기를 2판 자리 채움으로 옮길 때 올린다
-function typed(s: Session, items: readonly InputItem[], dataset: Dataset): Dataset {
-  let data = dataset.data;
-  for (const [path, f] of formatsOf(s, items)) {
-    const raw = resolvePathValue({ data, derived: dataset.derived }, path, 'error'), text = raw.kind === 'text' ? f.shape(raw.text, f.following) : undefined;
-    if (text !== undefined) data = put(data, path.split('.'), text);
+function fillValues(s: Session, items: readonly InputItem[], bytes: Uint8Array, dataset: Dataset, missing: Work['missing']): { output: Uint8Array; filled: number } {
+  const doc = parseDocument(openPackage(bytes));
+  const entries = g2bEntries(s, items).entries.flatMap(({ anchor, ...x }): G2BEntry[] => !anchor ? [x] : isValidPath(x.key?.trim() || x.name) ? [{ ...x, kind: 'placeholder', name: x.key?.trim() || x.name }] : []);
+  // 문서에서 찾은 자리(목록에서 제외한 것 포함)는 서식 판 그대로 두고, 그 밖의 것만 이름 규칙에 맞으면 더한다
+  const seen = new Set([...entries, ...(s.inputs ?? []).map(x => ({ kind: x.kind, name: x.kind === 'placeholder' ? x.name.trim() : x.name }))].map(x => x.kind + '\n' + x.name));
+  const add = (kind: G2BEntry['kind'], name: string | undefined) => { if (name && isValidPath(name) && !seen.has(kind + '\n' + name)) { seen.add(kind + '\n' + name); entries.push({ kind, name }); } };
+  for (const f of collectFields(doc)) add(f.info.type === 'CLICK_HERE' ? 'clickHere' : 'mailMerge', f.info.type === 'CLICK_HERE' ? f.info.name : f.info.type === 'MAILMERGE' ? f.info.mergeKey : undefined);
+  for (const section of doc.sections) for (const p of walkParagraphs(section.paragraphs)) for (const k of findPlaceholders(p.logicalText)) add('placeholder', k.path);
+  const t = g2bTemplate(entries, { id: 't00000000', version: 1, name: 'preview', sha256: hash(bytes) }), record: Record<string, unknown> = {};
+  for (const b of t.bindings) {
+    const found = [b.key, ...(b.aliases ?? [])].map(name => lookupPath(dataset, name)).find(f => f.found && f.value !== null);
+    if (!found?.found) continue;
+    record[b.key] = found.value;
+    const i = t.values.findIndex(v => v.id === b.value), v = t.values[i]! as { id: string; name: string; format: 'text' | 'money' | 'date'; display?: { unit?: string; pattern?: string } };
+    if (v.format !== 'text' && !readTypedValue(v.format, found.value, v.display).ok) t.values[i] = { id: v.id, name: v.name, format: 'text' };
   }
-  return { data, derived: dataset.derived };
-}
-/** 경로(점은 하위 항목)의 값을 바꾼 사본. 지나는 객체·배열만 복사하고, 프로토타입 없는 객체라 `__proto__` 같은 이름도 그냥 열이다 */
-function put(data: Record<string, unknown>, [head, ...rest]: string[], value: string): Record<string, unknown> {
-  const copy: Record<string, unknown> = Array.isArray(data) ? [...data] as unknown as Record<string, unknown> : Object.assign(Object.create(null), data), at = data[head!];
-  copy[head!] = rest.length ? put(typeof at === 'object' && at !== null ? at as Record<string, unknown> : Object.create(null), rest, value) : value;
-  return copy;
+  const r = generateFromTemplate(bytes, readStudioTemplate(JSON.stringify({ ...t, options: { unregistered: 'keep' } })) as StudioTemplate, record, undefined, () => undefined, { missing, mode: 'baseline' });
+  if (!r.ok || r.dryRun) {
+    const lost = [...new Set(r.report.issues.filter(i => i.code === 'DATA_MISSING').map(i => t.bindings.find(b => 'value:' + b.value === i.where)?.key ?? ''))];
+    if (lost.length) unlinked(`데이터에 없는 키 ${lost.length}개: ${lost.slice(0, 20).join(', ')}`);
+    const code = r.report.issues.find(i => i.severity === 'error')?.code ?? 'WORKBENCH_GENERATE';
+    // 서식이 섞이거나 개체에 걸친 {{키}}는 Helper 2판도 채우지 못해 막는다('자리 유지'로 남기지 않는다)
+    return fail(code, code === 'FILL_SKIPPED' ? '서식이 섞이거나 개체에 걸친 {{키}} 자리는 채울 수 없어 생성을 막았습니다(Helper 생성도 같습니다). 한컴에서 키 전체를 같은 서식으로 고치세요.' : '입력 값을 채우지 못했습니다. 데이터 항목을 확인하세요.');
+  }
+  return { output: r.output as Uint8Array, filled: r.report.stage2?.plan.actions.filter(a => a.type === 'fill').reduce((n, a) => n + a.targets, 0) ?? 0 };
 }
 
 /**
@@ -278,9 +290,10 @@ function g2bEntries(s: Session, items: readonly InputItem[]): { entries: G2BEntr
   for (const r of items) {
     if (r.origin !== 'user' || r.status === 'excluded' || !r.name.trim()) continue;
     const row = s.rows.find(x => x.id === r.row)!, id = 'a' + (entries.filter(e => e.anchor).length + 1);
-    // TXT에는 앵커가 없다(값 표 `typed`에만 쓴다)
+    // TXT에는 앵커가 없다(값 표 `formatsOf`에만 쓴다)
     const anchor = !s.doc ? { id, kind: 'word' as const } : r.start < r.end ? makeWordAnchor(s.doc, id, row.sectionIndex, row.path, r.start, r.end) : row.text === '' ? makeLineAnchor(s.doc, id, row.sectionIndex, row.path) : undefined;
-    if (anchor) entries.push({ kind: anchor.kind, name: r.name.trim(), key: r.key, type: r.type, anchor, unit: /원\s*$/u.test(row.text.slice(r.start, r.end)) });
+    const original = row.text.slice(r.start, r.end), pattern = datePattern(original);
+    if (anchor) entries.push({ kind: anchor.kind, name: r.name.trim(), key: r.key, type: r.type, anchor, unit: /원\s*$/u.test(original), ...(pattern ? { pattern } : {}) });
     else skipped++;
   }
   return { entries, skipped };
@@ -300,16 +313,15 @@ function sampleOf(s: Session, index: unknown) {
 
 // ponytail: this projection only supports **bold** and {{path}}, not Markdown round trips.
 /**
- * 타입 꾸밈: 확정해 `{{키}}`로 바꾼 자리의 값 글. 금액·날짜는 Helper와 같은 엔진 값 형식이고 "원" 단위는 이 자리 바로 뒤 원문 글로 정한다(#181, `formatsOf`),
- * 수량은 원문 단위(#147). 열쇠는 그 `{{키}}`가 지금 편집 글에서 시작하는 위치이고, 꾸밀 수 없는 값이면 undefined다.
+ * 타입 꾸밈: 확정해 `{{키}}`로 바꾼 수량 자리의 값 글(원문 단위, #147. 금액·날짜는 `fillValues`·`formatsOf`가 자리마다 맞춘다).
+ * 열쇠는 그 `{{키}}`가 지금 편집 글에서 시작하는 위치다.
  */
-function decorationsOf(items: readonly InputItem[], row: Row, current: string, formats: ReturnType<typeof formatsOf>): Map<number, (value: string) => string | undefined> {
+function decorationsOf(items: readonly InputItem[], row: Row, current: string): Map<number, (value: string) => string | undefined> {
   const out = new Map<number, (value: string) => string | undefined>(), reps = repsOf(items, row.id, row.text);
   for (const i of items) {
-    if (i.row !== row.id || i.status !== 'confirmed' || !reps.some(r => r.start === i.start && r.end === i.end)) continue;
-    const at = spanNow(row.text, current, reps, i.start, i.end), following = row.text.slice(i.end), f = formats.get(i.key);
-    if (at && i.type === 'quantity') out.set(at.start, value => decorateValue(i.type, value, row.text.slice(i.start, i.end), following));
-    else if (at && f) out.set(at.start, value => f.shape(value, following));
+    if (i.row !== row.id || i.status !== 'confirmed' || i.type !== 'quantity' || !reps.some(r => r.start === i.start && r.end === i.end)) continue;
+    const at = spanNow(row.text, current, reps, i.start, i.end);
+    if (at) out.set(at.start, value => decorateValue(i.type, value, row.text.slice(i.start, i.end), row.text.slice(i.end)));
   }
   return out;
 }
@@ -326,7 +338,7 @@ function projected(input: string, dataset: Dataset | undefined, format = true, k
       bold = !bold;
     } else {
       const path = match[1]!.trim(), shape = decorate?.get(match.index);
-      // 키를 남기는 두 단계 생성에서도 꾸민 자리는 여기서 넣는다(자리마다 뒤 글로 꾸민다). 다음 단계가 다시 읽을 {{}}가 든 글은 넣지 않는다
+      // 키를 남기는 두 단계 생성에서도 꾸민 수량 자리는 여기서 넣는다. 다음 단계가 다시 읽을 {{}}가 든 글은 넣지 않는다
       const found = keepKeys && shape && dataset && isValidPath(path) ? resolvePathValue(dataset, path, 'error') : undefined;
       const shaped = found?.kind === 'text' ? shape!(found.text) : undefined;
       if (keepKeys && (shaped === undefined || /[{}]/.test(shaped))) {
@@ -380,14 +392,15 @@ function build(s: Session, work: Work, makeTemplate = false, library?: BlockLibr
   const row = (id: string) => s.rows.find(r => r.id === id)!;
   const edits = work.edits.filter(e => e.text !== row(e.id).text);
   // 원래 {{키}}가 있는 줄을 고치면(그 줄 안 지정 자리의 확정 포함) 엔진이 그 {{키}}를 따로 채워 편집과 겹친다(#180 TPL_CONFLICT):
-  // 블록 배치처럼 구조(편집·블록·배치)를 먼저 만들고 값은 다음 단계에서 한 번 채운다(꾸민 확정 자리는 `projected`가 먼저 넣는다)
-  const twoStage = work.placements.length > 0 || dataset !== undefined && edits.some(e => findPlaceholders(row(e.id).text).length > 0);
+  // 블록 배치처럼 구조(편집·블록·배치)를 먼저 만들고 값은 다음 단계에서 한 번 채운다(꾸민 수량 자리는 `projected`가 먼저 넣는다).
+  // 금액·날짜 값 표가 있으면(#186) 값 단계는 Helper 2판 창구와 같은 생성(`fillValues`)이라 자리마다 "원"·날짜 모양이 Helper와 같다
+  const typed = dataset !== undefined && formatsOf(s, work.inputItems).size > 0;
+  const twoStage = work.placements.length > 0 || typed || dataset !== undefined && edits.some(e => findPlaceholders(row(e.id).text).length > 0);
   const compositionData = twoStage ? undefined : dataset;
   const template = emptyTemplate();
   const formats: { row: Row; text: string; spans: { start: number; end: number }[]; block: boolean; keys: ReturnType<typeof findPlaceholders> }[] = [];
-  const valueFormats = dataset ? formatsOf(s, work.inputItems) : new Map();
   for (const [i, edit] of edits.entries()) {
-    const r = row(edit.id), content = projected(edit.text, dataset, true, makeTemplate || twoStage, decorationsOf(work.inputItems, r, edit.text, valueFormats)), id = `edit${i}`;
+    const r = row(edit.id), content = projected(edit.text, dataset, true, makeTemplate || twoStage, decorationsOf(work.inputItems, r, edit.text)), id = `edit${i}`;
     const partial = r.rangeEditable ? undefined : changedRange(s.doc, r, content.text);
     if (r.rangeEditable || partial) {
       const a = r.text.length ? makeWordAnchor(s.doc, id, r.sectionIndex, r.path, partial?.start ?? 0, partial?.end ?? r.text.length) : makeLineAnchor(s.doc, id, r.sectionIndex, r.path);
@@ -457,7 +470,8 @@ function build(s: Session, work: Work, makeTemplate = false, library?: BlockLibr
       return fail('WORKBENCH_TEMPLATE_INCOMPLETE', '누름틀로 만들지 못한 키가 있습니다. 키 전체가 같은 서식 안에 있도록 수정하세요. 일부만 만든 파일은 저장하지 않았습니다.');
     output = compiled.output;
   }
-  if(twoStage&&dataset){
+  if(typed&&dataset){const values=fillValues(s,work.inputItems,output,dataset,work.missing);output=values.output;filled+=values.filled;}
+  else if(twoStage&&dataset){
     const values=generate(output,emptyTemplate(),dataset,{missing:work.missing,mode:'baseline',allowNothingApplied:true});
     if(!values.ok||!('output' in values)){
       if(values.report.plan.missingPaths.length)unlinked(`데이터에 없는 키 ${values.report.plan.missingPaths.length}개: ${values.report.plan.missingPaths.slice(0,20).join(', ')}`);
@@ -473,20 +487,20 @@ function build(s: Session, work: Work, makeTemplate = false, library?: BlockLibr
 }
 
 function buildText(s: Session, work: Work) {
-  const dataset = datasetOf(s, work), valueFormats = dataset ? formatsOf(s, work.inputItems) : new Map();
+  const dataset = datasetOf(s, work), valueFormats = dataset ? formatsOf(s, work.inputItems) : new Map<string, Shape>();
   const separators = [...s.sourceText!.matchAll(/\r\n|\r|\n/g)].map(m => m[0]);
   const edits = new Map(work.edits.filter(e => e.text !== s.rows.find(r => r.id === e.id)!.text).map(e => [e.id, e]));
   let text = '', filled = 0, ranges = 0;
   const left: string[] = [];
   for (let i = 0; i < s.rows.length; i++) {
     const row = s.rows[i]!, block = work.blocks.find(b => b.from === row.id), edit = edits.get(row.id);
-    const decorate = edit && !block && dataset ? decorationsOf(work.inputItems, row, edit.text, valueFormats) : undefined;
-    const content = (block ? block.text : edit ? edit.text : row.text).replace(/\{\{([^{}]*)\}\}/g, (token, key: string, at: number) => {
+    const decorate = edit && !block && dataset ? decorationsOf(work.inputItems, row, edit.text) : undefined;
+    const content = (block ? block.text : edit ? edit.text : row.text).replace(/\{\{([^{}]*)\}\}/g, (token, key: string, at: number, line: string) => {
       const path = key.trim();
       if (/^[#/]/.test(path)) { ranges++; return token; }
       const value = dataset && isValidPath(path) ? resolvePathValue(dataset, path, 'error') : undefined;
-      const shape = decorate?.get(at);
-      if (value?.kind === 'text') { filled++; return shape?.(value.text) ?? value.text; }
+      // 수량은 확정 자리의 원문 단위, 금액·날짜는 자리마다 바로 뒤 글로(엔진이 읽지 못하는 값은 그대로)
+      if (value?.kind === 'text') { filled++; return decorate?.get(at)?.(value.text) ?? valueFormats.get(path)?.(value.text, line.slice(at + token.length)) ?? value.text; }
       left.push(token); return token;
     });
     if (block) i = s.rows.findIndex(r => r.id === block.to);

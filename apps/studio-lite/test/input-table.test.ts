@@ -220,7 +220,8 @@ test('input table end to end: seeded 50 rounds designate dozens of places (body/
     let first: Uint8Array | undefined;
     for (let repeat = 0; repeat < 2; repeat++) {
       const result = post(app, restored.session, 'generate', { ...blank, index, edits, inputItems: items });
-      assert.equal(result.ok, true); assert.equal(result.filled, edits.length);
+      // 금액 값 표가 있으면(이름 금액) 값은 Helper 2판처럼 편집 뒤 자리마다 따로 채운다(#186): 편집 줄 + 확정 자리
+      assert.equal(result.ok, true); assert.equal(result.filled, edits.length + (items.some(i => i.key === '금액') ? items.length : 0));
       const bytes = output(app, restored.session);
       if (first) assert.deepEqual(bytes, first); else first = bytes;
       for (const r of rows) {
@@ -313,7 +314,7 @@ const PLACES: [RegExp, 'money' | 'date' | 'quantity' | 'phone' | 'text'][] = [
   [/\d{1,3}(?:,\d{3})+원/g, 'money'], [/\d{4}(?:\. \d{1,2}\. \d{1,2}\.|-\d{2}-\d{2}|년 \d{1,2}월 \d{1,2}일)/g, 'date'], [/\d+개/g, 'quantity'], [/0\d{1,2}-\d{3,4}-\d{4}/g, 'phone'], [/홍길동/g, 'text'],
 ];
 
-test('type decoration end to end: seeded 50 rounds over 25 rows (body/cells/header) — amount commas with one 원, dates in the engine form (#181), units, phones as given; determinism, new errors 0, source unchanged', t => {
+test('type decoration end to end: seeded 50 rounds over 25 rows (body/cells/header) — amount commas with one 원, dates in the engine form with the source shape (#181 #186), units, phones as given; determinism, new errors 0, source unchanged', t => {
   const source = typedSource(), sourceCopy = Buffer.from(source), baseline = validateDocument(source);
   const app = createWorkbench(), opened = open(app, source);
   const rows = opened.paragraphs.filter(r => r.editable && PLACES.some(([re]) => new RegExp(re.source).test(r.text)));
@@ -337,8 +338,9 @@ test('type decoration end to end: seeded 50 rounds over 25 rows (body/cells/head
         else if (type === 'date') {
           const y = 2020 + next(20), mo = 1 + next(12), da = 1 + next(28);
           value = [`${y}-${two(mo)}-${two(da)}`, `${y}.${mo}.${da}`, `${y}년 ${mo}월 ${da}일`, `${y}${two(mo)}${two(da)}`][next(4)];
-          // 엔진 날짜 형식(Helper와 같은 YYYY. MM. DD.). 엔진이 읽지 못하는 꼴(`2026년 1월 5일`)은 받은 그대로
-          text = (value as string).includes('년') ? value as string : `${y}. ${two(mo)}. ${two(da)}.`;
+          // 엔진 날짜 형식에 원문 모양(#186): `2026. 10. 7.` → 월·일 한 자리, `2026-10-07` → 두 자리, `2026년 10월 7일` → 년월일. 엔진이 읽지 못하는 꼴(`2026년 1월 5일`)은 받은 그대로
+          const shape = r.text.slice(start, end);
+          text = (value as string).includes('년') ? value as string : shape.includes('년') ? `${y}년 ${mo}월 ${da}일` : shape.includes('-') ? `${y}-${two(mo)}-${two(da)}` : `${y}. ${mo}. ${da}.`;
         } else if (type === 'quantity') { const k = 1 + next(5000); value = String(k); text = k + '개'; }
         else if (type === 'phone') { value = ['0' + (2 + next(6)) + '-' + (100 + next(900)) + '-' + (1000 + next(9000)), '010' + String(next(1e8)).padStart(8, '0'), '0212345678'][next(3)]; text = value as string; }
         else { value = '김' + next(100) + ' & <값> ' + 'ㄱ'.repeat(next(200)); text = value as string; }
@@ -381,7 +383,7 @@ test('type decoration end to end: seeded 50 rounds over 25 rows (body/cells/head
   t.diagnostic(`seed=0x147d; rounds=50; rows=25; places=${places} (${Object.entries(counts).map(([k, v]) => k + ' ' + v).join(', ')}); generations=${generated}; deterministic_pairs=50; new_errors=${newErrors}; source unchanged`);
 });
 
-test('type decoration: the confirm sentences (1234000 → 1,234,000원 once; date in the engine form like Helper, #181; leading zeros stay), a user-chosen type, TXT too, and only places confirmed in the workbench', () => {
+test('type decoration: the confirm sentences (1234000 → 1,234,000원 once; date in the engine form like Helper with the source shape, #181 #186; leading zeros stay), a user-chosen type, TXT too, and only places confirmed in the workbench', () => {
   const source = buildHwpx([[textPara('금액: 1,000원'), textPara('계약 금액 5,000,000 원정'), textPara('신청일: 2026. 10. 7.'), textPara('전화: 02-123-4567'), textPara('식별: 0101011234567'), textPara('원래 자리 {{총액}}원'), textPara('그대로 2026-10-07')].join('')]);
   const app = createWorkbench(), opened = open(app, source), [money, money2, date, phone, id, holder, plainDate] = opened.paragraphs as Row[];
   const item = (r: Row, value: string, key: string, type: InputItem['type'], extra: Partial<InputItem> = {}): InputItem => {
@@ -399,7 +401,7 @@ test('type decoration: the confirm sentences (1234000 → 1,234,000원 once; dat
   post(app, opened.session, 'generate', { ...blank, edits, inputItems: items });
   const out = output(app, opened.session);
   assert.deepEqual([money, money2, date, phone, id, holder, plainDate].map(r => textAt(out, r!)),
-    ['금액: 1,234,000원', '계약 금액 7,000,000 원정', '신청일: 2026. 11. 02.', '전화: 0212345678', '식별: 0101011234567', '원래 자리 1234000원', '그대로 2026-11-02']);
+    ['금액: 1,234,000원', '계약 금액 7,000,000 원정', '신청일: 2026. 11. 2.', '전화: 0212345678', '식별: 0101011234567', '원래 자리 1234000원', '그대로 2026-11-02']);
   // 같은 편집인데 타입이 글이면(옛 작업 파일 포함) 값 그대로
   post(app, opened.session, 'generate', { ...blank, edits, inputItems: items.map(i => ({ ...i, type: 'text' })) });
   assert.equal(textAt(output(app, opened.session), money!), '금액: 1234000');
@@ -409,5 +411,5 @@ test('type decoration: the confirm sentences (1234000 → 1,234,000원 once; dat
   const titems = [item(l1!, '1,000', '금액', 'money'), item(l2!, '2026년 10월 7일', '날짜', 'date'), item(l3!, '3 명', '수량', 'quantity')];
   const tedits = titems.map(i => { const r = (txt.paragraphs as Row[]).find(x => x.id === i.row)!, res = confirmText(r.text, r.text, [], [{ start: i.start, end: i.end, key: i.key }]); assert('text' in res); return { id: r.id, text: res.text }; });
   post(app, txt.session, 'data', { name: 'data.json', content: JSON.stringify({ 금액: '2500000원', 날짜: '2026-01-05', 수량: 12 }) });
-  assert.equal(post(app, txt.session, 'generate', { ...blank, edits: tedits, inputItems: titems }).text, '금액: 2,500,000원\n날짜 2026. 01. 05. 마감\n수량 12 명');
+  assert.equal(post(app, txt.session, 'generate', { ...blank, edits: tedits, inputItems: titems }).text, '금액: 2,500,000원\n날짜 2026년 1월 5일 마감\n수량 12 명');
 });
