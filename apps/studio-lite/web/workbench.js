@@ -2,11 +2,11 @@ import {viewerLines, lineAt} from '/viewer-lines.js';
 import { installBlockLibrary } from '/block-library.js';
 import {editorLayout, editorSelection, unitAt, replaceEditorText, groupEditorSelection, editorChange} from '/editor-model.js';
 import { createPageView, createLatest, toPagePoint } from '/packages/viewer/src/dom/index.ts';
-import {STATUS_LABEL, REL_LABEL, LABEL_MAX, isField, keptStatus, autoKey, repsOf, changedSpan, toOriginal, spanNow, contextOf, contextAround, mergeSaved, nameFromLabel, designated, rankKeys, planConfirm, dropRow, commitConfirm, linkNote, rowAria, itemOf, valueKey, linkTargets, sameValueCount} from '/input-table.js';
+import {STATUS_LABEL, REL_LABEL, LABEL_MAX, isField, keptStatus, autoKey, repsOf, changedSpan, toOriginal, spanNow, contextOf, contextAround, mergeSaved, nameFromLabel, designated, rankKeys, planConfirm, dropRow, commitConfirm, linkNote, rowAria, itemOf, valueKey, linkTargets, sameValueCount, reviewed, between} from '/input-table.js';
 import {VALUE_TYPES, TYPE_LABEL, suggestType} from '/value-type.js';
 import { loadRhwp, openDocument, runPosition, sameParagraph } from '/packages/viewer/src/rhwp/index.ts';
 import {FLAG_WAIT, flagRequest, flagRefusal, spanLabel} from '/range-flag.js';
-import {branchFlow, headingBlocks, applySimilar} from '/branch-flow.js';
+import {branchFlow, headingBlocks, applySimilar, moveSlot} from '/branch-flow.js';
 
 const $ = (selector) => document.querySelector(selector);
 const state = {
@@ -21,8 +21,8 @@ const state = {
 };
 const opens = createLatest(), picks = createLatest(), views = createLatest(), dataLoads = createLatest();
 const keyCopies = createLatest(), bodyCopies = createLatest(), samples = createLatest();
-let resizeFrame, contextRequest = 0;
-const blockLibraryUI = installBlockLibrary({selection: blockSelection, session: () => state.session, api, status, beforeOpen: hideMenu, previewPlacement, sameValue: name=>sameValueCount(inputItems(),name), currentUsage:item=>state.placements.some(p=>p.id===item.protoId||p.id===item.id)?'현재 작업에서 사용 중입니다. 배치를 취소한 뒤 다시 확인하세요.':undefined, onSaved:()=>{const r=state.activeRecommendation;if(r?.kind==='block'){r.status='confirmed';renderRecommendations();}void renderLibraryTab();}});
+let resizeFrame, contextRequest = 0, dragSlot;
+const blockLibraryUI = installBlockLibrary({selection: () => state.viewMode === 'comparison' ? comparisonRange() : blockSelection(), session: () => state.session, api, status, beforeOpen: hideMenu, previewPlacement, sameValue: name=>sameValueCount(inputItems(),name), currentUsage:item=>state.placements.some(p=>p.id===item.protoId||p.id===item.id)?'현재 작업에서 사용 중입니다. 배치를 취소한 뒤 다시 확인하세요.':undefined, onSaved:()=>{const r=state.activeRecommendation;if(r?.kind==='block'&&state.viewMode!=='comparison'){r.status='confirmed';renderRecommendations();}void renderLibraryTab();}});
 
 function status(text, kind = '') {
   $('#status').textContent = text; $('#status').className = kind; $('#status').title = text;
@@ -44,7 +44,7 @@ function controls() {
   for(const id of ['save-work','generate','open-data','load-data-text']) $('#'+id).disabled=!available;
   $('#record-select').disabled=!available||!state.records;
   $('#txt-result-view').disabled=!state.output||state.busy;$('#source-view').disabled=!available; $('#result-view').disabled=!state.output||state.busy;
-  $('#comparison-view').disabled=!available;
+  $('#comparison-view').disabled=!available;$('#close-comparison').hidden=state.viewMode!=='comparison';$('#add-block').disabled=!available||state.kind!=='hwpx';
   for(const id of ['scale','zoom-in','zoom-out']) $('#'+id).disabled=!available;
   $('#key-select').disabled=!available; $('#make-template').disabled=!available||state.kind!=='hwpx';
   $('#save-g2b-template').disabled=!available||state.kind!=='hwpx';$('#save-profile').disabled=!available||!state.g2bTemplate;
@@ -560,7 +560,7 @@ function action(name) {
 }
 
 function showMenu(x, y) {
-  if (!state.chosen) return;
+  if (!state.chosen && state.viewMode !== 'comparison') return;
   controls(); const menu = $('#context-menu'); menu.hidden = false; menu.style.left = '0px'; menu.style.top = '0px';
   const box = menu.getBoundingClientRect();
   menu.style.left = Math.max(8, Math.min(x, window.innerWidth - box.width - 8)) + 'px';
@@ -825,23 +825,33 @@ function sourceSelection(){
 $('#pages').addEventListener('mouseup',()=>{if(state.viewMode==='source'&&state.kind==='text')sourceSelection();});
 $('#pages').addEventListener('click',event=>{const line=event.target instanceof Element?event.target.closest('[data-source-id]'):null;if(line&&!sourceSelection())selectRow(line.dataset.sourceId,{fromPick:true});});
 $('#pages').addEventListener('contextmenu',event=>{
-  if(state.viewMode==='comparison'){event.preventDefault();state.comparisonText=window.getSelection()?.toString()||event.target.closest('.text-line')?.querySelector('.source-text')?.textContent||'';showMenu(event.clientX,event.clientY);return;}
+  if(state.viewMode==='comparison'){event.preventDefault();state.comparisonLine=event.target.closest?.('[data-comparison]')??undefined;state.comparisonText=window.getSelection()?.toString()||event.target.closest('.text-line')?.querySelector('.source-text')?.textContent||'';showMenu(event.clientX,event.clientY);return;}
   const line=event.target instanceof Element?event.target.closest('[data-source-id]'):null;if(!line)return;event.preventDefault();if(!sourceSelection())selectRow(line.dataset.sourceId,{fromPick:true});state.comparisonText='';$('#menu-key').value=$('#key-select').value;showMenu(event.clientX,event.clientY);
 });
 $('#open-comparison').addEventListener('click',()=>$('#compare-file').click());
 $('#comparison-view').addEventListener('click',()=>{if(state.comparison)renderTextDocument('comparison');else $('#compare-file').click();});
 $('#compare-file').addEventListener('change',async event=>{
   const file=event.target.files[0];event.target.value='';if(!file||state.busy)return;const session=state.session;setBusy(true,'비교 문서 여는 중');
-  try{const result=await api('compare',{name:file.name,content:base64(new Uint8Array(await file.arrayBuffer()))});if(session!==state.session)return;state.comparison={name:result.name,paragraphs:result.paragraphs};renderTextDocument('comparison');status('');}
+  try{const content=base64(new Uint8Array(await file.arrayBuffer())),result=await api('compare',{name:file.name,content});if(session!==state.session)return;state.comparison={name:result.name,paragraphs:result.paragraphs,content};state.comparisonLine=undefined;renderTextDocument('comparison');status('');}
   catch(error){status(errorMessage(error),'error');}finally{setBusy(false);}
 });
+// 임시로 연 문서 닫기(#153): 비교 문서를 버리고 원문으로. 바탕 문서·작업은 그대로이고 작업 파일에도 들어가지 않는다
+$('#close-comparison').addEventListener('click',()=>{state.comparison=undefined;state.comparisonLine=undefined;state.comparisonText='';$('#source-view').click();status('비교 문서를 닫았습니다. 원문과 작업은 그대로입니다.');});
+/** 임시로 연 HWPX 비교 문서(#153)에서 끌어 고른 줄(없으면 우클릭한 줄)의 범위. 블록 저장에만 쓴다(넣기·분기점은 원문 보기에서) */
+function comparisonRange(){
+  const c=state.comparison;if(state.busy||!c||!/\.hwpx$/i.test(c.name))throw Error('HWPX 문서를 비교 문서로 열고 저장할 줄을 고르세요.');
+  const lineOf=n=>(n?.nodeType===1?n:n?.parentElement)?.closest('[data-comparison]'),sel=window.getSelection(),lines=sel&&!sel.isCollapsed?[lineOf(sel.anchorNode),lineOf(sel.focusNode)]:[state.comparisonLine,state.comparisonLine];
+  if(!lines[0]||!lines[1])throw Error('비교 문서에서 저장할 줄을 끌어 고르세요.');
+  const [a,z]=lines.map(l=>Number(l.dataset.comparison)).sort((x,y)=>x-y);
+  return {from:c.paragraphs[a].id,to:c.paragraphs[z].id,compare:{name:c.name,content:c.content}};
+}
 
 async function previewPlacement(item){
   const range=blockSelection(),placement={id:item.protoId,version:item.version,...range},session=state.session,revision=state.revision;
   const result=await api('block-placement-preview',{...snapshot(),placements:[...state.placements,placement]});
   return {...result,commit(){
     if(session!==state.session||revision!==state.revision)throw Error('문서가 바뀌었습니다. 넣을 범위를 다시 확인하세요.');
-    remember();state.placements.push(placement);state.placementNames[placement.id]=item.name;state.placementWarnings[placement.id+':'+placement.from]=result.warnings;changed();renderEditor();void generate();
+    remember();state.placements.push(placement);state.placementNames[placement.id]=item.name;state.placementWarnings[placement.id+':'+placement.from]=result.warnings;changed();renderEditor();renderHeadingTree();void generate();
   }};
 }
 function renderPlacements(){
@@ -851,7 +861,7 @@ function renderPlacements(){
   for(const [i,p] of state.placements.entries()){
     const row=document.createElement('div'),label=document.createElement('span'),remove=document.createElement('button');
     label.textContent=(state.placementNames[p.id]??'저장 블록')+' · 판 '+p.version+' · 문단 '+(state.paragraphs.findIndex(r=>r.id===p.from)+1)+'–'+(state.paragraphs.findIndex(r=>r.id===p.to)+1);
-    remove.type='button';remove.textContent='배치 취소';remove.disabled=state.busy;remove.onclick=()=>{remember();state.placements.splice(i,1);changed();renderEditor();};row.append(label,remove);box.append(row);for(const message of state.placementWarnings[p.id+':'+p.from]??[]){const note=document.createElement('p');note.className='placement-warning';note.textContent=message;box.append(note);}
+    remove.type='button';remove.textContent='배치 취소';remove.disabled=state.busy;remove.onclick=()=>{remember();state.placements.splice(i,1);changed();renderEditor();renderHeadingTree();};row.append(label,remove);box.append(row);for(const message of state.placementWarnings[p.id+':'+p.from]??[]){const note=document.createElement('p');note.className='placement-warning';note.textContent=message;box.append(note);}
   }
 }
 function uiNode(tag,text,className){const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(className)e.className=className;return e;}
@@ -861,19 +871,42 @@ function renderHeadingTree(){
   for(const h of state.outline){const d=uiNode('details',undefined,'heading-node');d.dataset.row=h.id;const summary=uiNode('summary',h.name);summary.style.paddingLeft=Math.min(3,Math.max(0,h.level-1))*8+'px';d.append(summary);
     const jump=uiNode('button','원문으로');jump.type='button';jump.onclick=()=>{selectRow(h.id);setCurrentHeading(h.id);};d.append(jump);while(parents.length&&parents.at(-1).level>=h.level)parents.pop();(parents.at(-1)?.node??tree).append(d);parents.push({level:h.level,node:d});
     summary.addEventListener('click',e=>{e.preventDefault();setCurrentHeading(h.id);});
+    summary.addEventListener('dragenter',()=>{if(dragSlot!==undefined)d.open=true;});
   }
   if(!state.outline.length)tree.append(uiNode('p',!state.session?'문서를 열면 제목 흐름이 보입니다.':state.kind==='hwpx'?'찾은 제목이 없습니다 · 제목 하나를 고르고 "이것과 같은 것 전부"를 누르세요.':'찾은 제목이 없습니다.','rail-empty'));
-  // 분기점(#7): 범위가 시작하는 제목 아래(제목 앞이면 맨 위)에 이름·후보 수·이 업무 건의 선택
-  for(const b of state.branches){
-    const st=state.branchStates[b.id],h=headingOf(b.from),node=h&&tree.querySelector('.heading-node[data-row="'+CSS.escape(h.id)+'"]');
-    const line=uiNode('button',undefined,'branch-node'+(state.detailBranch===b.id?' current':'')+(st?.blocked?' undecided':''));line.type='button';
-    line.append(uiNode('span','분기','kind-tag kind-branch'),uiNode('span',b.name,'branch-name'),uiNode('small','후보 '+b.blocks.length+' · '+(!st?'—':st.blocked?'정하지 못함':st.blockName)));
-    line.title=b.name+' · 후보 '+b.blocks.length;line.onclick=()=>void openBranch(b.id);
-    if(node)node.insertBefore(line,node.querySelector(':scope>.heading-node'));else tree.prepend(line);
+  // 분기점(#7)·넣은 블록(#153): 범위가 시작하는 제목 아래(제목 앞이면 맨 위)에 문서 순서로 한 줄. 끌어 다른 줄에 놓으면 그 자리로 간다(자리는 그대로, 블록이 자리를 바꾼다)
+  const order=rowOrder(),slots=[...state.placements,...state.branches].sort((a,b)=>order.get(a.from)-order.get(b.from));
+  for(const [i,b] of slots.entries()){
+    const h=headingOf(b.from),node=(h&&tree.querySelector('.heading-node[data-row="'+CSS.escape(h.id)+'"]'))||tree;let line;
+    if(b.blocks){const st=state.branchStates[b.id];line=uiNode('button',undefined,'branch-node'+(state.detailBranch===b.id?' current':'')+(st?.blocked?' undecided':''));
+      line.append(uiNode('span','분기','kind-tag kind-branch'),uiNode('span',b.name,'branch-name'),uiNode('small','후보 '+b.blocks.length+' · '+(!st?'—':st.blocked?'정하지 못함':st.blockName)));
+      line.title=b.name+' · 후보 '+b.blocks.length;line.onclick=()=>void openBranch(b.id);}
+    else{const name=state.placementNames[b.id]??'저장 블록';line=uiNode('button',undefined,'branch-node placement-node');
+      line.append(uiNode('span','블록','kind-tag kind-block'),uiNode('span',name,'branch-name'),uiNode('small','판 '+b.version+' · 문단 '+(order.get(b.from)+1)+'–'+(order.get(b.to)+1)));
+      line.title=name;line.onclick=()=>{selectRow(b.from);};}
+    line.type='button';
+    if(slots.length>1){line.draggable=true;line.ondragstart=e=>{dragSlot=i;e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',line.title);};line.ondragend=()=>{dragSlot=undefined;};
+      line.ondragover=e=>{if(dragSlot===undefined)return;e.preventDefault();line.classList.add('drop-target');};line.ondragleave=()=>line.classList.remove('drop-target');
+      line.ondrop=e=>{e.preventDefault();e.stopPropagation();const from=dragSlot;dragSlot=undefined;if(from!==undefined&&from!==i)moveSlotTo(from,i);else line.classList.remove('drop-target');};}
+    node.insertBefore(line,node.querySelector(':scope>.heading-node,:scope>.rail-empty'));
   }
   // 분기점은 선택 사항이다: 없으면 "분기 없음"만(4c.7)
   if(state.session&&state.kind==='hwpx'&&!state.branches.length)tree.append(uiNode('p','분기 없음','rail-empty'));
   followHeading();
+}
+/** 흐름 트리 끌어 놓기(#153): 문서 순서 from번째 블록 자리 항목을 to번째로(요구 8.3-5: 분기점·배치의 순서가 블록 순서). 원문 글은 그대로, 실행 취소 한 번 */
+function moveSlotTo(from,to){
+  if(state.busy)return;const preview=state.viewMode==='result',order=state.paragraphs.map(p=>p.id),items=[...state.placements,...state.branches];
+  const moved=[...items].sort((a,b)=>order.indexOf(a.from)-order.indexOf(b.from))[from];
+  remember();moveSlot(order,items,from,to);changed();renderEditor();void refreshBranches();void refreshPlacementWarnings();selectRow(moved.from);
+  if(preview)void generate(false,'갱신 중 · 블록 순서');else status('블록 순서를 바꿨습니다. 원문은 그대로이고 생성 결과에만 반영합니다.','success');
+}
+/** 자리를 옮긴 넣은 블록의 넣기 경고(서식이 다름 등)를 그 자리로 다시 받는다 */
+async function refreshPlacementWarnings(){
+  const session=state.session;
+  for(const p of state.placements.filter(p=>!state.placementWarnings[p.id+':'+p.from])){
+    try{const info=await api('block-placement-preview',{...snapshot(),placements:[...state.placements.filter(x=>x!==p),p]});if(session!==state.session)return;state.placementWarnings[p.id+':'+p.from]=info.warnings;renderPlacements();}catch{}
+  }
 }
 function setCurrentHeading(id){const nodes=[...$('#heading-tree').querySelectorAll('.heading-node')],chosen=nodes.find(el=>el.dataset.row===id);for(const el of nodes){const open=el===chosen||Boolean(chosen&&el.contains(chosen));if(el.open!==open)el.open=open;}if(chosen){const root=$('#heading-tree'),r=chosen.getBoundingClientRect(),box=root.getBoundingClientRect();if(r.top<box.top||r.top>box.bottom)root.scrollTop+=r.top-box.top;}}
 function followHeading(){
@@ -953,7 +986,7 @@ function renderRecommendations(){
   const blocks=state.recommendations.filter(r=>r.kind==='block'),checked=blocks.filter(r=>r.status==='recommended');const save=$('#save-checked-blocks');save.hidden=!blocks.length;save.disabled=state.busy||!checked.length;save.textContent='체크한 블록 '+checked.length+'개 저장';
 }
 /** 유지/제외 바꾸기. 유지로 되돌리면 사용자가 지정한 것은 지정, 문서에서 찾은 것은 추천이다. 확정한 줄은 바꾸지 않는다 */
-function reviewChange(items,next){if(state.busy)return;state.reviewHistory.push(new Map(state.recommendations.map(r=>[r.id,r.status])));for(const r of items)if(r.status!=='confirmed')r.status=next==='keep'?(r.kind==='input'?keptStatus(r.origin):'recommended'):next;if(items.some(r=>r.kind==='input'))touched();renderInputs();controls();}
+function reviewChange(items,next){if(state.busy)return;state.reviewHistory.push(new Map(state.recommendations.map(r=>[r.id,r.status])));for(const r of items)r.status=reviewed(r,next);if(items.some(r=>r.kind==='input'))touched();renderInputs();controls();}
 /** 항목 자리를 편집 글(숨은 편집 창) 위의 선택으로 옮긴다. 확정한 항목은 그 {{키}} 자리다 */
 function caretToItem(r){
   const at=r.start===undefined?undefined:itemCaret(r);if(!at)return;
@@ -1228,6 +1261,28 @@ $('#remote-form').onsubmit=e=>{e.preventDefault();const name=$('#remote-name').v
 $('#remote-designate').onclick=()=>designateOnly($('#remote-name').value);
 $('#remote-close').onclick=hideMenu;
 $('#review-undo').onclick=()=>{const old=state.reviewHistory.pop();if(old)for(const r of state.recommendations)if(r.status!=='confirmed'&&old.has(r.id))r.status=old.get(r.id);touched();renderInputs();controls();};
+// ── 여러 줄 끌기·Shift 범위(#152): 체크 칸을 누른 채 끌면 지나간 줄이, Shift+누름은 앞서 누른 줄부터 그 줄까지 모두 첫 줄의 새 상태(유지/제외)가 된다. 확정 줄은 그대로, 되돌리기 한 번에 끌기 전으로 ──
+let sweep,sweepAnchor;
+function installSweep(root,rowSel,idOf){
+  const shown=()=>[...root.querySelectorAll(rowSel)].filter(l=>l.offsetParent),boxOf=l=>l.querySelector('input[type=checkbox]');
+  const paint=()=>{const on=new Set(between(sweep.ids,sweep.from,sweep.to));for(const [l,was] of sweep.was){const box=boxOf(l);if(!box.disabled)box.checked=on.has(idOf(l))?sweep.next==='keep':was;}};
+  root.addEventListener('pointerdown',e=>{
+    const box=e.target.closest?.('input[type=checkbox]'),line=box?.closest(rowSel);if(!line||box.disabled||e.button!==0||state.busy)return;
+    e.preventDefault();const lines=shown(),ids=lines.map(idOf),id=idOf(line),shift=e.shiftKey&&sweepAnchor?.root===root&&ids.includes(sweepAnchor.id);
+    sweep={root,ids,from:shift?sweepAnchor.id:id,to:id,next:shift?sweepAnchor.next:box.checked?'excluded':'keep',was:new Map(lines.map(l=>[l,boxOf(l).checked]))};paint();
+  });
+  // 마우스로 누른 체크 토글은 끌기가 맡는다(키보드 Space는 그대로)
+  root.addEventListener('click',e=>{if(e.detail&&e.target.matches?.('input[type=checkbox]'))e.preventDefault();});
+  document.addEventListener('pointermove',e=>{if(sweep?.root!==root)return;const line=document.elementFromPoint(e.clientX,e.clientY)?.closest(rowSel),id=line&&idOf(line);if(id&&id!==sweep.to&&sweep.ids.includes(id)){sweep.to=id;paint();}});
+  // 바꾸기는 click(위에서 막음)이 지난 뒤에 한다: 먼저 다시 그리면 떨어져 나간 체크 칸이 토글된다
+  document.addEventListener('pointerup',()=>{if(sweep?.root!==root)return;const s=sweep;sweep=undefined;sweepAnchor={root,id:s.to,next:s.next};setTimeout(()=>{
+    const ids=new Set(between(s.ids,s.from,s.to)),items=state.recommendations.filter(r=>ids.has(r.id)&&r.status!=='confirmed');
+    if(!items.length){renderInputs();return;}reviewChange(items,s.next);status((s.next==='keep'?'유지 ':'제외 ')+items.length+'줄','success');});});
+  document.addEventListener('pointercancel',()=>{if(sweep?.root===root){sweep=undefined;renderInputs();}});
+}
+installSweep($('#recommendations'),'.rec-line',l=>l.dataset.review);installSweep($('#input-rows'),'tr[data-item]',l=>l.dataset.item);
+// 블록 추가(#153): 저장소에서 블록을 골라 원문에서 고른 범위에 넣는다(배치). 흐름 트리에 새 줄로 보이고 끌어 순서를 바꾼다
+$('#add-block').onclick=()=>void blockLibraryUI.showList();
 $('#open-input-table').onclick=openTable;$('#close-input-table').onclick=closeTable;
 $('#confirm-all').onclick=async()=>{const list=inputItems().filter(r=>r.status==='recommended'||r.status==='designated'),named=list.filter(r=>r.name.trim());if(!list.length){status('확정할 줄이 없습니다.');return;}const result=await confirmItems(named.map(r=>({item:r,name:r.name,key:r.key})));const unnamed=list.length-named.length;reportConfirm({done:result.done,failed:[...result.failed,...(unnamed?[[{name:'이름 없는 줄 '+unnamed+'개'},'이름을 적으면 확정할 수 있습니다.']]:[])]});};
 // 표 보기 키보드: 이름·키 칸에서 Enter/↓는 다음 줄 같은 칸, ↑는 윗줄(한글 조합 중에는 넘기지 않는다)
