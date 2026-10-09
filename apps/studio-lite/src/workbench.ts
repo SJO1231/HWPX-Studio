@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
-  buildBlockPreviewDocument, canonicalStudioJson, sha256Hex, planBlockInsert, applyPlan, detectHeadings, headingRangeOf, charDelta, checkValueText, collectFields, compareToBaseline, compileDocument, draftAnchors, emptyTemplate, fieldRangeIn, findPlaceholders, generate,
-  generateFromTemplate, isValidPath, listUnregisteredPlaces, lookupPath, makeLineAnchor, makeRangeAnchor, makeWordAnchor, openPackage, parseDocument,
+  buildBlockPreviewDocument, canonicalStudioJson, sha256Hex, planBlockInsert, applyPlan, detectHeadings, charDelta, checkValueText, collectFields, compareToBaseline, compileDocument, draftAnchors, emptyTemplate, fieldRangeIn, findPlaceholders, generate,
+  generateFromTemplate, isValidPath, listUnregisteredPlaces, lookupPath, makeLineAnchor, makeRangeAnchor, makeWordAnchor, openPackage, parseDocument, patternOf, suggestSimilar,
   placeText, planApplyCharFormat, readDataset, readStudioTemplate, readTemplate, readTypedValue, remapAddress, resolvePathValue, sanitizeFileStem, validateDocument, valueUnit,
   verifyPreservation, walkParagraphs, type CompileTarget, type Dataset, type HwpxDocument, type StudioTemplate,
 } from '@hwpx-studio/engine';
@@ -16,7 +16,7 @@ import { plainOf } from './quick-messages.ts';
 import { labelAt } from './item-label.ts';
 import { VALUE_TYPES, datePattern, decorateValue } from './value-type.ts';
 
-import { plainOf as plainBlock } from '../../studio/src/messages.ts';
+import { plainOf as plainBlock, KNOWN_CODES } from '../../studio/src/messages.ts';
 const MAX_SOURCE = 10 * 1024 * 1024;
 const MAX_TEXT = 1024 * 1024;
 const schema = 'hwpx-studio/lite-workspace@1';
@@ -33,7 +33,7 @@ type Placement = {id:string;version:number;from:string;to:string};
  * 함께 경우 표 블록을 고를 수 없는 분기점(`exclusive`), 업무 건 식별(`caseKey`)마다 직접 고른 블록. 블록은 원형 id로 적고, 서식 판의 블록 id는 `<분기점 id>-<원형 id>`다
  */
 type Branch = { id: string; name: string; from: string; to: string; blocks: { id: string; version: number }[]; keys: string[]; cases: { name?: string; values: string[]; block: string }[]; fallback?: string; exclusive?: string[]; picks: Record<string, string> };
-type Work = { edits: Edit[]; headings: Heading[]; blocks: Block[]; placements: Placement[]; branches: Branch[]; inputItems: InputItem[]; index: number; missing: "error" | "keep"; samples?: Record<string, string>; renumber?: string[] };
+type Work = { edits: Edit[]; headings: Heading[]; outline?: { id: string; level: number }[]; blocks: Block[]; placements: Placement[]; branches: Branch[]; inputItems: InputItem[]; index: number; missing: "error" | "keep"; samples?: Record<string, string>; renumber?: string[] };
 /** 참조 번호 재정렬(#194, 엔진 `options.renumber`)에서 고를 수 있는 꼴 */
 const RENUMBER = ['붙임', '별지', '표'];
 type Session = { workspaceId?: string; kind: 'hwpx' | 'text'; name: string; source: Uint8Array; doc?: HwpxDocument; sourceText?: string; rows: Row[]; headings?: { id: string; name: string }[]; data?: QuickData; dataContent?: string; output?: Uint8Array; blockPreviews?: Map<string, BlockDraft>; pins?: Set<string>; inputs?: Input[] };
@@ -154,6 +154,9 @@ function workOf(s: Session, input: Record<string, unknown>): Work {
   const text = (value: unknown): string => { need(typeof value === 'string' && value.length <= 100000); size += Buffer.byteLength(value); need(size <= MAX_TEXT && checkValueText(value) === undefined, 'WORKBENCH_TEXT'); return value; };
   const edits: Edit[] = input.edits.map(e => { need(isObj(e) && Object.keys(e).every(k => ['id', 'text'].includes(k))); const r = row(e.id); need(r.editable, 'WORKBENCH_READONLY'); return { id: r.id, text: text(e.text) }; });
   const headings: Heading[] = input.headings.map(h => { need(isObj(h) && Object.keys(h).every(k => ['id', 'level'].includes(k)) && (h.level === 1 || h.level === 2)); return { id: row(h.id).id, level: h.level }; });
+  // 제목 트리(#151): 화면의 제목 흐름(탐지 + "이것과 같은 것 전부"로 고친 것). 저장·복원만 하고 생성에는 쓰지 않는다
+  need(input.outline === undefined || Array.isArray(input.outline) && input.outline.length <= 3000);
+  const outline = (input.outline as unknown[] | undefined)?.map(h => { need(isObj(h) && Object.keys(h).every(k => ['id', 'level'].includes(k)) && Number.isInteger(h.level) && (h.level as number) >= 1 && (h.level as number) <= 99); return { id: row(h.id).id, level: h.level as number }; });
   const blocks: Block[] = input.blocks.map(b => {
     need(isObj(b) && Object.keys(b).every(k => ['id', 'from', 'to', 'text', 'alias'].includes(k)) && typeof b.id === 'string' && /^[A-Za-z][A-Za-z0-9_-]{0,79}$/.test(b.id) && typeof b.alias === 'string' && b.alias.length <= 120);
     const a = row(b.from), z = row(b.to);
@@ -162,7 +165,7 @@ function workOf(s: Session, input: Record<string, unknown>): Work {
     need(selected.length === z.path.at(-1)! - a.path.at(-1)! + 1 && selected.every(r => r.rangeEditable), 'WORKBENCH_READONLY');
     return { id: b.id, from: a.id, to: z.id, text: text(b.text), alias: b.alias };
   });
-  for (const xs of [edits, headings, blocks]) need(new Set(xs.map(x => x.id)).size === xs.length, 'WORKBENCH_DUPLICATE');
+  for (const xs of [edits, headings, blocks, outline ?? []]) need(new Set(xs.map(x => x.id)).size === xs.length, 'WORKBENCH_DUPLICATE');
   blocks.forEach((b, i) => {
     const a = row(b.from), z = row(b.to);
     need(!edits.some(e => contains(a, z, row(e.id))), 'WORKBENCH_OVERLAP');
@@ -185,7 +188,7 @@ function workOf(s: Session, input: Record<string, unknown>): Work {
   const samples = input.samples === undefined ? undefined : Object.fromEntries(Object.entries(input.samples).map(([k, v]) => { need(k.trim() !== '' && k.length <= 500 && typeof v === 'string'); return [text(k), text(v)]; }));
   const renumber = input.renumber as unknown[] | undefined;
   need(renumber === undefined || Array.isArray(renumber) && renumber.every(p => RENUMBER.includes(p as string)) && new Set(renumber).size === renumber.length && (s.kind === 'hwpx' || !renumber.length));
-  return { edits, headings, blocks, placements, branches, inputItems: inputItemsOf(input.inputItems, row), index, missing: input.missing ?? "error", ...(samples ? { samples } : {}), ...(renumber?.length ? { renumber: RENUMBER.filter(p => renumber.includes(p)) } : {}) };
+  return { edits, headings, ...(outline ? { outline } : {}), blocks, placements, branches, inputItems: inputItemsOf(input.inputItems, row), index, missing: input.missing ?? "error", ...(samples ? { samples } : {}), ...(renumber?.length ? { renumber: RENUMBER.filter(p => renumber.includes(p)) } : {}) };
 
 }
 
@@ -543,8 +546,9 @@ function build(s: Session, work: Work, makeTemplate = false, library?: BlockLibr
   }
   const result = generate(s.source, readTemplate(template), readDataset({}), { missing: 'keep', mode: 'baseline', allowNothingApplied: twoStage || !template.rules.length });
   if (!result.ok || !('output' in result)) {
-    if (result.report.plan.missingPaths.length) unlinked(`데이터에 없는 키 ${result.report.plan.missingPaths.length}개: ${result.report.plan.missingPaths.slice(0, 20).join(', ')}`);
-    return fail(result.report.issues.find(i => i.severity === 'error')?.code ?? 'WORKBENCH_GENERATE', '문서 생성 검사를 통과하지 못했습니다.');
+    // 구조 단계는 빈 데이터·자리 유지로 만들므로 실패는 구조 탓이다. 남은 자리 판정은 이 단계가 성공한 뒤에만(#203)
+    const code = result.report.issues.find(i => i.severity === 'error')?.code ?? 'WORKBENCH_GENERATE';
+    return fail(code, KNOWN_CODES.includes(code) ? plainBlock(code) : '문서 생성 검사를 통과하지 못했습니다.');
   }
   need(!result.report.plan.skipped.some(x => x.ruleId !== 'implicit'), 'WORKBENCH_SKIPPED');
   let output = result.output;
@@ -635,14 +639,10 @@ export function createWorkbench(library?: BlockLibrary) {
     const headings = s.doc ? detectHeadings(s.doc) : [];
     const outline = headings.map(h => ({id:rowId(h.at.sectionIndex,[...h.at.parentPath,h.index]),name:h.text,level:h.marker.level}));
     s.headings = outline;
-    const blockCandidates = headings.flatMap(h => {
-      const range=headingRangeOf(s.doc!,h.at,h.index);if(!range)return [];
-      const from=rowId(h.at.sectionIndex,[...h.at.parentPath,range.from]),to=rowId(h.at.sectionIndex,[...h.at.parentPath,range.to]);
-      return [{from,to,name:h.text,paragraphCount:range.to-range.from+1}];
-    });
     if (sessions.size >= 8) sessions.delete(sessions.keys().next().value!);
     const session = randomUUID(); sessions.set(session, s);
-    return {session,kind:s.kind,name:s.name,sourceUrl:`/api/workbench/source?session=${session}`,...(s.sourceText===undefined?{}:{sourceText:s.sourceText}),paragraphs:s.rows,fields,inputs:s.inputs=inputsOf(s),outline,blockCandidates};
+    // 제목별 블록 후보(#78)는 화면이 제목 트리에서 계산한다(`headingBlocks`, 엔진 `headingRangeOf`와 같은 규칙. #151에서 트리를 고칠 수 있게 되어 옮김)
+    return {session,kind:s.kind,name:s.name,sourceUrl:`/api/workbench/source?session=${session}`,...(s.sourceText===undefined?{}:{sourceText:s.sourceText}),paragraphs:s.rows,fields,inputs:s.inputs=inputsOf(s),outline};
   };
   return {
     // Unsaved placements exist only here; block deletion must see every open session.
@@ -665,7 +665,7 @@ export function createWorkbench(library?: BlockLibrary) {
         if (path === '/api/workbench/restore') {
           need(typeof input.workspace !== 'string' || Buffer.byteLength(input.workspace) <= 20 * 1024 * 1024, 'WORKBENCH_WORKSPACE');
           const raw: unknown = typeof input.workspace === 'string' ? JSON.parse(input.workspace) : input.workspace;
-          need(isObj(raw) && raw.schema === schema && (raw.kind === 'text' || raw.kind === 'hwpx') && Object.keys(raw).every(k => ['schema', 'kind', 'name', 'source', 'sha256', 'data', 'edits', 'headings', 'blocks', 'placements', 'branches', 'inputItems', 'index', 'missing', 'samples', 'renumber', 'workspaceId'].includes(k)), 'WORKBENCH_WORKSPACE');
+          need(isObj(raw) && raw.schema === schema && (raw.kind === 'text' || raw.kind === 'hwpx') && Object.keys(raw).every(k => ['schema', 'kind', 'name', 'source', 'sha256', 'data', 'edits', 'headings', 'outline', 'blocks', 'placements', 'branches', 'inputItems', 'index', 'missing', 'samples', 'renumber', 'workspaceId'].includes(k)), 'WORKBENCH_WORKSPACE');
           const s = open(raw.name, raw.source); need(raw.kind === s.kind, 'WORKBENCH_WORKSPACE'); need(raw.sha256 === hash(s.source), 'WORKBENCH_SOURCE_HASH');
           if (raw.data !== undefined) { const parsed = parseData(raw.data, 'data.json'); s.data = parsed.data; s.dataContent = parsed.content; }
           need(raw.workspaceId===undefined||typeof raw.workspaceId==='string'&&/^[0-9a-f-]{36}$/.test(raw.workspaceId),'WORKBENCH_WORKSPACE');
@@ -737,6 +737,14 @@ export function createWorkbench(library?: BlockLibrary) {
           return { ...(address ? { id: rowId(address.sectionIndex, address.path) } : {}), location };
         }
         if (path === '/api/workbench/sample') return sampleOf(s, input.index);
+        if (path === '/api/workbench/similar') {
+          // 이것과 같은 것 전부(#151): 고른 문단의 패턴(엔진 `patternOf`, 기본 판정 번호 모양·굵기·크기)과 같은 문단(엔진 `suggestSimilar`). 앱은 판정하지 않는다. 고른 문단 포함, 문서 순서
+          need(s.doc, 'WORKBENCH_SOURCE');
+          const row = s.rows.find(r => r.id === input.row); need(row, 'WORKBENCH_POSITION');
+          const at = { sectionIndex: row.sectionIndex, path: row.path }, pattern = patternOf(s.doc, at); need(pattern, 'WORKBENCH_POSITION');
+          const found = new Set([row.id, ...suggestSimilar(s.doc, pattern, { origin: at }).map(x => rowId(x.at.sectionIndex, x.at.path))]);
+          return { rows: s.rows.filter(r => found.has(r.id)).map(r => r.id) };
+        }
         if (path === '/api/workbench/g2b-template') {
           need(s.doc && (input.id === undefined || typeof input.id === 'string' && /^t[0-9a-f]{8}$/.test(input.id)));
           const work = workOf(s, input), { entries, skipped } = g2bEntries(s, work.inputItems), sha256 = hash(s.source), { branches, blobs, materials } = branchesOf(s, work, library);
