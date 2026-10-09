@@ -17,6 +17,7 @@ import { ds, insertText, KEEP, line, longValue, rng, tpl } from '../../../packag
 import { createApp } from '../src/server.ts';
 import { createG2B2, fileBase, windowCode } from '../src/g2b-v2.ts';
 import { g2bTemplate } from '../src/input-table.ts';
+import { UNKNOWN_EXPLANATION, plainOf } from '../src/quick-messages.ts';
 
 const sha = (v: string | Uint8Array) => createHash('sha256').update(v).digest('hex');
 const texts = (bytes: Uint8Array) => parseDocument(openPackage(bytes)).sections.flatMap(s => [...walkParagraphs(s.paragraphs)].map(p => p.logicalText));
@@ -622,5 +623,73 @@ test('#173 /quick·작업창: 판이 다른 Helper 내보내기 파일은 쉬운
     }
     const r = await app.post('/api/quick/data', { session: quick.body.session, content: JSON.stringify({ format: 'studio-generate', version: 2, items: {} }) });
     assert.equal(r.body.code, 'QUICK_BAD_DATA'); assert.notEqual(r.body.plain, sentence);
+  });
+});
+
+// ── #134 등록 안 된 누름틀·메일머지 ───────────────────────────────
+
+const LABEL = { mailMerge: '메일머지', clickHere: '누름틀' } as const;
+const unregisteredWarning = (kind: keyof typeof LABEL, name: string, n: number) => ({ code: 'PLACE_UNREGISTERED', field: name, message: `${plainOf('PLACE_UNREGISTERED')} (${LABEL[kind]} ${name} ${n}곳)` });
+const byField = <T extends { field?: string }>(ws: readonly T[] = []) => [...ws].sort((a, b) => (a.field! < b.field! ? -1 : a.field! > b.field! ? 1 : 0));
+
+test('#134 2판 창구: 서식에 등록 안 된 누름틀·메일머지는 성공 건마다 건별 PLACE_UNREGISTERED(종류·이름·곳 수), 최상위 경고 0, dryRun도 같은 경고, 무작위 50건 원래 글 그대로·새 오류 0', async ctx => {
+  const { bytes, t: full } = syntheticTemplate();
+  const fields = listFields(parseDocument(openPackage(bytes)));
+  const nameOf = (p: any): string => p.kind === 'clickHere' ? p.name : p.key;
+  // 종류마다 이름을 하나 걸러 서식에서 뺀다(정책 생략 = 필드는 경고)
+  const dropped = (['mailMerge', 'clickHere'] as const).flatMap(kind => full.places.filter(p => p.kind === kind).map(nameOf).sort().filter((_, i) => i % 2 === 1).map(name => ({ kind, name })));
+  const count = (kind: 'mailMerge' | 'clickHere', name: string) => fields.filter(f => kind === 'mailMerge' ? f.type === 'MAILMERGE' && f.mergeKey === name : f.type === 'CLICK_HERE' && f.name === name).length;
+  const want = byField(dropped.map(d => unregisteredWarning(d.kind, d.name, count(d.kind, d.name))));
+  assert(dropped.some(d => d.kind === 'mailMerge') && dropped.some(d => d.kind === 'clickHere') && want.every(w => !w.message.includes(' 0곳')), JSON.stringify(want));
+  const raw = { ...JSON.parse(JSON.stringify(full)), id: 't00000135', options: { missing: 'error' } };
+  raw.places = raw.places.filter((p: any) => !dropped.some(d => d.kind === p.kind && d.name === nameOf(p)));
+  const root = mkdtempSync(join(tmpdir(), 'studio-g2b2-unreg-')), db = new DatabaseSync(':memory:');
+  try {
+    const g = createG2B2(db);
+    g.saveTemplate({ template: raw, source: Buffer.from(bytes).toString('base64') });
+    g.saveProfile({ id: 'unreg', label: '미등록', templateId: 't00000135', version: 1, outputDirectory: root });
+    const next = rng(0x134a), items = Array.from({ length: 50 }, (_, i) => syntheticItem(full, next, i));
+    const send = (requestId: string, dryRun: boolean) => g.generate({ format: 'studio-generate', version: 2, requestId, profileId: 'unreg', dryRun, items });
+    for (const reply of [await send('unreg-dry', true), await send('unreg', false)]) {
+      assert.deepEqual(reply.warnings, []); assert.equal(reply.summary.succeeded, 50, JSON.stringify(reply.results.find(r => r.status !== 'success')));
+      for (const r of reply.results) { assert.deepEqual(byField(r.warnings), want); assert(!r.warnings!.some(w => w.message.includes(UNKNOWN_EXPLANATION))); }
+    }
+    const left = (doc: ReturnType<typeof parseDocument>) => listFields(doc).filter(f => dropped.some(d => d.kind === 'mailMerge' ? f.type === 'MAILMERGE' && f.mergeKey === d.name : f.type === 'CLICK_HERE' && f.name === d.name)).map(f => f.valueText);
+    const before = left(parseDocument(openPackage(bytes)));
+    let errors = 0;
+    for (const path of outputs(root)) {
+      const out = new Uint8Array(readFileSync(join(root, path)));
+      errors += newErrors(bytes, out).length;
+      assert.deepEqual(left(parseDocument(openPackage(out))), before, `${path}: 등록 안 된 필드는 원래 글`);
+    }
+    assert.equal(outputs(root).length, 50); assert.equal(errors, 0);
+    ctx.diagnostic(`seed=0x134a; items=50 (dryRun+real); places=${raw.places.length}; unregistered_names=${want.length}; unregistered_places=${dropped.reduce((n, d) => n + count(d.kind, d.name), 0)}; new_errors=0; top_warnings=0`);
+  } finally { db.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
+test('#134 작업창: 추천 목록에서 같은 이름을 모두 제외한 누름틀·메일머지만 "등록 안 됨"({{키}} 제외는 세지 않음), 그 서식 판의 2판 생성 건별 경고와 같은 수', async () => {
+  await withApp(async (app, root) => {
+    const opened = (await app.post('/api/workbench/open', { name: 'mailmerge.hwpx', content: MAILMERGE.toString('base64') })).body;
+    const items = opened.inputs.map((x: any) => ({ row: x.row, start: x.start, end: x.end, name: x.name.trim(), key: x.usable ? x.name.trim() : '', type: 'text', status: 'recommended', origin: x.kind }));
+    const out = ['mailMerge:담당자', 'mailMerge:연락처', 'clickHere:성명'], oneOf = items.findIndex((i: any) => i.origin === 'mailMerge' && i.name === '사업명');
+    const work = (excluded: (i: any, n: number) => boolean) => ({ session: opened.session, index: 0, edits: [], headings: [], blocks: [], inputItems: items.map((i: any, n: number) => excluded(i, n) ? { ...i, status: 'excluded' } : i) });
+    const fieldsOut = (i: any, n: number) => out.includes(`${i.origin}:${i.name}`) || n === oneOf;
+    assert.deepEqual((await app.post('/api/workbench/unregistered', work(() => false))).body, { places: [] });
+    const listed = (await app.post('/api/workbench/unregistered', work((i, n) => fieldsOut(i, n) || i.name === 'project.name'))).body.places as { kind: string; name: string }[];
+    const tally = new Map<string, number>();
+    for (const p of listed) tally.set(`${p.kind}:${p.name}`, (tally.get(`${p.kind}:${p.name}`) ?? 0) + 1);
+    assert.deepEqual([...tally].sort(), [['clickHere:성명', 1], ['mailMerge:담당자', 4], ['mailMerge:연락처', 3]]);
+
+    // 같은 제외로 만든 서식 판(화면의 "서식 판 저장")으로 2판 생성 → 건마다 같은 이름·곳 수의 경고
+    const { template } = (await app.post('/api/workbench/g2b-template', work(fieldsOut))).body;
+    assert.equal((await app.studio('/api/g2b/templates', { template, source: MAILMERGE.toString('base64') })).http, 200);
+    assert.equal((await app.studio('/api/g2b/profiles', { id: 'p-134', label: '미등록', templateId: template.id, version: 1, outputDirectory: join(root, 'out') })).http, 200);
+    const next = rng(0x134b), names: string[] = template.bindings.map((b: any) => b.key);
+    const values = Array.from({ length: 50 }, (_, i) => ({ values: Object.fromEntries(names.map(n => [n, `${n} ${i}: ${longValue(next, 200, 500)}\n둘째 문장 & <확인>.\t탭`])) }));
+    const r = await app.post('/api/g2b/generate', { format: 'studio-generate', version: 2, requestId: 'mm-134', profileId: 'p-134', items: values });
+    assert.equal(r.body.summary.succeeded, 50, JSON.stringify(r.body.results[0]).slice(0, 400)); assert.deepEqual(r.body.warnings, []);
+    const want = byField([...tally].map(([k, n]) => { const [kind, name] = k.split(':') as ['mailMerge' | 'clickHere', string]; return unregisteredWarning(kind, name, n); }));
+    for (const x of r.body.results) assert.deepEqual(byField(x.warnings), want);
+    assert.equal(r.body.results.reduce((n: number, x: any) => n + newErrors(new Uint8Array(MAILMERGE), new Uint8Array(readFileSync(x.path))).length, 0), 0);
   });
 });
