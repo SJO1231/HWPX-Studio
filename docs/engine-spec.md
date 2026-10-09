@@ -75,6 +75,7 @@ type Issue = { severity: "error" | "warning"; code: string; message: string; whe
 | `ANCHOR` | `ANCHOR_UNVERIFIED` | 경고 | 지문 없는 `cell`·`object`(1판 승계). 원본 해시가 같을 때만 쓴다 | 8.8.13 |
 | `PLACE` | `PLACE_COVERED` | 보고 | 자리가 블록 교체 범위 안에 들어 `dropped`로 빠졌다(오류 아님) | 8.8.12 |
 | `PLACE` | `PLACE_UNREGISTERED` | 오류·경고 | 등록되지 않은 `{{ 키 }}`. `unregistered: error`이면 오류, `keep`이면 경고 | 8.8.12 |
+| `PLACE` | `PLACE_UNREGISTERED`(필드, #134) | 경고·오류 | 어느 자리도 맡지 않은 누름틀(이름 있음)·메일머지(키 있음). `where`는 `clickHere:이름`·`mailMerge:키`, 메시지에 종류·이름·건수. `unregistered`를 생략했거나 `keep`이면 경고, `error`라고 적으면 오류 | 8.8.12 |
 | `FILL` | `FILL_SKIPPED` | 오류 | 2단계(값)에서 건너뜀이 1건이라도 있다 | 8.8.12 |
 | `SEL` | `SEL_UNDECIDED` | 오류 | 슬롯 선택이 정해지지 않았다(동률·후보 없음·조건 값 없음·확정 필요) | 8.8.8 |
 | `SEL` | `SEL_RECHECK` | 오류 | 저장한 선택을 다시 확인해야 한다(블록 없어짐·내용 변경·상위 변경) | 8.8.8 |
@@ -1181,6 +1182,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | `missing` | `error`·`empty`·`keep` | `error` | 데이터에 값이 없을 때(8.2). 자리를 채울 때만 적용하고, 조건에서의 누락은 8.8.8이 다룬다 |
 | `mixedFormat` | `first` | 없음 | 8.3의 같은 이름 옵션. 없으면 글자모양이 다른 run에 걸친 자리는 건너뜀이고 2판 생성은 `FILL_SKIPPED`로 실패한다 |
 | `unregistered` | `error`·`keep` | `error` | 등록되지 않은 `{{ 키 }}`의 처리(8.8.12) |
+| `unregistered`(필드, #134) | `error`·`keep` | 경고(생략 시 `keep`과 같음) | 같은 옵션이 등록되지 않은 누름틀·메일머지에도 적용된다. 생략하면 `{{ }}`와 달리 경고만 남기고 그대로 두며, `error`라고 적어야 막는다(8.8.12) |
 | `requireConfirm` | true·false | false | true이면 `default`·`fallback` 선택도 사용자 확정 전에는 막는다(8.8.8) |
 | `unwrapFilled` | true·false | false | 채운 누름틀·메일머지 필드를 풀어 값 글만 남긴다(8.8.12) |
 | `refreshPreview` | true·false | false | 결과의 `Preview/PrvText.txt`를 본문 글로 다시 쓴다(8.8.12) |
