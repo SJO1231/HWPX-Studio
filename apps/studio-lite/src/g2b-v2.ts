@@ -288,8 +288,8 @@ function produce(p: Plan, e: Extract<Evaluated, { record: unknown }>, itemIndex:
     const unregistered = [...new Set(issues.filter(i => i.code === 'PLACE_UNREGISTERED').map(i => i.where))];
     return { result: fail(itemIndex, code, `(엔진: ${codes.join(', ')}${unregistered.length ? ` · ${unregistered.join(', ')}` : ''})`, e.warnings, extra) };
   }
-  // 등록 안 된 자리(#134)는 그 건의 경고로(최상위 warnings는 정상 요청에서 비어 있어야 한다). 이 건의 경고 목록에 더한다
-  e.warnings.push(...r.report.warnings.filter(w => w.code === 'PLACE_UNREGISTERED').map(unregistered));
+  // 등록 안 된 자리(#134)·대응 없는 참조(#199)는 그 건의 경고로(최상위 warnings는 정상 요청에서 비어 있어야 한다). 이 건의 경고 목록에 더한다
+  e.warnings.push(...r.report.warnings.flatMap(w => w.code === 'PLACE_UNREGISTERED' ? [unregistered(w)] : w.code === 'RENUMBER_UNMATCHED' ? [unmatched(w)] : []));
   return r.dryRun ? {} : { output: r.output as Uint8Array };
 }
 
@@ -299,6 +299,11 @@ function unregistered(w: { code: string; message: string; where?: string }): War
   const where = w.where ?? '', at = where.indexOf(':'), kind = FIELD_KIND[where.slice(0, at)];
   const name = kind === undefined ? where.slice(2, -2) : where.slice(at + 1), n = / (\d+)곳/.exec(w.message)?.[1];
   return { code: w.code, field: name, message: say(w.code, `(${kind ?? '{{키}}'} ${name}${n === undefined ? '' : ` ${n}곳`})`) };
+}
+/** 엔진 경고(8.8.12): 메시지의 "참조 '붙임 N' M곳" → `field`는 그 참조 글 */
+function unmatched(w: { code: string; message: string }): Warning {
+  const [, ref = '', n = ''] = /참조 '(.+?)' (\d+)곳/.exec(w.message) ?? [];
+  return { code: w.code, field: ref, message: say(w.code, `(${ref} ${n}곳)`) };
 }
 
 // ── 파일 이름·저장 ───────────────────────────────────────────────

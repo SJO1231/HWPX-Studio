@@ -558,6 +558,29 @@ test('#196 배타: 함께 고를 수 없는 두 분기가 모두 조건 블록�
   } finally { db.close(); rmSync(root, { recursive: true, force: true }); }
 });
 
+test('#199 참조 번호 재정렬: 대응 없는 참조는 성공 건마다 건별 RENUMBER_UNMATCHED(참조 글·곳 수), 최상위 경고 0, dryRun도 같은 경고', async () => {
+  const { t, bytes } = syntheticTemplate();
+  const raw = { ...JSON.parse(JSON.stringify(t)), id: 't00000199', options: { renumber: { patterns: ['붙임', '별지'] } } };
+  for (const b of raw.blocks) b.content.text += ' (붙임 9, 별지 2 및 붙임 9 참조)';
+  const root = mkdtempSync(join(tmpdir(), 'studio-g2b2-renum-')), db = new DatabaseSync(':memory:');
+  try {
+    const g = createG2B2(db);
+    g.saveTemplate({ template: raw, source: Buffer.from(bytes).toString('base64') });
+    g.saveProfile({ id: 'renum', label: '재정렬', templateId: 't00000199', version: 1, outputDirectory: root });
+    const next = rng(0x199), items = [0, 1].map(i => syntheticItem(t, next, i));
+    const want = [
+      { code: 'RENUMBER_UNMATCHED', field: '붙임 9', message: `${plainOf('RENUMBER_UNMATCHED')} (붙임 9 2곳)` },
+      { code: 'RENUMBER_UNMATCHED', field: '별지 2', message: `${plainOf('RENUMBER_UNMATCHED')} (별지 2 1곳)` },
+    ];
+    for (const dryRun of [true, false]) {
+      const reply = await g.generate({ format: 'studio-generate', version: 2, requestId: `renum-${dryRun}`, profileId: 'renum', dryRun, items });
+      assert.deepEqual(reply.warnings, []); assert.equal(reply.summary.succeeded, 2, JSON.stringify(reply.results));
+      for (const r of reply.results) assert.deepEqual(byField(r.warnings), byField(want));
+    }
+    assert(!plainOf('RENUMBER_UNMATCHED').includes(UNKNOWN_EXPLANATION));
+  } finally { db.close(); rmSync(root, { recursive: true, force: true }); }
+});
+
 test('서식이 안 쓰는 열은 값이 무엇이든(타입과 안 맞는 값·객체·배열) 무시: 성공, 최상위·건별 경고 0', async () => {
   await withApp(async (app, root) => {
     await setup(app, join(root, 'out'));
