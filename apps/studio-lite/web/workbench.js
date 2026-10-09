@@ -865,6 +865,8 @@ function renderHeadingTree(){
     line.title=b.name+' · 후보 '+b.blocks.length;line.onclick=()=>void openBranch(b.id);
     if(node)node.insertBefore(line,node.querySelector(':scope>.heading-node'));else tree.prepend(line);
   }
+  // 분기점은 선택 사항이다: 없으면 "분기 없음"만(4c.7)
+  if(state.session&&state.kind==='hwpx'&&!state.branches.length)tree.append(uiNode('p','분기 없음','rail-empty'));
   followHeading();
 }
 function setCurrentHeading(id){const nodes=[...$('#heading-tree').querySelectorAll('.heading-node')],chosen=nodes.find(el=>el.dataset.row===id);for(const el of nodes){const open=el===chosen||Boolean(chosen&&el.contains(chosen));if(el.open!==open)el.open=open;}if(chosen){const root=$('#heading-tree'),r=chosen.getBoundingClientRect(),box=root.getBoundingClientRect();if(r.top<box.top||r.top>box.bottom)root.scrollTop+=r.top-box.top;}}
