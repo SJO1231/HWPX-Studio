@@ -270,11 +270,14 @@ function datasetOf(s: Session, work: Work): Dataset | undefined {
   return { data, derived: base.derived };
 }
 
+/** 알림에 적을 이름: 3개까지, 나머지는 수만 */
+const namesOf = (names: readonly string[]) => names.slice(0, 3).join(', ') + (names.length > 3 ? ` 외 ${names.length - 3}개` : '');
+
 type Shape = (value: string, following: string) => string | undefined;
 /**
  * 값 형식(#181): Helper 서식 판(`g2bTemplate`)과 같은 값 표의 금액·날짜 값. 값을 읽는 경로(찾은 자리면 문서의 이름, 지정 자리면 연결한 키 = 확정한 편집 글의 `{{키}}`) →
  * 엔진 형식(8.8.4 `readTypedValue`, 원문 날짜 모양 `display.pattern` 포함)으로 꾸미고 자리 바로 뒤 글로 "원" 단위를 정하는 함수(`placeText`, 읽지 못하는 값이면 undefined).
- * TXT 미리 보기는 자리마다 이 함수를 쓰고, HWPX는 이 값 표가 있으면 값을 `fillValues`(Helper 2판 생성)로 채운다.
+ * TXT 미리 보기는 자리마다 이 함수를 쓴다(HWPX는 데이터가 있으면 늘 `fillValues`, Helper 2판 생성으로 채운다).
  */
 function formatsOf(s: Session, items: readonly InputItem[]): Map<string, Shape> {
   const t = g2bTemplate(g2bEntries(s, items).entries, { id: 't', version: 1, name: '', sha256: '' });
@@ -315,8 +318,9 @@ function fillValues(s: Session, items: readonly InputItem[], bytes: Uint8Array, 
     const lost = [...new Set(r.report.issues.filter(i => i.code === 'DATA_MISSING').map(i => t.bindings.find(b => 'value:' + b.value === i.where)?.key ?? ''))];
     if (lost.length) unlinked(`데이터에 없는 키 ${lost.length}개: ${lost.slice(0, 20).join(', ')}`);
     const code = r.report.issues.find(i => i.severity === 'error')?.code ?? 'WORKBENCH_GENERATE';
-    // 서식이 섞이거나 개체에 걸친 {{키}}는 Helper 2판도 채우지 못해 막는다('자리 유지'로 남기지 않는다)
-    return fail(code, code === 'FILL_SKIPPED' ? '서식이 섞이거나 개체에 걸친 {{키}} 자리는 채울 수 없어 생성을 막았습니다(Helper 생성도 같습니다). 한컴에서 키 전체를 같은 서식으로 고치세요.' : '입력 값을 채우지 못했습니다. 데이터 항목을 확인하세요.');
+    // 서식이 섞이거나 개체에 걸친 {{키}}는 Helper 2판도 채우지 못해 막는다('자리 유지'로 남기지 않는다). 건너뛴 앵커 id는 `<자리 id>@<순번>`이다
+    const keys = [...new Set(r.report.skipped.map(x => { const p = t.places.find(p => p.id === x.anchor.split('@')[0]) as { key?: string; name?: string } | undefined; return p?.key ?? p?.name ?? x.anchor; }))];
+    return fail(code, code === 'FILL_SKIPPED' ? `서식이 섞이거나 개체에 걸친 {{키}} 자리 ${r.report.skipped.length}곳(${namesOf(keys)})은 채울 수 없어 생성을 막았습니다(Helper 생성도 같습니다). 한컴에서 키 전체를 같은 서식으로 고치세요.` : '입력 값을 채우지 못했습니다. 데이터 항목을 확인하세요.');
   }
   return { output: r.output as Uint8Array, filled: r.report.stage2?.plan.actions.filter(a => a.type === 'fill').reduce((n, a) => n + a.targets, 0) ?? 0 };
 }
@@ -463,12 +467,9 @@ function build(s: Session, work: Work, makeTemplate = false, library?: BlockLibr
   const dataset = makeTemplate ? undefined : override ?? datasetOf(s, work);
   const row = (id: string) => s.rows.find(r => r.id === id)!;
   const edits = work.edits.filter(e => e.text !== row(e.id).text);
-  // 원래 {{키}}가 있는 줄을 고치면(그 줄 안 지정 자리의 확정 포함) 엔진이 그 {{키}}를 따로 채워 편집과 겹친다(#180 TPL_CONFLICT):
-  // 블록 배치처럼 구조(편집·블록·배치)를 먼저 만들고 값은 다음 단계에서 한 번 채운다(꾸민 수량 자리는 `projected`가 먼저 넣는다).
-  // 금액·날짜 값 표가 있으면(#186) 값 단계는 Helper 2판 창구와 같은 생성(`fillValues`)이라 자리마다 "원"·날짜 모양이 Helper와 같다
-  const typed = dataset !== undefined && formatsOf(s, work.inputItems).size > 0;
-  const twoStage = work.placements.length > 0 || typed || dataset !== undefined && edits.some(e => findPlaceholders(row(e.id).text).length > 0);
-  const compositionData = twoStage ? undefined : dataset;
+  // 구조(편집·블록·배치)를 먼저 만들고 값은 다음 단계에서 한 번 채운다(꾸민 수량 자리는 `projected`가 먼저 넣는다. #180: 원래 {{키}}가 있는 줄의 편집과 겹치지 않는다).
+  // 데이터가 있으면 값 단계는 늘 Helper 2판 창구와 같은 생성(`fillValues`)이다: 자리마다 "원"·날짜 모양(#186), 혼합 서식 {{키}} 막힘이 값 표 유무와 관계없이 같다(#190)
+  const twoStage = work.placements.length > 0 || dataset !== undefined;
   const template = emptyTemplate();
   const formats: { row: Row; text: string; spans: { start: number; end: number }[]; block: boolean; keys: ReturnType<typeof findPlaceholders> }[] = [];
   for (const [i, edit] of edits.entries()) {
@@ -485,7 +486,7 @@ function build(s: Session, work: Work, makeTemplate = false, library?: BlockLibr
     formats.push({ row: r, ...content, block: false, keys: makeTemplate ? findPlaceholders(content.text).filter(k => !originalKeys.has(k.path)) : [] });
   }
   for (const [i, block] of work.blocks.entries()) {
-    const a = row(block.from), z = row(block.to), id = `block${i}`, content = projected(block.text, compositionData, true, makeTemplate || twoStage);
+    const a = row(block.from), z = row(block.to), id = `block${i}`, content = projected(block.text, undefined, true, makeTemplate || twoStage);
     need(checkValueText(content.text, 'paragraphs') === undefined, 'WORKBENCH_TEXT');
     const anchor = makeRangeAnchor(s.doc, a.sectionIndex, a.path.slice(0, -1), a.path.at(-1)!, z.path.at(-1)!);
     need(anchor, 'WORKBENCH_RANGE'); template.anchors.push({ ...anchor, id });
@@ -497,7 +498,7 @@ function build(s: Session, work: Work, makeTemplate = false, library?: BlockLibr
     const anchor=makeRangeAnchor(s.doc,a.sectionIndex,a.path.slice(0,-1),a.path.at(-1)!,z.path.at(-1)!);need(anchor,'WORKBENCH_RANGE');
     template.anchors.push({...anchor,id});template.rules.push({id,do:{type:'inject',anchor:id,position:'replace',fragment:stored.fragment as unknown as Record<string,unknown>}});
   }
-  const result = generate(s.source, readTemplate(template), compositionData ?? readDataset({}), { missing: compositionData ? work.missing : 'keep', mode: 'baseline', allowNothingApplied: twoStage || !template.rules.length && (!dataset || formats.some(f => f.spans.length)) });
+  const result = generate(s.source, readTemplate(template), readDataset({}), { missing: 'keep', mode: 'baseline', allowNothingApplied: twoStage || !template.rules.length });
   if (!result.ok || !('output' in result)) {
     if (result.report.plan.missingPaths.length) unlinked(`데이터에 없는 키 ${result.report.plan.missingPaths.length}개: ${result.report.plan.missingPaths.slice(0, 20).join(', ')}`);
     return fail(result.report.issues.find(i => i.severity === 'error')?.code ?? 'WORKBENCH_GENERATE', '문서 생성 검사를 통과하지 못했습니다.');
@@ -542,15 +543,7 @@ function build(s: Session, work: Work, makeTemplate = false, library?: BlockLibr
       return fail('WORKBENCH_TEMPLATE_INCOMPLETE', '누름틀로 만들지 못한 키가 있습니다. 키 전체가 같은 서식 안에 있도록 수정하세요. 일부만 만든 파일은 저장하지 않았습니다.');
     output = compiled.output;
   }
-  if(typed&&dataset){const values=fillValues(s,work.inputItems,output,dataset,work.missing);output=values.output;filled+=values.filled;}
-  else if(twoStage&&dataset){
-    const values=generate(output,emptyTemplate(),dataset,{missing:work.missing,mode:'baseline',allowNothingApplied:true});
-    if(!values.ok||!('output' in values)){
-      if(values.report.plan.missingPaths.length)unlinked(`데이터에 없는 키 ${values.report.plan.missingPaths.length}개: ${values.report.plan.missingPaths.slice(0,20).join(', ')}`);
-      return fail(values.report.issues.find(i=>i.severity==='error')?.code??'WORKBENCH_GENERATE','입력 값을 채우지 못했습니다. 데이터 항목을 확인하세요.');
-    }
-    output=values.output;filled+=values.report.plan.actions.filter(a=>a.type==='fill').reduce((n,a)=>n+a.targets,0);
-  }
+  if(dataset){const values=fillValues(s,work.inputItems,output,dataset,work.missing);output=values.output;filled+=values.filled;}
   const outputDoc = parseDocument(openPackage(output));
   need(compareToBaseline(validateDocument(s.source), validateDocument(output)).newErrors.length === 0, 'WORKBENCH_VALIDATION');
   const paragraphs = outputDoc.sections.flatMap(section => [...walkParagraphs(section.paragraphs)]);
@@ -707,7 +700,12 @@ export function createWorkbench(library?: BlockLibrary) {
           const own = entries.slice();
           for (const { block, m } of materials) for (const f of buildBlockPreviewDocument(m.proto, m.blob).fields)
             if (!own.some(e => e.kind === f.kind && e.name.normalize('NFC') === f.name.normalize('NFC'))) entries.push({ kind: f.kind, name: f.name, where: block });
-          return { template: g2bTemplate(entries, { id: (input.id as string | undefined) ?? 't' + sha256.slice(0, 8), version: 1, name: s.name.replace(/\.hwpx$/i, ''), sha256 }, branches), skipped,
+          const template = g2bTemplate(entries, { id: (input.id as string | undefined) ?? 't' + sha256.slice(0, 8), version: 1, name: s.name.replace(/\.hwpx$/i, ''), sha256 }, branches);
+          // 추천 목록에서 제외한 {{키}}는 서식 판에 없어 Helper 2판 생성이 건마다 막힌다(엔진 PLACE_UNREGISTERED, {{}}는 기본 error, #192): 저장하지 않고 알린다
+          // shortcut: 분기점 범위 안의 제외한 {{키}}도 센다(블록으로 바뀌어 사라질 자리, 엔진 `listUnregisteredPlaces`와 같은 한계), 그런 사례가 나오면 범위 안 자리를 뺀다
+          const left = listUnregisteredPlaces(s.doc, template as unknown as StudioTemplate).filter(p => p.kind === 'placeholder');
+          if (left.length) fail('WORKBENCH_UNREGISTERED_KEY', `생성 막힘: {{키}} ${left.length}개(${namesOf([...new Set(left.map(p => p.name))])}). 추천 목록에서 제외한 {{키}}는 서식 판에 없어 Helper 생성이 막힙니다. 그 줄의 유지에 다시 체크하거나 한컴에서 그 {{키}}를 지운 뒤 저장하세요.`);
+          return { template, skipped,
             blobs: Object.fromEntries([...blobs].map(([k, v]) => [k, Buffer.from(v).toString('base64')])) };
         }
         if (path === '/api/workbench/branch-state') {

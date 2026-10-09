@@ -6,7 +6,7 @@ export function installBlockLibrary({selection, session, api, status, beforeOpen
   const body = $('#block-library-body'), title = $('#block-library-title');
   let busy = false, draft, savedFocus;
   const previews=new Map();
-  function dispose(container){for(const [box,cleanup] of previews)if(container.contains(box)){cleanup();previews.delete(box);}}
+  function dispose(container){for(const [box,cleanup] of previews)if(container.contains(box)){cleanup();previews.delete(box);box.remove();}}
   const element = (tag, text, className) => {
     const el = document.createElement(tag); if (text !== undefined) el.textContent = text;
     if (className) el.className = className; return el;
