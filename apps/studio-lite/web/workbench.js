@@ -5,6 +5,7 @@ import { createPageView, createLatest, toPagePoint } from '/packages/viewer/src/
 import {STATUS_LABEL, REL_LABEL, LABEL_MAX, isField, keptStatus, autoKey, repsOf, changedSpan, toOriginal, spanNow, contextOf, contextAround, mergeSaved, nameFromLabel, designated, rankKeys, planConfirm, dropRow, commitConfirm, linkNote, rowAria, itemOf, valueKey, linkTargets} from '/input-table.js';
 import {VALUE_TYPES, TYPE_LABEL, suggestType} from '/value-type.js';
 import { loadRhwp, openDocument, runPosition, sameParagraph } from '/packages/viewer/src/rhwp/index.ts';
+import {FLAG_WAIT, flagRequest, flagRefusal, spanLabel} from '/range-flag.js';
 
 const $ = (selector) => document.querySelector(selector);
 const state = {
@@ -53,6 +54,8 @@ function controls() {
   $('#undo').disabled=!available||!state.history.length; $('#redo').disabled=!available||!state.future.length;
   for(const button of document.querySelectorAll('[data-action]')) {
     const name=button.dataset.action;
+    // 깃발은 원문에서 누른 점이 있어야 한다(편집 글·목록에서 고른 것은 점이 없다)
+    if(name==='flagStart'||name==='flagEnd'){const point=currentPick()?.point;button.disabled=!available||!point||name==='flagEnd'&&!state.flag;button.title=!button.disabled?'':!point?'원문에서 자리를 먼저 누르세요.':'시작 깃발을 먼저 찍으세요.';continue;}
     if(name==='labelPick'){const target=labelTarget();button.disabled=!available||!target;button.textContent='참고 글 지정'+(target?' · '+(target.name.trim()||'이름 없음').slice(0,10):'');
       button.title=target?'선택한 글을 '+(target.name.trim()||'이름 없는')+' 항목의 라벨(참고 글)로 씁니다.':'입력 항목을 지정하거나 표에서 고른 뒤, 라벨로 쓸 다른 글을 고르세요.';continue;}
     button.disabled=name==='copyKey'?!available||!$('#key-select').value.trim():name==='importSelection'?!canEdit||!state.comparisonText:name==='copySelection'?!available:name==='dataDetail'?!available||!(canEdit||state.activeRecommendation?.kind==='input'):!canEdit;
@@ -169,6 +172,17 @@ function selectRow(id,options={}) {
   markEditorSelection();highlightTextRow(id);if(!options.fromPick)void showRowInSource(id);controls();return true;
 }
 function clearSelection(){picks.cancel();hideMenu();state.selection=undefined;state.chosen=undefined;state.caret=undefined;displaySourceMarks([]);$('#selection-info').textContent='';highlightTextRow(undefined);controls();}
+/** 지금 선택이 원문에서 누른(끈) 그대로이면 그 기록: 범위 끝 문단, 문단 범위, 누른 점 */
+function currentPick(){const p=state.blockPick,c=state.caret;return p&&c&&p.start===c.start&&p.end===c.end?p:undefined;}
+/** 시작·끝 깃발(#150): 첫 깃발은 지금 누른 점을 들고 기다린다. 끝 깃발은 두 점을 보내 드래그와 같은 상세로 보인다. 거절이면 첫 깃발은 그대로 */
+function startFlag(){const point=currentPick()?.point;if(!point)return;state.flag={session:state.session,start:point,row:state.chosen};displaySourceMarks(state.marks.get(state.chosen)??[]);status(FLAG_WAIT);}
+async function endFlag(){
+  const request=flagRequest(state.flag,state.session,currentPick()?.point);if(!request)return;
+  if(await selectPicked({flags:request.flags})){dropFlag();status('깃발 범위 · '+spanLabel(state.selection.span));}
+}
+function dropFlag(){if(!state.flag)return;state.flag=undefined;displaySourceMarks(state.chosen?state.marks.get(state.chosen)??[]:[]);}
+/** 원문 위 첫 깃발 표식(덧그림만): 누른 글자, 칸의 빈 곳이면 그 문단 첫 글자 */
+function flagMarks(){const f=state.flag,p=f&&(f.start.position??paragraph(f.row)?.position);return p?[{id:'flag',kind:'flag',position:p,endOffset:p.charOffset+1}]:[];}
 
 function requestOf(event) {
   const from = event.cell ? {cell: event.cell} : {position: event.hit.position};
@@ -199,34 +213,38 @@ async function selectPicked(event, options = {}) {
     clearSelection(); status('위치를 지정하려면 원본 보기로 돌아가주세요.'); return false;
   }
   const ticket = picks.begin(), session = state.session;
-  if (!event.cell && !event.hit.position) {
+  // 끝 깃발(#150)은 두 점을 `{flags}`로 보내고, 응답은 드래그와 같은 흐름으로 보인다
+  if (!event.flags && !event.cell && !event.hit.position) {
     clearSelection(); status('이 위치에서는 연결할 문단을 확인할 수 없습니다.'); return false;
   }
+  const request = event.flags ? {flags: event.flags} : requestOf(event);
   try {
-    const result = await api('select', {session, request: requestOf(event)});
+    const result = await api('select', {session, request});
     if (!picks.current(ticket) || session !== state.session) return false;
     if (!result.id || result.location.precision === 'none') {
       clearSelection();
-      status(result.location.reason === 'RANGE_PARAGRAPHS_DIFFER'
+      status(event.flags ? flagRefusal(result.location.reason) : result.location.reason === 'RANGE_PARAGRAPHS_DIFFER'
         ? '같은 본문이나 표 칸 안의 글을 선택하세요.'
-        : '이 위치에서는 연결할 문단을 확인할 수 없습니다.');
+        : '이 위치에서는 연결할 문단을 확인할 수 없습니다.', event.flags ? 'error' : '');
       return false;
     }
     state.activeRecommendation=undefined;state.selection = result.location;
-    state.marks.set(result.id, marksOf(result.location, result.id));
-    displaySourceMarks(state.marks.get(result.id));
-    selectRow(result.id, {...options, fromPick: true});
     const span=result.location.span;
     const a=span?state.paragraphs.find(r=>r.sectionIndex===span.sectionIndex&&r.path.length===span.parentPath.length+1&&r.path.at(-1)===span.from&&r.path.slice(0,-1).every((n,i)=>n===span.parentPath[i])):paragraph(result.id);
     const z=span?state.paragraphs.find(r=>r.sectionIndex===span.sectionIndex&&r.path.length===span.parentPath.length+1&&r.path.at(-1)===span.to&&r.path.slice(0,-1).every((n,i)=>n===span.parentPath[i])):a;
+    // 여러 문단 범위(드래그·깃발)는 시작부터 끝까지 문단마다 강조한다(블록 후보 강조와 같은 모양)
+    const rows=span&&a&&z?state.paragraphs.slice(state.paragraphs.indexOf(a),state.paragraphs.indexOf(z)+1):[];
+    state.marks.set(result.id, span?rows.filter(p=>p.position).map(p=>({id:p.id,kind:'selection',position:p.position,endOffset:p.text.length})):marksOf(result.location, result.id));
+    displaySourceMarks(state.marks.get(result.id));
+    selectRow(result.id, {...options, fromPick: true});
     const first=state.layout.units.find(u=>state.paragraphs.slice(u.from,u.to+1).some(r=>r.id===a?.id)),last=state.layout.units.find(u=>state.paragraphs.slice(u.from,u.to+1).some(r=>r.id===z?.id));
     if(first&&last){
       const word=paragraph(result.id)?.editable?result.location.drafts.find(d=>d.anchor?.kind==='word'&&!d.blocked)?.anchor:undefined;
       const start=first.start+(!span&&!state.edits.has(result.id)&&!first.block&&word?word.start:0),end=span?last.end:first.start+(!state.edits.has(result.id)&&!first.block&&word?word.end:first.text.length);
-      state.blockPick={start,end,from:a?.id,to:z?.id,blocked:Boolean(event.to&&!span&&(!event.hit.position||!sameParagraph(event.hit.position,event.to.position)))};
+      state.blockPick={start,end,from:a?.id,to:z?.id,span,point:request.from,blocked:Boolean(event.to&&!span&&(!event.hit.position||!sameParagraph(event.hit.position,event.to.position)))};
       state.caret={start,end};const input=$('#document-editor');input.focus({preventScroll:true});input.setSelectionRange(start,end);markEditorSelection();controls();
     }
-    renderSelectionDetail();showRemote();return true;
+    renderSelectionDetail(true);showRemote();return true;
   } catch (error) {
     if (picks.current(ticket) && session === state.session) { clearSelection(); status(errorMessage(error), 'error'); }
     return false;
@@ -258,6 +276,7 @@ async function showRowInSource(id) {
 }
 function mountDocument(doc, mode) {
   state.view?.destroy(); state.viewMode = mode;
+  if (mode !== 'source') state.flag = undefined;
   state.view = createPageView({
     container: $('#pages'), doc, scale: Number($('#scale').value),
     onPick: (event) => { hideMenu(); void selectPicked(event); },
@@ -337,7 +356,7 @@ async function installWorkspace(result, ticket) {
   state.name = result.name; state.openTicket = ticket; state.paragraphs = result.paragraphs ?? [];
   state.edits = new Map((result.edits ?? []).map((item) => [item.id, item.text]));
   state.headings = new Map((result.headings ?? []).map((item) => [item.id, item.level]));
-  state.blockPick = undefined;
+  state.blockPick = undefined; state.flag = undefined;
   state.typed={...(result.samples??{})};state.g2bTemplate=undefined;$('#g2b-template').textContent='서식 판 없음';
   state.outline=result.outline??[];state.recommendations=[];state.detailDrafts.clear();state.detailId=undefined;state.reviewHistory=[];state.currentItem=undefined;closeTable();
   state.blocks = (result.blocks ?? []).map((item) => ({...item}));
@@ -517,6 +536,8 @@ function action(name) {
     if(name==='labelPick'){pickLabel();return;}
     if(name==='branchDetail')return;
     if(name==='saveBlock'){void blockLibraryUI.begin();return;}
+    if(name==='flagStart'){startFlag();return;}
+    if(name==='flagEnd'){void endFlag();return;}
     if(name==='copyKey'){void copyKey();return;}
     if(name==='copySelection'){const c=state.caret;void navigator.clipboard.writeText(state.comparisonText||(c?state.layout.text.slice(c.start,c.end):'')).then(()=>status('복사했습니다.')).catch(()=>status('브라우저가 복사를 허용하지 않았습니다. Ctrl+C를 사용하세요.','error'));return;}
     if(name==='importSelection'){replaceSelected(state.comparisonText);if(state.kind==='text')renderTextDocument('source');return;}
@@ -661,7 +682,7 @@ document.addEventListener('pointerdown', (event) => {
 });
 document.addEventListener('keydown', (event) => {
   if ($('#block-library-dialog').open) return;
-  if (event.key === 'Escape') { hideMenu(); closeMenus(); clearSelection(); }
+  if (event.key === 'Escape') { hideMenu(); closeMenus(); clearSelection(); if (state.flag) { dropFlag(); status('시작 깃발을 취소했습니다.'); } }
   if (event.ctrlKey || event.metaKey) {
     if (event.key.toLowerCase() === 's') { event.preventDefault(); void saveWork(); }
     else if (event.key === 'Enter') { event.preventDefault(); void generate(); }
@@ -896,7 +917,7 @@ function renderSelectionDetail(force=false){
   const row=paragraph(state.chosen);$('#detail-content').dataset.kind=state.activeRecommendation?.kind??'input';$('#detail-form').hidden=!row;$('#confirm-input').hidden=state.activeRecommendation?.kind==='block';
   if(!row){$('#detail-title').textContent='선택 상세';$('#detail-location').textContent='먼저 부분을 고르세요';$('#detail-excerpt').textContent='';return;}
   const detailId=row.id+':'+state.caret?.start+':'+state.caret?.end;if(state.detailId===detailId&&!force)return;
-  state.detailId=detailId;const h=headingOf(row.id),active=state.activeRecommendation?.row===row.id?state.activeRecommendation:undefined;$('#detail-title').textContent='입력 항목 편집';$('#detail-location').textContent=(state.kind==='text'?'줄 '+(state.paragraphs.indexOf(row)+1):'쪽 미확인')+' · '+(h?.name??'문서')+(active?.kind==='input'?' · '+STATUS_LABEL[active.status]:'');$('#detail-excerpt').textContent=(state.caret?state.layout.text.slice(state.caret.start,state.caret.end):row.text).slice(0,160);$('#confirm-input').disabled=!(row.editable||active?.kind==='input'&&active.origin!=='user')||state.busy;
+  state.detailId=detailId;const h=headingOf(row.id),active=state.activeRecommendation?.row===row.id?state.activeRecommendation:undefined;$('#detail-title').textContent='입력 항목 편집';$('#detail-location').textContent=(state.kind==='text'?'줄 '+(state.paragraphs.indexOf(row)+1):'쪽 미확인')+' · '+(h?.name??'문서')+(currentPick()?.span?' · '+spanLabel(currentPick().span):'')+(active?.kind==='input'?' · '+STATUS_LABEL[active.status]:'');$('#detail-excerpt').textContent=(state.caret?state.layout.text.slice(state.caret.start,state.caret.end):row.text).slice(0,160);$('#confirm-input').disabled=!(row.editable||active?.kind==='input'&&active.origin!=='user')||state.busy;
   const draft=state.detailDrafts.get(row.id)??{name:active?.name??'',key:active?.key??''};$('#detail-name').value=draft.name;
   // 데이터 키 목록(쓸 수 있는 경로). 항목에 이미 있는 키가 데이터에 없으면 그 키도 고를 수 있게 둔다
   const select=$('#detail-key');select.replaceChildren();const empty=uiNode('option',state.keys.length?'연결할 데이터 항목 선택':'데이터를 먼저 올리세요');empty.value='';select.append(empty);const paths=rankedKeys(active?.kind==='input'?active:undefined);for(const key of draft.key&&!paths.includes(draft.key)?[draft.key,...paths]:paths){const option=uiNode('option',key);option.value=key;select.append(option);}select.value=draft.key;$('#detail-value').textContent=linkNote(active?.kind==='input'?active.status:undefined,draft.key);
@@ -1008,7 +1029,7 @@ async function designateOnly(name){
 /** 꼬리표·강조: 지정·확정한 항목. 강조는 원문 글자 구간이 맞을 때만 그린다(글이 다르면 그리지 않는 뷰어 표식) */
 const tagged=()=>inputItems().filter(r=>r.status==='confirmed'||r.status==='designated');
 function itemMarks(){return tagged().flatMap(r=>{const row=paragraph(r.row),p=row?.position,text=row?.text.slice(r.start,r.end)??'';if(!p||!text||text.includes('\uFFFC'))return [];const at=p.charOffset??0;return [{id:'item:'+r.id,kind:r.status==='confirmed'?'chosen':'range',position:{...p,charOffset:at+r.start},endOffset:at+r.end,text}];});}
-function displaySourceMarks(marks=[]){state.view?.setMarks([...itemMarks(),...marks]);renderSourceTags();}
+function displaySourceMarks(marks=[]){state.view?.setMarks([...itemMarks(),...flagMarks(),...marks]);renderSourceTags();}
 function renderSourceTags(){
   for(const el of $('#pages').querySelectorAll('.source-tag,.confirmed-overlay'))el.remove();
   if(state.kind!=='hwpx'||state.viewMode!=='source'||!state.sourceDoc)return;const scale=Number($('#scale').value);
