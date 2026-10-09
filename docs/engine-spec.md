@@ -52,7 +52,7 @@ type Issue = { severity: "error" | "warning"; code: string; message: string; whe
 
 **2판 템플릿 계약의 영역과 코드** (8.8, 2026-10-04. 근거: 이슈 #4 설계안(독립 설계자) + 총괄 임시 선택. 전부 **[계약]**이고 **[미구현]**이다)
 
-영역 4개를 더한다: `SEL`(선택), `MIG`(lite 이관), `PROTO`(블록 원형), `PLACE`(값 자리). 종류가 "경고"·"보고"가 아니면 오류다. 뜻과 발생 지점은 정본 열의 소절이 정한다. `MIG_*`는 lite 앱의 이관 코드(Codex)가 내고, 이 명세는 이름과 뜻을 소유한다.
+영역 4개를 더한다: `SEL`(선택), `MIG`(lite 이관), `PROTO`(블록 원형), `PLACE`(값 자리). #196에서 `RENUMBER`(참조 번호 재정렬)를 더했다. 종류가 "경고"·"보고"가 아니면 오류다. 뜻과 발생 지점은 정본 열의 소절이 정한다. `MIG_*`는 lite 앱의 이관 코드(Codex)가 내고, 이 명세는 이름과 뜻을 소유한다.
 
 | 영역 | 코드 | 종류 | 뜻 | 정본 |
 | --- | --- | --- | --- | --- |
@@ -69,6 +69,7 @@ type Issue = { severity: "error" | "warning"; code: string; message: string; whe
 | `TPL` | `TPL_NESTED` | 오류 | 중첩 슬롯(`parent`가 null이 아님)으로 생성하려 했다(예약) | 8.8.6 |
 | `TPL` | `TPL_PROTO_MISMATCH` | 오류 | 블록 내용이 고정한 원형 판의 내용과 다르다 | 8.8.7 |
 | `TPL` | `TPL_SOURCE_MISMATCH` | 오류 | 생성 입력 원본의 해시가 `source.sha256`과 다르다 | 8.8.12 |
+| `TPL` | `TPL_EXCLUSIVE` | 오류 | 배타로 선언한 두 슬롯이 같은 값의 겹치는 `eq`·`in` 조건 값으로 함께 조건 블록을 고르게 되어 있다(#196) | 8.8.8 |
 | `DATA` | `DATA_ALIAS_CONFLICT` | 오류 | 한 값의 키·별칭 둘 이상에 값이 있다 | 8.8.4 |
 | `DATA` | `DATA_FORMAT` | 오류 | `money` 값이 정수로 읽히지 않는다 | 8.8.4 |
 | `ANCHOR` | `ANCHOR_CHANGED` | 오류 | `range`의 양 끝은 찾았으나 안쪽 해시가 다르다 | 8.8.13 |
@@ -79,6 +80,8 @@ type Issue = { severity: "error" | "warning"; code: string; message: string; whe
 | `FILL` | `FILL_SKIPPED` | 오류 | 2단계(값)에서 건너뜀이 1건이라도 있다 | 8.8.12 |
 | `SEL` | `SEL_UNDECIDED` | 오류 | 슬롯 선택이 정해지지 않았다(동률·후보 없음·조건 값 없음·확정 필요) | 8.8.8 |
 | `SEL` | `SEL_RECHECK` | 오류 | 저장한 선택을 다시 확인해야 한다(블록 없어짐·내용 변경·상위 변경) | 8.8.8 |
+| `SEL` | `SEL_EXCLUSIVE` | 오류 | 배타로 선언한 두 슬롯이 이 업무 건에서 함께 조건 블록을 골랐다(#196) | 8.8.8 |
+| `RENUMBER` | `RENUMBER_UNMATCHED` | 경고 | 참조 번호 재정렬에서 대응하는 대상이 없는 참조를 그대로 두었다(꼴·번호마다 건수, #196) | 8.8.12 |
 | `PROTO` | `PROTO_UNBOUND_KEY` | 오류 | 원형의 키 가운데 그 템플릿에 자리·연결이 없는 것이 있어 전파를 막는다 | 8.8.7 |
 | `MIG` | `MIG_VERSION` | 오류 | lite 프로젝트 `version`이 1이 아니다 | 8.8.14 |
 | `MIG` | `MIG_SCHEMA` | 오류 | lite `checkProject`가 실패한다 | 8.8.14 |
@@ -1174,6 +1177,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | `rules[]` | 1판 규칙 | 선택 | 승계 전용. `slots`·`places`와 함께 쓰면 `TPL_MIXED_RULES`(8.8.11) |
 | `options` | 아래 표 | 선택 | |
 | `origin` | 이관 출처 `{ kind: "lite", revision }` | 선택 | 8.8.14 |
+| `exclusive` | 상호 배타 선언 `[[슬롯 id, 슬롯 id], …]`(#196) | 선택 | 두 슬롯이 함께 조건 있는 블록을 고를 수 없다(8.8.8) |
 
 필수 배열은 비어 있어도 된다. 모르는 키는 `TPL_FIELD`다.
 
@@ -1186,6 +1190,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | `requireConfirm` | true·false | false | true이면 `default`·`fallback` 선택도 사용자 확정 전에는 막는다(8.8.8) |
 | `unwrapFilled` | true·false | false | 채운 누름틀·메일머지 필드를 풀어 값 글만 남긴다(8.8.12) |
 | `refreshPreview` | true·false | false | 결과의 `Preview/PrvText.txt`를 본문 글로 다시 쓴다(8.8.12) |
+| `renumber` | `{ patterns: [글자 꼴, …] }`(예: `["붙임", "별지", "표"]`) | 없음(끔) | 참조 번호 자동 재정렬(8.8.12, #196). 꼴은 1~10자이고 숫자·공백·제어 문자가 없으며 겹치지 않는다. hwpx만(md 템플릿은 `TPL_OPTIONS`) |
 
 **정규 JSON**: 키는 코드 포인트순 정렬, 공백·줄바꿈 없음, UTF-8, 배열은 순서 유지, 끝 줄바꿈 없음. 저장 판의 식별과 `case.template.sha256`·원장의 템플릿 해시는 정규 JSON의 sha256(소문자 16진 64자)이다. 읽기 → 정규 쓰기 → 읽기가 같아야 한다(W1).
 
@@ -1385,19 +1390,23 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
    - 조건 있는 블록 가운데 참인 것이 있으면 최고 `priority` 하나가 `default`다. 최고 우선순위가 동률이면 `undecided`(`reason: tie`).
    - 참인 조건 블록이 없으면 조건 없는 블록이 하나일 때 `fallback`이다. 둘 이상이면 `undecided`(`reason: tie`), 없으면 `undecided`(`reason: noCandidate`).
 4. `options.requireConfirm`이 true이면 `default`·`fallback`은 사용자가 확정(`confirmed`로 저장)하기 전까지 막는다(`SEL_UNDECIDED`, `reason: needConfirm`).
+5. 배타 선언(`exclusive`, 아래 상호 배타 규칙): 1~4가 끝난 뒤 선언한 슬롯 쌍마다, 두 슬롯의 선택이 모두 블록을 가진 상태(`manual`·`confirmed`·`default`·`fallback`)이고 두 블록이 모두 조건(`when`) 있는 블록이면 두 슬롯 다 막는다(`SEL_EXCLUSIVE`, `reason: exclusive`). 상태는 그대로 두고(상태 7종에 더하지 않는다) `blocked`·`reason`을 바꾸며 메시지에 짝 슬롯과 그 블록을 더한다. 기준(`manual` 포함)과 무관하고, 확정을 기다리던 선택(`needConfirm`)도 배타 사유로 바뀐다. 판정하지 못한 슬롯(`undecided`·`recheck`·`inactive`)은 짝을 막지 않는다.
 
 세부(#29 구현 확정):
 - 블록의 `when`이 참조하는 값이 `rejected`(형식·제어 문자 오류)이면 `undecided`(`reason: valueRejected`). `valueMissing`·`valueRejected`·`tie`는 관련 블록을 `candidates`에 적는다.
 - 저장 선택의 블록이 있어도 다른 슬롯 소속이면 `recheck`(`blockMissing`).
 - `parentChanged`는 상위 슬롯이 그 블록을 저장 선택으로 가진 채 `recheck`이고 하위에도 저장 선택이 있을 때다. 상위가 다른 블록을 고르면 하위는 `inactive`다. 확정을 기다리는 `default`·`fallback` 상위는 하위 평가에서 선택된 것으로 본다.
-- 결과 `SlotSelection`에 막는 코드 `blocked`(`SEL_UNDECIDED`·`SEL_RECHECK`)와 사람이 읽는 `message`(값 원문 없음)가 있다(8.8.15).
+- 결과 `SlotSelection`에 막는 코드 `blocked`(`SEL_UNDECIDED`·`SEL_RECHECK`·`SEL_EXCLUSIVE`)와 사람이 읽는 `message`(값 원문 없음)가 있다(8.8.15).
 
 - 막는 상태는 슬롯마다 `SEL_*` 오류로 모아서 낸다. 첫 슬롯에서 멈추지 않는다. 생성은 출력이 없다.
 - `manual`·`confirmed`는 데이터가 바뀌어도 바꾸지 않는다. 사용자가 다시 고르거나 확정하면 `selections`가 새 내용 해시로 갱신되어 `recheck`가 풀린다.
 - 고르지 않은 블록의 글·누름틀은 출력에 없다(8.8.12).
 - lite의 `selectBlocks`처럼 동률·조건 값 누락을 묻지 않고 고르는 동작은 2판에 없다. 이관 때의 차이는 `MIG_POLICY`다(8.8.14).
 
-계약 예약(사용자 결정 2026-10-02·10-07): 참조 번호 자동 재정렬과 상호 배타 규칙은 경우 표 계약에 들어간다(#63·#58). 원문 요지([진행 방향](roadmap.md) 2차): (1) 조건으로 블록이 빠져도 본문의 "[붙임 2]" 같은 번호와 실제 순번이 맞게 한다. (2) 함께 참일 수 없는 조건을 선언하고 어기면 생성 전에 막는다. 지금 2판의 `undecided`(최고 우선순위 동률이면 막음)는 (2)와 닮았지만 조건 사이의 배타 선언이 아니다. 세부(선언 위치·번호 표기 인식·오류 코드)는 미정이다.
+**상호 배타 규칙과 참조 번호 재정렬** (사용자 결정 2026-10-02·10-07, 요구 8.9-12, #63·#58. **[계약]** **[구현 #196]**, 검증은 [검증 기준](validation.md) 55절). 원문 요지([진행 방향](roadmap.md) 2차): (1) 조건으로 블록이 빠져도 본문의 "[붙임 2]" 같은 번호와 실제 순번이 맞게 한다. (2) 함께 참일 수 없는 조건을 선언하고 어기면 생성 전에 막는다. 선언 위치·인식 꼴·코드는 #196의 총괄 임시 선택이다.
+
+- (2) 상호 배타: 템플릿 최상위 `exclusive: [[슬롯 id, 슬롯 id], …]`(선택, 8.8.2). 뜻은 "두 슬롯이 한 업무 건에서 함께 조건 있는 블록(경우 표의 기본 블록이 아닌 것)을 고를 수 없다"이다. 읽기(8.8.10)는 두 슬롯이 있는지(`TPL_REF`), 서로 다른지(`TPL_FIELD`)를 보고, 두 슬롯의 블록 가운데 같은 값에 대한 단일 `eq`·`in` 조건끼리 값이 겹치면(같음은 `evaluateCondition`과 같다) 그 값 하나로 두 슬롯이 함께 조건 블록을 고르므로 `TPL_EXCLUSIVE`로 거절한다. 그 밖의 꼴(`all`·`any`·`not`·크기 비교·서로 다른 값)은 읽기에서 판정하지 않고 평가(위 5번)가 실제 업무 건에서 막는다. 슬롯 안의 동률(`undecided`, `tie`)은 이와 별개로 그대로다.
+- (1) 참조 번호 재정렬: 생성 단계라 옵션 `renumber`(8.8.2)와 8.8.12의 "참조 번호 재정렬"이 정본이다.
 
 #### 8.8.9 이번 건 `case@1`
 
@@ -1442,7 +1451,10 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | id 형식 오류, id 중복(종류 안·종류 사이) | `TPL_ID` |
 | 표시 이름 중복(값끼리·슬롯끼리) | `TPL_NAME_DUP` |
 | 쓰임에 맞지 않는 앵커 종류·필드(예: `word` 자리가 `clickHere` 앵커를 가리킴, 슬롯 앵커가 `cell`, md에 `mailMerge`) | `TPL_ANCHOR` |
-| 끊긴 참조: `place.value`·`place.anchor`, `slot.anchors`, `block.slot`, 조건 경로(값 id가 아님), `binding.value`, 이번 건의 슬롯·블록·값 id, 다른 템플릿을 가리키는 이번 건 | `TPL_REF` |
+| 끊긴 참조: `place.value`·`place.anchor`, `slot.anchors`, `block.slot`, 조건 경로(값 id가 아님), `binding.value`, 배타 선언(`exclusive`)의 슬롯, 이번 건의 슬롯·블록·값 id, 다른 템플릿을 가리키는 이번 건 | `TPL_REF` |
+| 배타 선언(`exclusive`)이 배열이 아니다, 항목이 슬롯 id 두 개의 배열이 아니다, 두 슬롯이 같다(#196) | `TPL_FIELD` |
+| 배타로 선언한 두 슬롯의 블록이 같은 값에 대한 단일 `eq`·`in` 조건 값이 겹쳐 함께 골라진다(8.8.8, #196) | `TPL_EXCLUSIVE` |
+| `options.renumber`가 `{ patterns }`가 아니다, 꼴이 1~10자가 아니거나 숫자·공백·제어 문자가 있다, 꼴이 겹치거나 없다, md 템플릿에 썼다(8.8.12, #196) | `TPL_OPTIONS` |
 | 순환: `slot.parent` → 블록 → 슬롯 …, 자기 부모 | `TPL_CYCLE` |
 | 한 키(별칭 포함) 또는 같은 `path`를 두 값에 연결, 같은 종류·같은 키의 자리를 다른 값에 연결(`key`와 `path`는 다른 이름 공간이라 교차 검사하지 않는다) | `TPL_KEY_CONFLICT` |
 | 두 슬롯의 앵커가 겹친다 | `TPL_CONFLICT` |
@@ -1495,7 +1507,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 3. 값: `bindValues`(8.8.4). 글이 확정된다.
 4. 선택: `selectSlots`(8.8.8). 슬롯이 하나라도 막으면 슬롯마다 `SEL_*`를 모아 내고 끝낸다.
 5. 앵커: `checkAnchors(doc, t)`(8.8.13)를 불러 unverified는 `ANCHOR_UNVERIFIED` 경고로 남기고, 원본 해시가 같으면 나올 수 없는 상태(relocated·changed·ambiguous·notFound)가 하나라도 있으면 템플릿이 손상된 것이므로 그 코드들을 모아 막는다(출력 없음). 보고서에 앵커 상태를 담는다. 슬롯 앵커는 1단계 `generate`가, 2단계 자리 앵커는 `resolveAnchors`가 다시 푼다(같은 판정이라 중복 경고는 내지 않는다).
-6. 구조 → 값 두 단계 생성(아래 표).
+6. 구조 → 값 두 단계 생성(아래 표). `options.renumber`를 켰으면 1단계 뒤·채움 전에 조립본에서 참조 번호 재정렬을 계획하고 2단계에서 함께 적용한다(아래 "참조 번호 재정렬").
 7. 후처리(켠 것만)와 끝 판정.
 
 **컴파일 규칙** (lite에서 검증된 2단계를 엔진으로)
@@ -1508,6 +1520,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | `word`·`line`·`cell` 자리 | — | 1단계 이동표(7.10)로 주소를 옮긴 뒤 `fill { text }`. 교체 범위 안이면 `dropped`(`PLACE_COVERED`). `cell`은 표를 담은 문단을 옮긴 뒤 그 문단 안 몇 번째 표인지로 서수를 고정하고 지문(`print`)은 쓰지 않는다(첫 행에 슬롯이 있으면 `head`가 바뀐다). 1단계는 슬롯 교체·삭제만 하므로 행 삭제·반복은 생기지 않는다 |
 | `clickHere`·`mailMerge` 자리 | — | 조립본에서 이름·키(NFC 비교)로 다시 열거한다(조각 때문에 순번이 바뀐다). `occurrence`는 이동표로 옮겨 찾고, 원본에 그 순번이 없으면 `ANCHOR_NOT_FOUND`, 그 필드가 교체 범위에 덮였으면 `dropped`(`PLACE_COVERED`) |
 | `placeholder` 자리 | — | 조립본의 `{{ 키 }}`마다 `word` 앵커를 만들고 `fill { text }` |
+| 참조 번호(`options.renumber`, #196) | — | 조립본(채우기 전)의 문단 글로 `planRenumber`를 불러 바꿀 숫자마다 `word` 앵커를 만들고 `fill { text: 새 번호 }`(숫자만, 서식 그대로). 대응 없는 참조는 `RENUMBER_UNMATCHED` 경고 |
 | 등록되지 않은 `{{ }}` | — | `unregistered: error`이면 `PLACE_UNREGISTERED`, 출력 없음. `keep`이면 경고를 남기고 그대로 둔다 |
 | 등록되지 않은 누름틀·메일머지(#134) | — | 조립본의 이름 있는 누름틀·키 있는 메일머지 중 어느 `clickHere`·`mailMerge` 자리도 맡지 않은 것을 종류·이름별로 센다. `unregistered: error`라고 적었으면 `PLACE_UNREGISTERED`, 출력 없음. 생략했거나 `keep`이면 경고를 남기고 그대로 둔다 |
 | 값 | 생성 전에 `bindValues`로 글 확정(형식·누락 정책·제어 문자·`valueEdits`) | 규칙은 `{text}`만 쓰고(money·percent는 자리 바로 뒤 글이 단위로 시작하면 단위를 뗀 글, 8.8.4), 데이터 묶음은 비우고 `missing: "keep"`. 값의 `issue`(`DATA_MISSING`·`DATA_FORMAT`·`DATA_NOT_SCALAR`·`DATA_ALIAS_CONFLICT`·`VALUE_CONTROL_CHAR`)는 그 값을 쓰는 자리가 2단계 대상으로 1곳 이상 있을 때만 그 코드로 막는다(덮인 자리·고르지 않은 `where` 블록의 자리는 막지 않는다) |
@@ -1525,6 +1538,15 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 - `source.kind`가 `md`이면 텍스트 어댑터(9절)로 같은 순서를 따른다. 슬롯 앵커는 표식 줄 `line`, 블록은 `text`(조각이면 `TPL_FIELD`)다. 결과는 `{ ok, output?(문자열), report }`이고 원장은 없다(9.1). `source.sha256`은 입력 문자열의 UTF-8 바이트(BOM 포함) 해시다. UTF-8이 아니면 `TEXT_ENCODING`.
 - 원본 해시: `source.sha256`은 원본 문서 바이트의 sha256(소문자 16진 64자)이다. 8.7의 "대조하지 않는다"는 1판의 한계이고 2판은 위 1번에서 대조한다.
 - 같은 입력으로 두 번 생성하면 출력과 원장이 바이트까지 같다. CLI(8.4)와 앱의 결과가 같아야 한다.
+
+**참조 번호 재정렬** (사용자 결정 2026-10-02, 요구 8.9-12, 8.8.8 끝. **[계약]** **[구현 #196]**, `src/template/renumber.ts`의 `planRenumber`와 `generate-studio.ts`. 검증은 [검증 기준](validation.md) 55절). 조건으로 블록이 빠지거나 순서가 바뀌어도 "[붙임 2]" 같은 번호가 실제 순번과 맞게 한다. `options.renumber`(8.8.2)가 있을 때만 하고 기본은 끔이다(없으면 출력 바이트가 이 기능 전과 같다).
+
+- 때: 1단계(구조) 뒤, 2단계(값) 채움 전. 조립본의 모든 문단(구역 순서, 표 칸·머리말 등 하위 목록 포함, `walkParagraphs` 순서) 글로 계획하므로 채우는 값 안의 글은 보지 않는다.
+- 꼴 P(`patterns`의 글)마다 따로 센다. 대상은 문단 첫머리(공백·개체 자리 글자 U+FFFC 뒤)의 `[P N]`·`<P N>`·`P N.`이고 바로 뒤가 공백이거나 글 끝인 것(문단마다 하나)이다. 참조는 그 밖의 모든 `P N`이다: 앞이 글자·숫자가 아니고(`별표 1`은 `표`가 아님), 숫자 뒤가 글자·숫자가 아니며(`표 3개`·`붙임1을`은 아님), `.`·`-`와 숫자가 이어지지 않는다(`표 1.2`·`표 1-1`은 아님). 괄호·꺾쇠 모양은 묻지 않는다(`(붙임 2 참조)`도 참조). P와 숫자 사이 공백(스페이스·NBSP·전각)은 있어도 없어도 된다. 숫자는 1~9자리 ASCII다.
+- 대상의 번호를 처음 나온 순서로 1부터 다시 매긴다. 같은 번호의 대상이 여럿이면(목록 `붙임 1.`과 쪽 제목 `[붙임 1]`) 한 번호로 본다. 대상과 참조를 그 대응으로 바꾸고, 바뀌는 숫자만 고친다. 대응하는 대상이 없는 참조는 그대로 두고 꼴·번호마다 경고 `RENUMBER_UNMATCHED`(where `renumber:P`, 메시지에 꼴·번호·건수)를 낸다.
+- 숫자 글자만 `word` 앵커의 `fill`로 바꾸므로 문단·글자 모양은 그대로다. 누름틀·메일머지 표시 구간 안과 `{{ }}` 안의 번호는 바꾸지 않는다(그 자리가 맡는다). 바꿀 숫자가 낱말·줄·칸 자리와 겹치면 2단계가 `TPL_CONFLICT`로 막는다(위 자리끼리 겹침과 같다). 숫자가 글자 모양이 다른 run에 걸치면 `FILL_SKIPPED`다.
+- md 템플릿에는 쓸 수 없다(읽기 `TPL_OPTIONS`).
+- 한계: 대상을 문단 첫머리의 세 꼴로만 알아본다(`[붙임1]서약서`처럼 뒤에 공백 없이 글이 붙은 제목, `1. 서약서`처럼 꼴 없는 목록 줄은 대상이 아니다). 문단 첫머리의 `[붙임 2]를 …`는 참조다. 같은 대상이 빠지면 그것을 가리키던 참조는 경고만 하고 남는다(고를 블록 쪽에서 참조 글도 함께 빼야 한다).
 
 #### 8.8.13 `checkAnchors`와 재지정
 
@@ -1722,7 +1744,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | 열 이름(돌려줄 때) | `missingFields`·`invalidFields`·`undecided[].fields`에는 요청이 보낸 이름(`key`·별칭 가운데), 보내지 않았으면 연결의 첫 이름 |
 | `missingFields` | 자리가 쓰는 값만(블록에 묶인 자리는 그 블록이 골라졌을 때만). 조건에만 쓰는 값이 비면 `UNDECIDED`(`reason: valueMissing`, `fields`) |
 | 건별 판정 순서 | `PROFILE_INVALID`(프로필 준비) → `PROFILE_MAPPING_CONFLICT` → `INVALID_FIELDS` → `MISSING_FIELDS` → `UNDECIDED` → 엔진 생성 → `OUTPUT_ERROR`. 결과에는 이긴 코드의 자세한 목록 하나만 담는다. `status`는 입력 필요 3종이 `needs-input`, 나머지가 `error` |
-| 분기 이름 | `selections`의 키와 `undecided[].slot`은 슬롯 이름(NFC), 값과 `candidates[].block`은 블록 id, `label`은 블록 이름. 후보: `tie`·`valueMissing`·`valueRejected`는 엔진이 든 블록, `needConfirm`은 계산된 블록, `noCandidate`·없는 블록이나 다른 슬롯 블록을 고른 것(`blockMissing`)은 그 슬롯의 모든 블록 |
+| 분기 이름 | `selections`의 키와 `undecided[].slot`은 슬롯 이름(NFC), 값과 `candidates[].block`은 블록 id, `label`은 블록 이름. 후보: `tie`·`valueMissing`·`valueRejected`는 엔진이 든 블록, `needConfirm`은 계산된 블록, `noCandidate`·없는 블록이나 다른 슬롯 블록을 고른 것(`blockMissing`)·배타 위반(`exclusive`, #196)은 그 슬롯의 모든 블록. `exclusive`의 `fields`는 그 슬롯이 고른 조건 블록이 쓰는 결정 값의 열 |
 | 건별 경고 | `TYPE_MISMATCH`(서식 타입과 요청 타입이 다름. 요청의 모든 건에), `ALLOW_EMPTY_UNUSED`(서식이 안 쓰는 열), `SELECTION_UNKNOWN_SLOT`(서식에 없는 분기 이름. 무시), `PLACE_UNREGISTERED`(#134. 성공 건(dryRun 포함)의 엔진 경고 8.8.12를 그대로: 서식 자리가 맡지 않은 누름틀·메일머지 이름마다 하나, `field`는 이름, 메시지에 종류·이름·곳 수. 최상위 `warnings`에는 내지 않는다) |
 | 성공 건 | `message` 없음. `dryRun`은 `path`·`reused`만 빠지고, 라벨 사전도 바꾸지 않는다 |
 | 재시도 | 경로를 기록한 건(성공, 저장 실패)만 파일을 확인한다: 해시가 같으면 `reused: true`, 없으면 기록된 판으로 같은 경로에 다시 만들고, 다른 파일이 있으면 덮어쓰지 않고 `OUTPUT_ERROR`. 입력 필요·생성 실패 건은 같은 값·같은 판이라 기록한 결과를 그대로 돌려준다. 프로필을 준비하지 못한 요청(`PROFILE_INVALID`)은 기록하지 않는다(Studio에서 고친 뒤 같은 번호로 다시 보낼 수 있다). 재시도는 라벨 사전을 바꾸지 않는다 |
@@ -1731,7 +1753,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | Studio 화면 전용 API | Origin이 있어야 한다(Helper·명령줄은 403). `POST /api/g2b/templates { template, source(base64), blobs?: { sha256: base64 } }`: 2판·hwpx 서식만, 원본·조각 해시 대조, 저장한 판은 바꾸지 않음(다른 내용이면 409 `REQUEST_CONFLICT`) → `{ template: { id, version, name } }`. `POST /api/g2b/profiles { id, label, templateId, version, outputDirectory, fileName? }`(`templateId`가 있으면 2판 프로필, 없는 판이면 400 `PROFILE_INVALID`). `fileName`을 생략하면 같은 id에 저장된 규칙을 유지한다(화면의 "다시 확인", #149). `GET /api/g2b/profiles`는 2판 프로필을 계약 꼴로, 1판 프로필은 저장한 꼴 그대로 보인다. 2판 요청이 1판 프로필을 가리키면 건마다 `PROFILE_INVALID`. `POST /api/g2b/profiles/delete { id }`(Origin 필수, #173) → `{ deleted }`: 프로필만 지우고(없는 id는 `false`, 틀린 id는 400 `INVALID_REQUEST`) 서식 판·끝난 요청 기록은 그대로 둔다 |
 | 저장(SQLite, 템플릿 저장소 #25 전의 자리) | `g2b_template(id, version, document=정규 JSON)`, `g2b_blob(sha256, bytes=원본·조각)`, `g2b2_request(request_id, fingerprint, template_id, template_version)`, `g2b2_item(request_id, item_index, status, code, path, sha256, result)`, `g2b_label_helper(document)`. 프로필은 1판과 같은 `g2b_profile`. 값·만든 문서 바이트는 어디에도 없다. Studio 학습 층은 아직 저장이 없다(#147·#148) |
 
-엔진 코드 → 창구 이름(위 계약 줄에 더함): `DATA_ALIAS_CONFLICT` → `PROFILE_MAPPING_CONFLICT`(같은 행이면 다른 값 오류보다 먼저). `SEL_RECHECK`·`PLACE_UNREGISTERED`·`TPL_*`(`TPL_SOURCE_MISMATCH`·`TPL_FRAGMENT_MISSING`·`TPL_CONFLICT` 등)·`ANCHOR_*`·`FRAG_*` → `TEMPLATE_RECHECK`. 그 밖(`GATE_*`·`FILL_*`·문서를 열 수 없음 등) → `GENERATION_FAILED`. 메시지에는 옮기기 전 엔진 코드를 괄호로 적는다(값 원문 없음).
+엔진 코드 → 창구 이름(위 계약 줄에 더함): `DATA_ALIAS_CONFLICT` → `PROFILE_MAPPING_CONFLICT`(같은 행이면 다른 값 오류보다 먼저). `SEL_EXCLUSIVE`(배타 위반, 8.8.8, #196) → `UNDECIDED`(막힌 두 슬롯마다 `reason: exclusive`, Helper가 `selections`로 한쪽을 기본 블록으로 고르면 풀린다). `SEL_RECHECK`·`PLACE_UNREGISTERED`·`TPL_*`(`TPL_SOURCE_MISMATCH`·`TPL_FRAGMENT_MISSING`·`TPL_CONFLICT` 등)·`ANCHOR_*`·`FRAG_*` → `TEMPLATE_RECHECK`. 그 밖(`GATE_*`·`FILL_*`·문서를 열 수 없음 등) → `GENERATION_FAILED`. 메시지에는 옮기기 전 엔진 코드를 괄호로 적는다(값 원문 없음).
 
 **1판 다리(현재 구현, 위 ⑤ 뒤 한 번에 제거 #133)**: `apps/studio-lite/src/g2b.ts`·`src/server.ts`, 2026-10-03 구현. 2판 구현 전까지만 동작하고 병행 기간 없이 없앤다.
 
@@ -1757,7 +1779,8 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | `writeStudioTemplate`, `writeCase`, `writeBlockProto` | `src/template/` | 정규 JSON 문자열(8.8.2). 해시와 저장의 기준 |
 | `bindValues(t, record, case, opts)` | `src/template/` | 연결·별칭·형식·`valueEdits` → 값 표(상태 포함) |
 | `readTypedValue(format, raw, display?)`, `valueUnit(format, display?)`, `placeText(text, unit, after)`, `VALUE_FORMATS` | `src/template/value-format.ts` | 8.8.4(#131). 원래 값 하나를 타입 규칙으로 읽어 표시 글·정규 꼴·조건용 수(실패면 `DATA_FORMAT`·`DATA_NOT_SCALAR`와 사유), 값의 단위, 자리 바로 뒤 글에 따른 넣을 글. 형식과 무관한 순수 함수 |
-| `selectSlots(t, values, case)` | `src/template/` | 8.8.8의 상태 판정. `evaluateCondition` 재사용 |
+| `selectSlots(t, values, case)` | `src/template/` | 8.8.8의 상태 판정. `evaluateCondition` 재사용. 배타 선언(`exclusive`)을 어기면 두 슬롯에 `SEL_EXCLUSIVE`(#196) |
+| `planRenumber(texts, patterns): RenumberPlan` | `src/template/renumber.ts` | 8.8.12의 참조 번호 재정렬(#196). 문서 순서의 문단 글과 꼴 목록에서 바꿀 숫자 `edits[{ index, start, end, text }]`(문단·위치 순), 경고 `issues`(`RENUMBER_UNMATCHED`), 찾은 `targets`·`references` 수. 형식과 무관한 순수 함수 |
 | `generateFromTemplate(bytes, t, record, case, loadBlob, opts)` | `src/fill/` | 8.8.12의 2단계 생성·게이트·원장. md는 텍스트 어댑터 |
 | `listUnregisteredPlaces(doc, t)` | `src/fill/unregistered.ts` | 8.8.12(#134). 문서의 입력 항목 자리(이름 있는 누름틀·키 있는 메일머지·그 표시 구간 밖 `{{ }}`. `buildBlockPreviewDocument`의 `places`와 같은 형, 문서 순서) 중 템플릿 자리가 맡지 않는 것. 주어진 문서를 블록 교체 전 그대로 보므로 `where` 자리는 아무것도 맡지 않고 슬롯 교체로 사라질 자리도 센다. 고른 블록 기준의 판정은 생성(dryRun 포함) 보고의 `PLACE_UNREGISTERED`다 |
 | `range` 앵커와 `makeRangeAnchor`, 액션의 range 수용, 보고서의 `moves` | `src/fill/` | 7.10. 내부에서 이동표 변환과 느슨한 `{{ }}` 찾기 |
@@ -1775,7 +1798,7 @@ Op = "exists" | "empty" | "eq" | "ne" | "gt" | "ge" | "lt" | "le" | "contains" |
 | `buildBlockPreviewDocument(proto, blob, options?)` | `src/fill/block-preview.ts` | 8.8.18. 블록만으로 빈 바탕 문서에 넣은 미리보기 HWPX(저장 게이트 통과분)와 입력 항목 자리·같은 이름 항목 수 |
 | `fieldRangeIn(target, paragraph)`, `fieldAnchorOf(info)` | `src/fill/fields.ts` | 8.3. `collectFields`의 필드 하나가 문단 하나에서 차지하는 표시 글 구간(논리 글 위치, 여러 문단에 걸친 필드는 문단마다)과 그 필드를 가리키는 명시 `field` 앵커 초안(키 있는 메일 머지는 `mergeKey`, 그 밖은 `name`, 순번 포함). 앱이 메일 머지가 맡는 표시 글 안 `{{}}`를 엔진과 같은 구간으로 가린다(#24). 어느 필드가 맡는지(키가 경로 꼴이고 `fieldFillBlock`이 없음, 또는 규칙이 가리킴)는 호출자가 판정한다 |
 
-구현 상태(2026-10-04): `read*`·`write*`·해시 도우미(`templateSha256`·`caseSha256`·`contentSha256`)·`bindValues`·`selectSlots`·`listProtoUsage`·`planProtoUpdate`는 #29, `range`·`moves`·`makeRangeAnchor`는 #30(7.10). `generateFromTemplate`·CLI `--case --blobs`는 #31(`src/fill/generate-studio.ts`. 결과 형 `StudioGenerateResult`·`StudioGenerateReport`·`StudioLedger`는 `src/fill/studio-common.ts`가 정본). `checkAnchors`·`planRelocation`·`redraftAnchor`는 #32(`src/fill/check-anchors.ts`). 블록 저장소 API(`extractBlock`·`reextractBlock`·`planBlockInsert`·`blockFormatDiffs`·`blockFragment`·`planBlockUpdate`·`checkTemplateUpdates`, 원형의 `source`·`history`)와 CLI `block`은 #73(2026-10-06, `src/fill/block-store.ts`. 검증은 [검증 기준](validation.md) 28절). 블록 단독 미리보기(`buildBlockPreviewDocument`)는 #75(2026-10-06, `src/fill/block-preview.ts`. 결과 형은 `src/fill/block-preview-types.ts`. 검증은 30절). `fieldRangeIn`·`fieldAnchorOf` 공개는 #24(2026-10-07, 검증은 34절). 값 타입 7종(`readTypedValue`·`valueUnit`·`placeText`, `values[].display`)은 #131(2026-10-09, `src/template/value-format.ts`. 검증은 41절). 미등록 자리 목록(`listUnregisteredPlaces`)과 생성의 누름틀·메일머지 미등록 판정은 #134(2026-10-09, 검증은 51절). 패턴(#20)은 미구현. 정확한 형은 `src/template/studio-types.ts`(와 `src/fill/studio-common.ts`·`src/fill/check-anchors.ts`)가 정본이고 아래는 요지다.
+구현 상태(2026-10-04): `read*`·`write*`·해시 도우미(`templateSha256`·`caseSha256`·`contentSha256`)·`bindValues`·`selectSlots`·`listProtoUsage`·`planProtoUpdate`는 #29, `range`·`moves`·`makeRangeAnchor`는 #30(7.10). `generateFromTemplate`·CLI `--case --blobs`는 #31(`src/fill/generate-studio.ts`. 결과 형 `StudioGenerateResult`·`StudioGenerateReport`·`StudioLedger`는 `src/fill/studio-common.ts`가 정본). `checkAnchors`·`planRelocation`·`redraftAnchor`는 #32(`src/fill/check-anchors.ts`). 블록 저장소 API(`extractBlock`·`reextractBlock`·`planBlockInsert`·`blockFormatDiffs`·`blockFragment`·`planBlockUpdate`·`checkTemplateUpdates`, 원형의 `source`·`history`)와 CLI `block`은 #73(2026-10-06, `src/fill/block-store.ts`. 검증은 [검증 기준](validation.md) 28절). 블록 단독 미리보기(`buildBlockPreviewDocument`)는 #75(2026-10-06, `src/fill/block-preview.ts`. 결과 형은 `src/fill/block-preview-types.ts`. 검증은 30절). `fieldRangeIn`·`fieldAnchorOf` 공개는 #24(2026-10-07, 검증은 34절). 값 타입 7종(`readTypedValue`·`valueUnit`·`placeText`, `values[].display`)은 #131(2026-10-09, `src/template/value-format.ts`. 검증은 41절). 미등록 자리 목록(`listUnregisteredPlaces`)과 생성의 누름틀·메일머지 미등록 판정은 #134(2026-10-09, 검증은 51절). 상호 배타(`exclusive`·`TPL_EXCLUSIVE`·`SEL_EXCLUSIVE`)와 참조 번호 재정렬(`options.renumber`·`planRenumber`·`RENUMBER_UNMATCHED`)은 #196(2026-10-09, 검증은 55절). 패턴(#20)은 미구현. 정확한 형은 `src/template/studio-types.ts`(와 `src/fill/studio-common.ts`·`src/fill/check-anchors.ts`)가 정본이고 아래는 요지다.
 
 ```ts
 type ValueState = "bound" | "edited" | "missing" | "empty" | "rejected"
@@ -1784,8 +1807,8 @@ type ValueDisplay = { grouping?: boolean; negative?: "-" | "△"; unit?: string;
 type BoundValue = { id: string; name: string; format: ValueFormat; state: ValueState; text?: string; normalized?: string; number?: number; source: BoundSource; issue?: { code: string; message: string } }
 type TypedValue = { ok: true; text: string; normalized?: string; number?: number } | { ok: false; code: "DATA_FORMAT" | "DATA_NOT_SCALAR"; reason: string }
 type SelectionState = "manual" | "confirmed" | "default" | "fallback" | "undecided" | "recheck" | "inactive"
-type SelectionReason = "tie" | "noCandidate" | "valueMissing" | "valueRejected" | "needConfirm" | "blockMissing" | "contentChanged" | "parentChanged"
-type SlotSelection = { slot: string; state: SelectionState; block?: string; reason?: SelectionReason; differs?: boolean; candidates?: string[]; blocked?: "SEL_UNDECIDED" | "SEL_RECHECK"; message: string }
+type SelectionReason = "tie" | "noCandidate" | "valueMissing" | "valueRejected" | "needConfirm" | "blockMissing" | "contentChanged" | "parentChanged" | "exclusive"
+type SlotSelection = { slot: string; state: SelectionState; block?: string; reason?: SelectionReason; differs?: boolean; candidates?: string[]; blocked?: "SEL_UNDECIDED" | "SEL_RECHECK" | "SEL_EXCLUSIVE"; message: string }
 type ProtoUsageList = { proto: string; latest: number; usages: { template: string; version: number; blocks: string[]; pinned?: number; forkedFrom?: number; state: "behind" | "current" | "forked" }[] }
 type ProtoUpdatePlan = { template: StudioTemplate; updated: { block: string; from: number; to: number }[] }
 type AnchorCheck = { anchor: string; kind: StudioAnchor["kind"]; state: "exact" | "relocated" | "changed" | "ambiguous" | "notFound" | "unverified"; found?: AnchorAddress; issues: Issue[] }
