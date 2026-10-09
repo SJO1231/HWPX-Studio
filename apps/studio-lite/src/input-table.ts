@@ -298,15 +298,19 @@ export function linkTargets<T extends InputItem>(all: readonly T[], item: T, key
   return group.some(x => x.status === 'confirmed' && !isField(x.origin) && x.key !== key) ? '확정한 키는 실행 취소(Ctrl+Z)로 확정을 되돌린 뒤 바꾸세요.' : group;
 }
 
-/** 서식 판의 자리 하나: 문서에서 찾은 누름틀·메일머지·`{{키}}`(`name`은 문서의 이름), 또는 지정한 자리(`anchor`는 word·line 앵커, `name`은 표시 이름). `key`는 연결한 데이터 키 */
-export type G2BEntry = { kind: Exclude<ItemOrigin, 'user'> | 'word' | 'line'; name: string; key?: string; type?: ValueType; anchor?: { id: string }; unit?: boolean };
+/**
+ * 서식 판의 자리 하나: 문서에서 찾은 누름틀·메일머지·`{{키}}`(`name`은 문서의 이름), 또는 지정한 자리(`anchor`는 word·line 앵커, `name`은 표시 이름). `key`는 연결한 데이터 키,
+ * `unit`은 지정 원문이 "원"으로 끝남, `pattern`은 지정 원문의 날짜 모양(`datePattern`)
+ */
+export type G2BEntry = { kind: Exclude<ItemOrigin, 'user'> | 'word' | 'line'; name: string; key?: string; type?: ValueType; anchor?: { id: string }; unit?: boolean; pattern?: string };
 /**
  * Helper 프로필(#173)의 서식 판 template@2. 값은 연결한 데이터 키(없으면 이름)마다 하나이고 연결의 `key`가 그 키다(같은 이름은 같은 값, #149).
  * 이름이 키와 다르면 이름을 `aliases`에 둬 서식의 이름 그대로 오는 열도 받는다(다른 값의 키이거나 두 값에 걸친 이름은 빼서 엔진 `TPL_KEY_CONFLICT`를 피한다).
  * 자리: 찾은 것은 문서의 이름 그대로, 지정한 것은 앵커 자리. 값 형식은 표의 타입이 금액·날짜면 money·date, 나머지 text이고,
- * 금액 지정 자리의 원문이 "원"으로 끝나면 `display.unit: "원"`(엔진이 자리 뒤가 "원"이면 뗀다). 판 번호·id는 부르는 쪽이 정한다(저장된 판은 바뀌지 않는다).
+ * 금액 지정 자리의 원문이 "원"으로 끝나면 `display.unit: "원"`(엔진이 자리 뒤가 "원"이면 뗀다), 날짜 지정 자리의 원문에 날짜 모양이 있으면 `display.pattern`(#186).
+ * 판 번호·id는 부르는 쪽이 정한다(저장된 판은 바뀌지 않는다).
  */
-// shortcut: 지정 자리의 날짜는 엔진 기본 표시(YYYY. MM. DD.)이고 원문의 앞 글(`금 `)은 빠진다(작업창 미리 보기도 이 값 표로 같은 글, #181), 원문 모양을 display.pattern으로 옮길 때 올린다
+// shortcut: 금액 지정 원문의 앞 글(`금 `)은 빠지고 같은 날짜 키의 지정 원문 모양이 여럿이면 첫 모양이다(display에 앞 글 설정이 없고 꼴은 값마다 하나), 엔진 display가 앞 글·자리별 꼴을 받으면 올린다
 export function g2bTemplate(found: readonly G2BEntry[], t: { id: string; version: number; name: string; sha256: string }) {
   const nfc = (s: string) => s.normalize('NFC'), keyOf = (x: G2BEntry) => nfc(x.key?.trim() || x.name);
   const keys = [...new Set(found.map(keyOf))], value = (k: string) => 'v' + (keys.indexOf(k) + 1);
@@ -317,8 +321,9 @@ export function g2bTemplate(found: readonly G2BEntry[], t: { id: string; version
   return {
     schema: 'hwpx-studio/template@2', id: t.id, version: t.version, meta: { name: t.name }, source: { kind: 'hwpx', sha256: t.sha256 }, anchors: places.flatMap(x => x.anchor ? [x.anchor] : []),
     values: keys.map(k => {
-      const xs = found.filter(x => keyOf(x) === k), type = xs[0]?.type;
-      return { id: value(k), name: k, format: type === 'money' || type === 'date' ? type : 'text', ...(type === 'money' && xs.some(x => x.unit) ? { display: { unit: '원' } } : {}) };
+      const xs = found.filter(x => keyOf(x) === k), type = xs[0]?.type, pattern = xs.find(x => x.pattern)?.pattern;
+      return { id: value(k), name: k, format: type === 'money' || type === 'date' ? type : 'text',
+        ...(type === 'money' && xs.some(x => x.unit) ? { display: { unit: '원' } } : type === 'date' && pattern ? { display: { pattern } } : {}) };
     }),
     bindings: keys.map(k => { const a = aliases(k); return { value: value(k), key: k, ...(a.length ? { aliases: a } : {}) }; }),
     places: places.map((x, i) => ({ id: 'p' + (i + 1), kind: x.kind, value: value(keyOf(x)), ...(x.anchor ? { anchor: x.anchor.id } : { [x.kind === 'clickHere' ? 'name' : 'key']: x.name }) })),

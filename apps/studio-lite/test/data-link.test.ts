@@ -191,13 +191,13 @@ test('#149 work file keeps links and sample values; with no data the table sampl
   const all = texts(app.get('/api/workbench/result', new URLSearchParams({ session: restored.session }))!.body).join('\n');
   assert.equal(all.split('견본 담당').length - 1, 2, 'linked field (2 places)'); assert.equal(all.split('금액 1,500,000원').length - 1, 12); assert.equal(all.split('번호 007').length - 1, 6);
   assert.equal(all.split('견본 기관 & <값>').length - 1, 5, '4 fields + header'); assert(!all.includes('{{'));
-  // 견본 값이 없는 키는 데이터에 없는 키와 같이 막힌다. 형식이 틀린 견본은 거절
+  // 견본 값이 없는 키는 데이터에 없는 키와 같이 막힌다(금액 값 표가 있어 값 단계가 따로라 "연결 안 된 입력 자리", #186). 형식이 틀린 견본은 거절
   const { 설명: _gone, ...less } = samples;
-  wrong(() => app.post('/api/workbench/generate', { session: restored.session, ...blank, edits, inputItems: items, samples: less }), 'DATA_MISSING');
+  wrong(() => app.post('/api/workbench/generate', { session: restored.session, ...blank, edits, inputItems: items, samples: less }), 'WORKBENCH_UNLINKED');
   wrong(() => app.post('/api/workbench/generate', { session: restored.session, ...blank, edits, inputItems: items, samples: { 설명: 1 } }), 'WORKBENCH_INPUT');
   wrong(() => app.post('/api/workbench/generate', { session: restored.session, ...blank, edits, inputItems: items, samples: { '': 'x' } }), 'WORKBENCH_INPUT');
   // __proto__ 같은 키도 그냥 열이다(전역 객체를 건드리지 않는다)
-  wrong(() => app.post('/api/workbench/generate', { session: restored.session, ...blank, edits, inputItems: items, samples: { '__proto__.x': 'y', '__proto__': 'z' } }), 'DATA_MISSING');
+  wrong(() => app.post('/api/workbench/generate', { session: restored.session, ...blank, edits, inputItems: items, samples: { '__proto__.x': 'y', '__proto__': 'z' } }), 'WORKBENCH_UNLINKED');
   assert.equal(({} as any).x, undefined);
 });
 

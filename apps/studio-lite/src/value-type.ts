@@ -1,7 +1,7 @@
 // 값 타입(#147, 요구 8.9-2). 화면(형 제거본 `/value-type.js`)·서버·시험이 같은 코드를 쓴다.
 // 추천은 `suggestType` 함수 하나다: 지금은 규칙(원문 값 모양 → 이름·라벨 낱말)이고, 요구 8.9-9의 규칙 → n-gram → 임베딩 → AI 순서로 이 함수만 바꿔 끼운다.
 // 꾸밈(`decorateValue`)은 작업창 생성에서 확정한 수량 자리의 값에만 쓴다(원문 단위). 금액·날짜는 서버가 엔진 값 형식(#131, 8.8.4)으로 맞춘다(#181,
-// Helper 2판과 같은 글). 전화·식별번호·글은 받은 글 그대로다(숫자로 바꾸지 않으므로 앞자리 0이 남는다).
+// Helper 2판과 같은 글. 원문 날짜 모양은 `datePattern`으로 서식 판의 `display.pattern`에 넣는다, #186). 전화·식별번호·글은 받은 글 그대로다(숫자로 바꾸지 않으므로 앞자리 0이 남는다).
 // 타입 이름은 엔진 값 형식(8.8.4 `text`·`money`)과 G2B Helper 계약의 7종(`text|number|money|percent|date|datetime|boolean`)에서 같은 뜻이면 같은 이름을 쓴다:
 // money = 금액, date = 날짜, text = 글. 시각(time)·전화(phone)·수량(quantity)·긴 글(longText)은 화면 추천용이고 Helper 쪽에서는 각각 datetime의 시각 부분·text·number(단위 별도)·text다.
 
@@ -38,6 +38,18 @@ function dateShape(text: string) {
   const year = Number(y), month = Number(mo), day = Number(d), at = new Date(Date.UTC(year, month - 1, day));
   if (at.getUTCFullYear() !== year || at.getUTCMonth() !== month - 1 || at.getUTCDate() !== day) return undefined;
   return { year, month, day, sep1: sep1!, sep2: sep2!, end, weekday, mo: mo!, d: d! };
+}
+
+/**
+ * 원문 날짜 모양의 엔진 표시 꼴(8.8.4 `display.pattern`, #186): 연·월·일 사이 글과 끝 글은 원문 그대로, 월·일 가운데 한 자리가 있으면 `M`·`D`, 아니면 `MM`·`DD`
+ * (`2026. 11. 2.` → `YYYY. M. D.`, `2026-11-02` → `YYYY-MM-DD`, `2025. 12. 31.` → `YYYY. MM. DD.`). 날짜 모양이 아니면 undefined(엔진 기본 꼴).
+ */
+// shortcut: 요일 괄호(`(수)`)는 꼴에서 빠진다(엔진 꼴에 요일 자리가 없다), 엔진 꼴에 요일이 생기면 올린다
+export function datePattern(text: string): string | undefined {
+  const s = dateShape(text.replaceAll('\uFFFC', ''));
+  if (!s) return undefined;
+  const one = s.mo.length === 1 || s.d.length === 1, pattern = 'YYYY' + s.sep1 + (one ? 'M' : 'MM') + s.sep2 + (one ? 'D' : 'DD') + s.end;
+  return /[\t\n\r]/.test(pattern) ? undefined : pattern;
 }
 
 /**

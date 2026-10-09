@@ -36,22 +36,25 @@ function work(opened: Opened, picks: { row: (text: string) => boolean; text: (te
   return { items, edits };
 }
 
-test('#180 #181 confirm sentences: source {{date}}·{{money}} and a designated date read like the Helper window (2027. 01. 05.), and a span on a {{key}} line no longer hits TPL_CONFLICT', () => {
-  const source = buildHwpx([[textPara('계약일 {{계약일}}'), textPara('금액 {{금액}}원'), textPara('공고일: 2026. 1. 5.'), textPara('사업 {{사업명}} 담당 홍길동')].join('')]);
+test('#180 #181 #186 confirm sentences: source {{date}}·{{money}} read like the Helper window, a designated date keeps the source shape (2026. 1. 5. → 2027. 1. 5., 2025. 12. 31. → 2027. 01. 05.), and a span on a {{key}} line no longer hits TPL_CONFLICT', () => {
+  const source = buildHwpx([[textPara('계약일 {{계약일}}'), textPara('금액 {{금액}}원'), textPara('공고일: 2026. 1. 5.'), textPara('사업 {{사업명}} 담당 홍길동'), textPara('마감일: 2025. 12. 31.')].join('')]);
   const app = createWorkbench(), opened = app.post('/api/workbench/open', { name: 'p.hwpx', content: Buffer.from(source).toString('base64') }) as Opened;
   const { items, edits } = work(opened, [
     { row: t => t.startsWith('공고일'), text: () => '2026. 1. 5.', key: '공고일', type: 'date' },
     { row: t => t.startsWith('사업'), text: () => '홍길동', key: '담당자', type: 'text' },
+    { row: t => t.startsWith('마감일'), text: () => '2025. 12. 31.', key: '마감일', type: 'date' },
   ]);
-  assert.deepEqual(edits.map(e => e.text), ['공고일: {{공고일}}', '사업 {{사업명}} 담당 {{담당자}}']);
-  const record = { 계약일: '2027-1-15', 금액: 1234000, 공고일: '20270105', 사업명: '사업 & <값>', 담당자: '담당 A' };
+  assert.deepEqual(edits.map(e => e.text), ['공고일: {{공고일}}', '사업 {{사업명}} 담당 {{담당자}}', '마감일: {{마감일}}']);
+  const record = { 계약일: '2027-1-15', 금액: 1234000, 공고일: '20270105', 사업명: '사업 & <값>', 담당자: '담당 A', 마감일: '2027-01-05' };
   app.post('/api/workbench/data', { session: opened.session, name: 'd.json', content: JSON.stringify(record) });
   const r = app.post('/api/workbench/generate', { session: opened.session, ...blank, edits, inputItems: items }) as any;
   assert.equal(r.ok, true);
   const lite = texts(app.get('/api/workbench/result', new URLSearchParams({ session: opened.session }))!.body);
-  assert.deepEqual(lite, ['계약일 2027. 01. 15.', '금액 1,234,000원', '공고일: 2027. 01. 05.', '사업 사업 & <값> 담당 담당 A']);
+  // 원문 모양이 없는 {{계약일}}은 기본 YYYY. MM. DD., 지정 날짜는 원문 모양(한 자리 → M. D., 두 자리 → MM. DD.)
+  assert.deepEqual(lite, ['계약일 2027. 01. 15.', '금액 1,234,000원', '공고일: 2027. 1. 5.', '사업 사업 & <값> 담당 담당 A', '마감일: 2027. 01. 05.']);
   // Helper가 쓰는 것과 같은 서식 판·엔진 2판 생성
   const { template } = app.post('/api/workbench/g2b-template', { session: opened.session, ...blank, edits, inputItems: items }) as any;
+  assert.deepEqual(template.values.filter((v: any) => v.format === 'date').map((v: any) => [v.name, v.display?.pattern]), [['계약일', undefined], ['공고일', 'YYYY. M. D.'], ['마감일', 'YYYY. MM. DD.']]);
   const helper = generateFromTemplate(source, readStudioTemplate(JSON.stringify(template)) as StudioTemplate, record, undefined, () => undefined);
   assert(helper.ok && !helper.dryRun && helper.output instanceof Uint8Array, JSON.stringify(helper.report.issues));
   assert.deepEqual(texts(helper.output), lite);
@@ -62,6 +65,40 @@ test('#180 #181 confirm sentences: source {{date}}·{{money}} and a designated d
   app.post('/api/workbench/data', { session: opened.session, name: 'd.json', content: JSON.stringify({ ...record, 계약일: '미정' }) });
   app.post('/api/workbench/generate', { session: opened.session, ...blank, edits, inputItems: items });
   assert.equal(texts(app.get('/api/workbench/result', new URLSearchParams({ session: opened.session }))!.body)[0], '계약일 미정');
+});
+
+/** 두 곳의 `{{금액}}`을 누름틀(이름 금액)로 바꾼 문서 */
+function moneyFields(raw: Uint8Array): Uint8Array {
+  const targets = [...walkParagraphs(parseDocument(openPackage(raw)).sections[0]!.paragraphs)].flatMap(p => {
+    const at = p.logicalText.indexOf('{{금액}}');
+    return at < 0 ? [] : [{ sectionIndex: 0, path: p.path, start: at, end: at + '{{금액}}'.length, name: '금액' }];
+  });
+  const compiled = compileDocument(raw, { mode: 'baseline', anchors: targets });
+  assert(compiled.ok && compiled.report.promoted === 2, 'two fields');
+  return compiled.output;
+}
+
+test('#186 "원" per place: one money key at found places whose next text differs ("원" or not), with a designated amount ending in "원" — preview = Helper, 원원 0, missing 원 0 (2 synthetic cases)', () => {
+  // ① {{키}}: 뒤가 "원"인 자리가 먼저(고치기 전: 둘째 자리 "원" 빠짐) ② 누름틀: 뒤가 "원"이 아닌 자리가 먼저(고치기 전: 둘째 자리 원원)
+  const cases: [string, Uint8Array][] = [
+    ['{{키}}', buildHwpx([[textPara('앞 {{금액}}원 끝'), textPara('뒤 {{금액}} 끝'), textPara('지정 5,000원')].join('')])],
+    ['누름틀', moneyFields(buildHwpx([[textPara('뒤 {{금액}} 끝'), textPara('앞 {{금액}}원 끝'), textPara('지정 5,000원')].join('')]))],
+  ];
+  for (const [label, source] of cases) {
+    const app = createWorkbench(), opened = app.post('/api/workbench/open', { name: 'won.hwpx', content: Buffer.from(source).toString('base64') }) as Opened;
+    assert.equal(opened.inputs.filter(x => x.name === '금액').length, 2, label);
+    const { items, edits } = work(opened, [{ row: t => t.startsWith('지정'), text: () => '5,000원', key: '금액', type: 'money' }]);
+    const record = { 금액: 1234000 };
+    app.post('/api/workbench/data', { session: opened.session, name: 'd.json', content: JSON.stringify(record) });
+    assert.equal((app.post('/api/workbench/generate', { session: opened.session, ...blank, edits, inputItems: items }) as any).ok, true);
+    const lite = texts(app.get('/api/workbench/result', new URLSearchParams({ session: opened.session }))!.body);
+    assert.deepEqual(lite.map(p => p.replaceAll('\uFFFC', '')).sort(), ['뒤 1,234,000원 끝', '앞 1,234,000원 끝', '지정 1,234,000원'], label);
+    const { template } = app.post('/api/workbench/g2b-template', { session: opened.session, ...blank, edits, inputItems: items }) as any;
+    const helper = generateFromTemplate(source, readStudioTemplate(JSON.stringify(template)) as StudioTemplate, record, undefined, () => undefined);
+    assert(helper.ok && !helper.dryRun && helper.output instanceof Uint8Array, JSON.stringify(helper.report.issues));
+    assert.deepEqual(texts(helper.output), lite, label);
+    assert.deepEqual(app.get('/api/workbench/source', new URLSearchParams({ session: opened.session }))!.body, source);
+  }
 });
 
 // 본문 12(계약일·담당 / 금액·추정가격 / 공고일·비고: 원래 {{키}}가 있는 줄 9개에 지정 자리), 누름틀 보증금 3, 표 칸 12(추정가격 "원" 6·마감일 6), 머리말 1(공고일)
@@ -82,7 +119,7 @@ function paritySource(): Uint8Array {
   return compiled.output;
 }
 
-test('#180 #181 end to end: 40 places (fields, {{keys}}, designated spans on {{key}} lines, cells, header; duplicates; long values) x 50 cases — workbench preview x2 equals the Helper 2판 window text, dryRun ok, new errors 0, source unchanged', async t => {
+test('#180 #181 #186 end to end: 40 places (fields, {{keys}}, designated spans on {{key}} lines, cells, header; duplicates; long values) x 50 cases — workbench preview x2 equals the Helper 2판 window text, dryRun ok, new errors 0, source unchanged', async t => {
   const source = paritySource(), copy = Buffer.from(source), baseline = validateDocument(source), app = createWorkbench();
   const opened = app.post('/api/workbench/open', { name: 'parity.hwpx', content: Buffer.from(source).toString('base64') }) as Opened;
   const { items, edits } = work(opened, [
@@ -98,7 +135,7 @@ test('#180 #181 end to end: 40 places (fields, {{keys}}, designated spans on {{k
   let seed = 0x180181;
   const next = (n: number) => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed % n; };
   const two = (n: number) => String(n).padStart(2, '0'), won = new Intl.NumberFormat('en-US');
-  const date = () => { const y = 2020 + next(20), m = 1 + next(12), d = 1 + next(28); return { raw: [`${y}-${m}-${d}`, `${y}.${two(m)}.${two(d)}`, `${y}${two(m)}${two(d)}`, `${y}/${m}/${d}`][next(4)]!, shown: `${y}. ${two(m)}. ${two(d)}.` }; };
+  const date = () => { const y = 2020 + next(20), m = 1 + next(12), d = 1 + next(28); return { raw: [`${y}-${m}-${d}`, `${y}.${two(m)}.${two(d)}`, `${y}${two(m)}${two(d)}`, `${y}/${m}/${d}`][next(4)]!, shown: `${y}. ${two(m)}. ${two(d)}.`, short: `${y}. ${m}. ${d}.` }; };
   const money = () => { const n = next(2_000_000_000); return { raw: [n, String(n), won.format(n) + '원', '₩' + n][next(4)]!, shown: won.format(n) }; };
   const long = (i: number, k: string) => `${k} ${i}: ` + Array.from({ length: 4 + next(8) }, (_, j) => `긴 문장 ${j}은 값이 여러 문장임을 보인다.`).join(' ') + `\n둘째 줄 & <특수> "따옴표" '홑'\t탭 뒤`;
   const cases = Array.from({ length: 50 }, (_, i) => ({ 계약일: date(), 공고일: date(), 마감일: date(), 금액: money(), 추정가격: money(), 보증금: money(), 담당자: long(i, '담당'), 비고: long(i, '비고') }));
@@ -134,8 +171,9 @@ test('#180 #181 end to end: 40 places (fields, {{keys}}, designated spans on {{k
       assert.equal(lite.filter(p => p.includes(`계약일 ${c.계약일.shown} 담당 ${c.담당자.split('\n')[0]}`)).length, 4);
       assert.equal(lite.filter(p => p.includes(`금액 ${c.금액.shown}원 추정 ${c.추정가격.shown}원`)).length, 4, '"원" once after {{money}}');
       assert.equal(lite.filter(p => p.endsWith(`추정 ${c.추정가격.shown}원`)).length, 4 + 6, 'designated amount keeps one "원"');
-      assert.equal(lite.filter(p => p.includes(`공고일 ${c.공고일.shown}`)).length, 4 + 1);
-      assert.equal(lite.filter(p => p.endsWith(`마감 ${c.마감일.shown}`)).length, 6);
+      // 지정 날짜는 원문 모양(`2026. 1. 5.`·`2026. 2. 3.` → 월·일 한 자리, #186), 원문 모양이 없는 {{계약일}}은 기본 꼴
+      assert.equal(lite.filter(p => p.includes(`공고일 ${c.공고일.short}`)).length, 4 + 1);
+      assert.equal(lite.filter(p => p.endsWith(`마감 ${c.마감일.short}`)).length, 6);
       assert.equal(lite.filter(p => /^보증 \d \uFFFC/.test(p) && p.endsWith(` \uFFFC${c.보증금.shown}\uFFFC`)).length, 3, 'field');
       assert(!all.includes('{{') && !all.includes('원원'));
     }
