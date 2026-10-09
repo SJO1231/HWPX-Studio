@@ -100,6 +100,8 @@ export type StudioOptions = {
   requireConfirm?: boolean;
   unwrapFilled?: boolean;
   refreshPreview?: boolean;
+  /** 참조 번호 자동 재정렬(8.8.12): 선택 뒤·채움 전에 글자 꼴(예: "붙임")마다 대상의 번호를 문서 순서로 다시 매기고 참조를 같은 대응으로 바꾼다. 없으면 끔 */
+  renumber?: { patterns: string[] };
 };
 
 export type TemplateOrigin = { kind: "lite"; revision: number | string };
@@ -120,6 +122,8 @@ export type StudioTemplate = {
   blocks: TemplateBlock[];
   /** 1판 규칙. 승계 전용이라 slots·places와 함께 쓸 수 없다(TPL_MIXED_RULES). */
   rules?: Rule[];
+  /** 상호 배타 선언(8.8.8): 슬롯 쌍마다 두 슬롯이 함께 조건 있는 블록을 고를 수 없다(읽기 TPL_EXCLUSIVE, 평가 SEL_EXCLUSIVE). */
+  exclusive?: [string, string][];
   options?: StudioOptions;
   origin?: TemplateOrigin;
 };
@@ -219,7 +223,8 @@ export type SelectionReason =
   | "needConfirm"
   | "blockMissing"
   | "contentChanged"
-  | "parentChanged";
+  | "parentChanged"
+  | "exclusive";
 
 export type SlotSelection = {
   slot: string;
@@ -232,7 +237,7 @@ export type SlotSelection = {
   /** 동률이면 동률인 블록, differs이면 조건이 고르는 블록, valueMissing·valueRejected이면 그 값을 조건에 쓴 블록 */
   candidates?: string[];
   /** 생성을 막는 사유 코드. 없으면 쓸 수 있다. */
-  blocked?: "SEL_UNDECIDED" | "SEL_RECHECK";
+  blocked?: "SEL_UNDECIDED" | "SEL_RECHECK" | "SEL_EXCLUSIVE";
   /** 사용자에게 보일 이유 문구. 값 원문은 담지 않는다. */
   message: string;
 };

@@ -177,7 +177,7 @@ export function windowCode(codes: readonly string[]): string {
   if (codes.includes('DATA_ALIAS_CONFLICT')) return 'PROFILE_MAPPING_CONFLICT';
   if (codes.some(c => DATA_INVALID.has(c))) return 'INVALID_FIELDS';
   if (codes.includes('DATA_MISSING')) return 'MISSING_FIELDS';
-  if (codes.includes('SEL_UNDECIDED')) return 'UNDECIDED';
+  if (codes.includes('SEL_UNDECIDED') || codes.includes('SEL_EXCLUSIVE')) return 'UNDECIDED';
   if (codes.some(c => c === 'SEL_RECHECK' || c === 'PLACE_UNREGISTERED' || c.startsWith('TPL_') || c.startsWith('ANCHOR_') || c.startsWith('FRAG_'))) return 'TEMPLATE_RECHECK';
   return 'GENERATION_FAILED';
 }
@@ -250,23 +250,26 @@ function evaluate(p: Plan, item: Item, types: Record<string, ValueFormat>, itemI
     if (v?.state === 'missing' && !missing.includes(sentName(v.id))) missing.push(sentName(v.id));
   }
   if (missing.length) return { result: fail(itemIndex, 'MISSING_FIELDS', `열: ${missing.join(', ')}`, warnings, { missingFields: missing }) };
-  const undecided = selections.flatMap(s => s.blocked === 'SEL_UNDECIDED' || (s.state === 'recheck' && s.reason === 'blockMissing') ? [undecidedOf(p, s, byId, sentName)] : []);
+  const undecided = selections.flatMap(s => s.blocked === 'SEL_UNDECIDED' || s.blocked === 'SEL_EXCLUSIVE' || (s.state === 'recheck' && s.reason === 'blockMissing') ? [undecidedOf(p, s, byId, sentName)] : []);
   if (undecided.length) return { result: fail(itemIndex, 'UNDECIDED', `분기: ${undecided.map(u => `${u.slot}(${u.reason})`).join(', ')}`, warnings, { undecided }) };
   return { record, c, warnings };
 }
 
-/** 정하지 못한 분기: 동률·값 없음·읽을 수 없음은 그 블록들, 확정 필요는 계산된 블록, 후보 없음·없는 블록 선택은 그 분기의 모든 블록 */
+/** 정하지 못한 분기: 동률·값 없음·읽을 수 없음은 그 블록들, 확정 필요는 계산된 블록, 후보 없음·없는 블록 선택·배타 위반은 그 분기의 모든 블록 */
 function undecidedOf(p: Plan, s: SlotSelection, byId: Map<string, BoundValue>, sentName: (id: string) => string): Undecided {
   const slot = p.t.slots.find(x => x.id === s.slot)!;
   const own = p.t.blocks.filter(b => b.slot === slot.id);
   const reason = s.reason ?? 'noCandidate';
-  const ids = reason === 'needConfirm' && s.block !== undefined ? [s.block] : s.candidates?.length ? s.candidates : own.map(b => b.id);
+  const ids = reason === 'needConfirm' && s.block !== undefined ? [s.block] : reason !== 'exclusive' && s.candidates?.length ? s.candidates : own.map(b => b.id);
   const candidates = ids.flatMap(id => { const b = own.find(x => x.id === id); return b === undefined ? [] : [{ block: b.id, label: b.name }]; });
   const out: Undecided = { slot: slot.name, reason, candidates };
   if (reason === 'valueMissing') {
     const fields = [...new Set(own.filter(b => ids.includes(b.id) && b.when !== undefined).flatMap(b => leaves(b.when!)).filter(id => byId.get(id)?.state === 'missing').map(sentName))];
     if (fields.length) out.fields = fields;
   }
+  // 배타 위반(엔진 8.8.8): 고른 조건 블록이 쓰는 결정 값. 짝 분기도 같은 꼴로 따로 나온다
+  const when = reason === 'exclusive' ? own.find(b => b.id === s.block)?.when : undefined;
+  if (when !== undefined) out.fields = [...new Set(leaves(when).map(sentName))];
   return out;
 }
 
