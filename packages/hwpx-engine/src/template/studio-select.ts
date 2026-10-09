@@ -95,7 +95,7 @@ function conditionValue(v: BoundValue): unknown {
  * 슬롯마다 선택 상태를 판정한다(8.8.8). values는 bindValues의 값 표, c는 이번 건(없으면 저장 선택 없음). 결과는 템플릿 slots 순서다.
  * 조건의 데이터는 값 표에서 만든 { 값 id: 값 }이다(꾸미기 전 정규 값: number·money·percent는 수, date·datetime은 정규 꼴 글, boolean은 참거짓,
  * text는 글, 빈 값은 빈 글, missing·rejected는 키 없음).
- * 막는 상태는 blocked(SEL_UNDECIDED·SEL_RECHECK)로 표시하고 던지지 않는다.
+ * 막는 상태는 blocked(SEL_UNDECIDED·SEL_RECHECK·SEL_EXCLUSIVE)로 표시하고 던지지 않는다.
  */
 export function selectSlots(t: StudioTemplate, values: readonly BoundValue[], c: StudioCase | undefined): SlotSelection[] {
   const byId = new Map(values.map((v) => [v.id, v]));
@@ -164,5 +164,24 @@ export function selectSlots(t: StudioTemplate, values: readonly BoundValue[], c:
     return sel;
   };
 
-  return t.slots.map((s) => judge(s));
+  const result = t.slots.map((s) => judge(s));
+  // 5. 배타 선언: 두 슬롯이 함께 조건 있는 블록을 골랐으면(기준과 무관) 두 슬롯 다 막는다. 상태는 그대로 두고 사유만 바꾼다
+  const conditioned = (id: string): TemplateBlock | undefined => {
+    const sel = done.get(id);
+    const b = sel !== undefined && CHOSEN.has(sel.state) ? blocks.get(sel.block ?? "") : undefined;
+    return b?.when === undefined ? undefined : b;
+  };
+  for (const [a, b] of t.exclusive ?? []) {
+    const x = conditioned(a);
+    const y = conditioned(b);
+    if (x === undefined || y === undefined) continue;
+    for (const [id, other, ob] of [[a, b, y], [b, a, x]] as const) {
+      const sel = done.get(id);
+      if (sel === undefined) continue;
+      sel.reason = "exclusive";
+      sel.blocked = "SEL_EXCLUSIVE";
+      sel.message += ` 슬롯 ${other}과(와)는 함께 조건 블록을 고를 수 없는데(배타 선언) 그 슬롯도 조건 블록 ${label(ob)}을(를) 골랐습니다. 한쪽을 조건 없는 블록으로 고르거나 값을 확인해 주세요.`;
+    }
+  }
+  return result;
 }

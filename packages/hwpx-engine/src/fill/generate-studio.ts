@@ -19,6 +19,7 @@ import { generate, type GateMode, type GenerateOptions, type GenerateResult, typ
 import { explainInherited, noInherited, splitTolerated } from "./inherited.ts";
 import { remapAddress } from "./moves.ts";
 import { placeText } from "../template/value-format.ts";
+import { planRenumber } from "../template/renumber.ts";
 import { generateStudioText } from "./generate-studio-text.ts";
 import {
   EMPTY_DATASET,
@@ -357,6 +358,24 @@ function generateStudioHwpx(bytes: Uint8Array, t: StudioTemplate, record: Record
       s2.rules.push({ id: a.id, do: { type: "fill", anchor: a.id, value: { text: placeText(outcome.text, units.get(p.value), after) } } });
     }
     for (const key of fieldKeys) filledFields.add(key);
+  }
+  // 참조 번호 재정렬(켠 것만, 8.8.12): 선택 뒤·채움 전 조립본의 글로 계획하고 2단계에서 숫자만 바꾼다(글만, 서식 그대로)
+  const renumber = t.options?.renumber;
+  if (renumber !== undefined) {
+    const paragraphs = doc2.sections.flatMap((s) => [...walkParagraphs(s.paragraphs)].map((p) => ({ sectionIndex: s.index, p })));
+    const plan = planRenumber(paragraphs.map((x) => x.p.logicalText), renumber.patterns);
+    issues.push(...plan.issues);
+    // shortcut: 누름틀·메일머지 표시 구간과 `{{ }}` 안의 번호는 바꾸지 않는다(그 자리가 맡는다), 필드 안 번호가 필요해지면 필드 채움과 합친다
+    const spans = fieldSpans(fields2);
+    plan.edits.forEach((e, k) => {
+      const at = paragraphs[e.index];
+      if (at === undefined) return;
+      const inside = (s: { from: number; until: number }): boolean => e.start < s.until && e.end > s.from;
+      if ((spans.get(at.p) ?? []).some(inside) || hits.some((h) => h.paragraph === at.p && inside({ from: h.start, until: h.end }))) return;
+      const id = `renumber:${k}`;
+      s2.anchors.push({ id, kind: "word", at: { sectionIndex: at.sectionIndex, path: [...at.p.path] }, start: e.start, end: e.end, print: wordPrintAt(at.p.logicalText, e.start, e.end) });
+      s2.rules.push({ id, do: { type: "fill", anchor: id, value: { text: e.text } } });
+    });
   }
   // 등록되지 않은 `{{ }}`: 어느 placeholder 자리도 맡지 않은 것(누름틀·메일머지 표시 구간 안의 것은 이미 뺐다)
   const unregistered = new Map<string, number>();

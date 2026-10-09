@@ -1,3 +1,4 @@
+import { equals } from "./condition.ts";
 import { isValidPath } from "./placeholder.ts";
 import { fail, int, isObj, list, obj, onlyKeys, parseJson, readAnchor, readCondition, readRule, readTemplate, str } from "./read.ts";
 import {
@@ -400,7 +401,7 @@ function readBlock(v: unknown, index: number): TemplateBlock {
 
 // ── 옵션·출처·메타 ──────────────────────────────────────────────
 
-const OPTION_KEYS = ["missing", "mixedFormat", "unregistered", "requireConfirm", "unwrapFilled", "refreshPreview"];
+const OPTION_KEYS = ["missing", "mixedFormat", "unregistered", "requireConfirm", "unwrapFilled", "refreshPreview", "renumber"];
 
 function readOptions(v: unknown): StudioOptions {
   const o = obj(v, "options", "TPL_OPTIONS");
@@ -412,7 +413,22 @@ function readOptions(v: unknown): StudioOptions {
   for (const key of ["requireConfirm", "unwrapFilled", "refreshPreview"] as const) {
     if (o[key] !== undefined) out[key] = bool(o, key, "options", "TPL_OPTIONS");
   }
+  if (o["renumber"] !== undefined) out.renumber = readRenumber(o["renumber"]);
   return out;
+}
+
+/** 참조 번호 재정렬의 글자 꼴(8.8.12): 1~10자, 숫자·공백·제어 문자 없음, 겹치지 않음, 하나 이상 */
+function readRenumber(v: unknown): { patterns: string[] } {
+  const where = "options.renumber";
+  const o = obj(v, where, "TPL_OPTIONS");
+  onlyKeys(o, ["patterns"], where, "TPL_OPTIONS");
+  const patterns = list(o, "patterns", where, "TPL_OPTIONS").map((x, i) => {
+    const n = typeof x === "string" ? Array.from(x).length : 0;
+    if (typeof x !== "string" || n < 1 || n > 10 || /[\p{N}\s\p{Cc}]/u.test(x)) fail("TPL_OPTIONS", `patterns[${i}]는 숫자·공백·제어 문자가 없는 1~10자 글이어야 합니다.`, where);
+    return x;
+  });
+  if (patterns.length === 0 || new Set(patterns).size !== patterns.length) fail("TPL_OPTIONS", "patterns는 겹치지 않는 글자 꼴이 하나 이상 있어야 합니다.", where);
+  return { patterns };
 }
 
 function readOrigin(v: unknown): TemplateOrigin {
@@ -436,7 +452,7 @@ export function conditionLeaves(c: Condition, out: { path: string; op: string }[
 
 // ── 교차 검사 ───────────────────────────────────────────────────
 
-const TOP_KEYS = ["schema", "id", "version", "meta", "source", "anchors", "patterns", "values", "bindings", "places", "slots", "blocks", "rules", "options", "origin"];
+const TOP_KEYS = ["schema", "id", "version", "meta", "source", "anchors", "patterns", "values", "bindings", "places", "slots", "blocks", "rules", "options", "origin", "exclusive"];
 
 /** 슬롯 앵커가 차지하는 문단 구간: 같은 구역·부모 안의 [from, to] */
 function slotSpan(a: StudioAnchor): { parent: string; from: number; to: number } | undefined {
@@ -605,6 +621,44 @@ function checkKeyConflicts(t: StudioTemplate): void {
   });
 }
 
+/** 슬롯 쌍 하나(8.8.8): 서로 다른 슬롯 id 두 개 */
+function readExclusive(v: unknown, index: number): [string, string] {
+  const where = `exclusive[${index}]`;
+  if (!Array.isArray(v) || v.length !== 2 || !v.every((x) => typeof x === "string" && x !== "")) fail(FIELD, "배타 선언은 슬롯 id 두 개의 배열이어야 합니다.", where);
+  const [a, b] = v as [string, string];
+  if (a === b) fail(FIELD, `배타 선언의 두 슬롯이 같습니다(${JSON.stringify(a)}).`, where);
+  return [a, b];
+}
+
+/** 단일 eq·in 조건의 값 id와 값 목록. 그 밖의 조건은 undefined */
+function choiceOf(b: TemplateBlock): { path: string; values: unknown[] } | undefined {
+  const w = b.when;
+  if (w === undefined || !("op" in w)) return undefined;
+  if (w.op === "eq") return { path: w.path, values: [w.value] };
+  return w.op === "in" && Array.isArray(w.value) ? { path: w.path, values: w.value } : undefined;
+}
+
+/**
+ * 배타 선언(8.8.8): 두 슬롯이 템플릿에 있고, 같은 값에 대한 단일 eq·in 조건끼리 값이 겹쳐 한 업무 건에서 두 슬롯이 함께 조건 블록을 고를 수 있으면 TPL_EXCLUSIVE.
+ * shortcut: 읽기는 단일 eq·in 조건만 견준다(all·any·not·크기 비교는 평가의 SEL_EXCLUSIVE가 실제 건에서 막는다), 경우 표가 여러 값 조합을 쓰게 되면(#194) 넓힌다.
+ */
+function checkExclusive(t: StudioTemplate): void {
+  const slots = new Set(t.slots.map((s) => s.id));
+  (t.exclusive ?? []).forEach(([a, b], i) => {
+    for (const id of [a, b]) if (!slots.has(id)) fail("TPL_REF", `배타 선언의 슬롯 ${JSON.stringify(id)}가 slots에 없습니다.`, `exclusive[${i}]`);
+    for (const x of t.blocks.filter((k) => k.slot === a)) {
+      const cx = choiceOf(x);
+      if (cx === undefined) continue;
+      for (const y of t.blocks.filter((k) => k.slot === b)) {
+        const cy = choiceOf(y);
+        if (cy === undefined || cy.path !== cx.path) continue;
+        const shared = cx.values.filter((p) => cy.values.some((q) => equals(p, q))).length;
+        if (shared > 0) fail("TPL_EXCLUSIVE", `배타로 선언한 슬롯 ${a}·${b}의 블록 ${x.id}·${y.id}가 같은 값 ${cx.path}의 겹치는 조건 값 ${shared}개로 함께 골라집니다.`, `exclusive[${i}]`);
+      }
+    }
+  });
+}
+
 function checkBound(t: StudioTemplate): void {
   const used = new Set<string>();
   t.places.forEach((p) => used.add(p.value));
@@ -680,7 +734,10 @@ export function readStudioTemplate(json: string, opts: StudioReadOptions = {}): 
     });
   }
   if (root["options"] !== undefined) t.options = readOptions(root["options"]);
+  // shortcut: md 템플릿은 재정렬하지 않는다(텍스트 어댑터에 붙이지 않음), md에 필요해지면 그때 붙인다
+  if (t.options?.renumber !== undefined && sourceOut.kind === "md") fail("TPL_OPTIONS", "md 템플릿에는 renumber를 쓸 수 없습니다.", "options.renumber");
   if (root["origin"] !== undefined) t.origin = readOrigin(root["origin"]);
+  if (root["exclusive"] !== undefined) t.exclusive = list(root, "exclusive", "템플릿", FIELD).map((v, i) => readExclusive(v, i));
 
   checkIds(t);
   checkNames(t.values, "values");
@@ -690,6 +747,7 @@ export function readStudioTemplate(json: string, opts: StudioReadOptions = {}): 
   checkSlotConflicts(t);
   checkKeyConflicts(t);
   checkBound(t);
+  checkExclusive(t);
   if (opts.hasBlob !== undefined) {
     const has = opts.hasBlob;
     t.blocks.forEach((b, i) => {

@@ -33,7 +33,7 @@ function compare(a: unknown, b: unknown): number | undefined {
   return s < t ? -1 : s > t ? 1 : 0;
 }
 
-const equals = (a: unknown, b: unknown): boolean => compare(a, b) === 0;
+export const equals = (a: unknown, b: unknown): boolean => compare(a, b) === 0;
 
 // 문자열 길이는 UTF-16 단위(`String.prototype.length`)다. 배열은 원소 수.
 function lengthOf(v: unknown): number | undefined {

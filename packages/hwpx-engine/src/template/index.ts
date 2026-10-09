@@ -23,4 +23,5 @@ export { canonicalStudioJson } from "./studio-write.ts";
 export { bindValues, type BindOptions } from "./studio-bind.ts";
 export { readTypedValue, placeText, valueUnit, VALUE_FORMATS, type TypedValue } from "./value-format.ts";
 export { selectSlots } from "./studio-select.ts";
+export { planRenumber, type RenumberEdit, type RenumberPlan } from "./renumber.ts";
 export { listProtoUsage, planProtoUpdate, checkTemplateUpdates } from "./studio-proto.ts";
