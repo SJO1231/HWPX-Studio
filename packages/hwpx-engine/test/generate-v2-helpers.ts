@@ -189,7 +189,8 @@ export function noticeKit(): NoticeKit {
       { id: "b7", slot: "s4", name: "끝 글", content: { text: "끝 조항 {{사업명}}" } },
       { id: "b8", slot: "s4", name: "끝 필드", content: { fragment: fragB8 }, when: { path: price, op: "ge", value: 50000000 } },
     ],
-    options: { missing: "error", unregistered: "error" },
+    // unregistered 생략: 미등록 {{ }}는 막고 where·occurrence 시험용으로 일부러 남긴 누름틀·메일머지는 경고만(#134. "error"라고 적으면 필드도 막는다)
+    options: { missing: "error" },
   };
   return { bytes, doc, blobs, raw, t: studioOf(raw, blobs), valueId, fragmentTexts };
 }
