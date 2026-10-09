@@ -22,4 +22,5 @@ export function selectBranches(t: StudioTemplate, record: Record<string, unknown
 export const UNDECIDED_REASON: Record<string, string> = {
   tie: '맞는 블록이 여럿', noCandidate: '맞는 경우가 없고 기본 블록도 없음', valueMissing: '결정 값이 이 업무 건에 없음',
   valueRejected: '결정 값을 읽을 수 없음', needConfirm: '확정이 필요함', blockMissing: '고른 블록이 후보에 없음', contentChanged: '고른 블록의 내용이 바뀜',
+  exclusive: '함께 고를 수 없는 분기점도 경우 표 블록을 고름',
 };

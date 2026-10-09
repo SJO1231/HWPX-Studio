@@ -2,14 +2,15 @@ import {viewerLines, lineAt} from '/viewer-lines.js';
 import { installBlockLibrary } from '/block-library.js';
 import {editorLayout, editorSelection, unitAt, replaceEditorText, groupEditorSelection, editorChange} from '/editor-model.js';
 import { createPageView, createLatest, toPagePoint } from '/packages/viewer/src/dom/index.ts';
-import {STATUS_LABEL, REL_LABEL, LABEL_MAX, isField, keptStatus, autoKey, repsOf, changedSpan, toOriginal, spanNow, contextOf, contextAround, mergeSaved, nameFromLabel, designated, rankKeys, planConfirm, dropRow, commitConfirm, linkNote, rowAria, itemOf, valueKey, linkTargets} from '/input-table.js';
+import {STATUS_LABEL, REL_LABEL, LABEL_MAX, isField, keptStatus, autoKey, repsOf, changedSpan, toOriginal, spanNow, contextOf, contextAround, mergeSaved, nameFromLabel, designated, rankKeys, planConfirm, dropRow, commitConfirm, linkNote, rowAria, itemOf, valueKey, linkTargets, sameValueCount} from '/input-table.js';
 import {VALUE_TYPES, TYPE_LABEL, suggestType} from '/value-type.js';
 import { loadRhwp, openDocument, runPosition, sameParagraph } from '/packages/viewer/src/rhwp/index.ts';
 import {FLAG_WAIT, flagRequest, flagRefusal, spanLabel} from '/range-flag.js';
+import {branchFlow} from '/branch-flow.js';
 
 const $ = (selector) => document.querySelector(selector);
 const state = {
-  placements: [], placementNames: {}, placementWarnings: {}, branches: [], branchStates: {}, detailBranch: undefined,
+  placements: [], placementNames: {}, placementWarnings: {}, branches: [], branchStates: {}, detailBranch: undefined, caseIds: [], renumber: [], flowOpen: false,
   outline: [], recommendations: [], reviewHistory: [], samples: {}, tableOpen: false, tableRow: undefined, detailDrafts: new Map(), detailId: undefined, pointer: undefined, currentItem: undefined,
   session: undefined, kind: 'hwpx', sourceText: '', name: '', paragraphs: [], edits: new Map(), headings: new Map(), blocks: [],
   keys: [], records: 0, index: 0, cases: [], typed: {}, chosen: undefined, selection: undefined,
@@ -21,7 +22,7 @@ const state = {
 const opens = createLatest(), picks = createLatest(), views = createLatest(), dataLoads = createLatest();
 const keyCopies = createLatest(), bodyCopies = createLatest(), samples = createLatest();
 let resizeFrame, contextRequest = 0;
-const blockLibraryUI = installBlockLibrary({selection: blockSelection, session: () => state.session, api, status, beforeOpen: hideMenu, previewPlacement, currentUsage:item=>state.placements.some(p=>p.id===item.protoId||p.id===item.id)?'현재 작업에서 사용 중입니다. 배치를 취소한 뒤 다시 확인하세요.':undefined, onSaved:()=>{const r=state.activeRecommendation;if(r?.kind==='block'){r.status='confirmed';renderRecommendations();}void renderLibraryTab();}});
+const blockLibraryUI = installBlockLibrary({selection: blockSelection, session: () => state.session, api, status, beforeOpen: hideMenu, previewPlacement, sameValue: name=>sameValueCount(inputItems(),name), currentUsage:item=>state.placements.some(p=>p.id===item.protoId||p.id===item.id)?'현재 작업에서 사용 중입니다. 배치를 취소한 뒤 다시 확인하세요.':undefined, onSaved:()=>{const r=state.activeRecommendation;if(r?.kind==='block'){r.status='confirmed';renderRecommendations();}void renderLibraryTab();}});
 
 function status(text, kind = '') {
   $('#status').textContent = text; $('#status').className = kind; $('#status').title = text;
@@ -64,7 +65,7 @@ function controls() {
   }
   for(const check of document.querySelectorAll('.rec-line input'))check.disabled=state.busy||check.dataset.confirmed==='true';
   $('#save-checked-blocks').disabled=state.busy||!state.recommendations.some(r=>r.kind==='block'&&r.status==='recommended');
-  $('#open-input-table').disabled=!state.session||state.busy;$('#confirm-all').disabled=state.busy;for(const id of ['designate-input','remote-designate'])$('#'+id).disabled=!available;
+  $('#open-input-table').disabled=!state.session||state.busy;$('#open-branch-flow').disabled=!state.session||state.busy||state.kind!=='hwpx';$('#confirm-all').disabled=state.busy;for(const id of ['designate-input','remote-designate'])$('#'+id).disabled=!available;
   for(const b of document.querySelectorAll('#input-rows .ok-button'))b.disabled=state.busy||b.dataset.locked==='true';
   blockLibraryUI.refresh();
   if(state.kind==='text')for(const b of document.querySelectorAll('[data-action=bold],[data-action=group]'))b.disabled=true;
@@ -316,7 +317,7 @@ async function showResult() {
 }
 function updateData(info) {
   state.detailId=undefined;
-  state.records = info?.records ?? 0; state.keys = info?.keys ?? []; state.index = info?.index ?? 0; state.cases = info?.cases ?? [];
+  state.records = info?.records ?? 0; state.keys = info?.keys ?? []; state.index = info?.index ?? 0; state.cases = info?.cases ?? []; state.caseIds = info?.caseIds ?? [];
   $('#data-info').textContent = state.records ? state.records + '개 행 연결됨' : '데이터가 없습니다.';
   const records = $('#record-select'); records.replaceChildren();
   const count = Math.max(1, state.records);
@@ -362,7 +363,7 @@ async function installWorkspace(result, ticket) {
   state.outline=result.outline??[];state.recommendations=[];state.detailDrafts.clear();state.detailId=undefined;state.reviewHistory=[];state.currentItem=undefined;closeTable();
   state.blocks = (result.blocks ?? []).map((item) => ({...item}));
   state.placements=(result.placements??[]).map(p=>({...p}));state.placementNames=result.placementNames??{};state.placementWarnings=result.placementWarnings??{};
-  state.branches=structuredClone(result.branches??[]);state.branchStates={};
+  state.branches=structuredClone(result.branches??[]);state.branchStates={};state.renumber=[...(result.renumber??[])];closeFlow();
   state.marks.clear();
   state.output = undefined; state.viewMode = 'source'; state.dirty = false; state.revision++;
   state.history=[];state.future=[];state.comparison=undefined; $('#output-info').textContent = ''; $('#data-text').value = '';
@@ -422,7 +423,7 @@ async function loadData(name, content, expected = {}) {
 function snapshot() {
   return {session: state.session, index: state.index, missing: $('#txt-missing').value, edits: [...state.edits].map(([id, text]) => ({id, text})),
     headings: [...state.headings].map(([id, level]) => ({id, level})), blocks: state.blocks.map((block) => ({...block})),placements:state.placements.map(p=>({...p})),branches:structuredClone(state.branches),
-    inputItems: inputItems().map(itemOf), ...(Object.keys(state.typed).length ? {samples: {...state.typed}} : {})};
+    inputItems: inputItems().map(itemOf), ...(Object.keys(state.typed).length ? {samples: {...state.typed}} : {}), ...(state.renumber.length ? {renumber: [...state.renumber]} : {})};
 }
 function saveBlob(content, name) {
   const url = URL.createObjectURL(new Blob([content], {type: 'application/json;charset=utf-8'}));
@@ -470,7 +471,7 @@ async function generate(asTemplate = false, busyMessage = '') {
   } catch (error) {
     state.output = undefined; disposeResult(); $('#output-info').textContent = ''; status(errorMessage(error), 'error');
     // 분기점 블록을 이 업무 건에서 못 정하면 그 분기 표를 열어 직접 고르게 한다
-    if (error.code === 'SEL_UNDECIDED') { await refreshBranches(); const b = state.branches.find((x) => state.branchStates[x.id]?.blocked); if (b) void openBranch(b.id); }
+    if (error.code === 'SEL_UNDECIDED' || error.code === 'SEL_EXCLUSIVE') { await refreshBranches(); const b = state.branches.find((x) => state.branchStates[x.id]?.blocked); if (b) void openBranch(b.id); }
   } finally { setBusy(false); }
 }
 function applyEditorChange(start,end,value) {
@@ -1077,7 +1078,7 @@ async function loadSample(){
   catch{if(samples.current(ticket)&&session===state.session){state.samples={};renderInputTable();}}
 }
 /* 표 보기(크게 보기): 입력 항목 한 줄씩. 이름·키는 바로 적고 Enter/↓로 다음 줄, ✓로 확정. 줄에 들어가면 원문 그 자리로 이동·강조 */
-function openTable(){if(!state.session)return;hideMenu();state.tableOpen=true;state.tableRow=undefined;document.body.classList.add('table-open');$('#input-table').hidden=false;renderInputTable();const first=inputItems().find(r=>r.status!=='confirmed'&&r.status!=='excluded')??inputItems()[0];if(first)focusTableRow(first,'name');}
+function openTable(){if(!state.session)return;hideMenu();closeFlow();state.tableOpen=true;state.tableRow=undefined;document.body.classList.add('table-open');$('#input-table').hidden=false;renderInputTable();const first=inputItems().find(r=>r.status!=='confirmed'&&r.status!=='excluded')??inputItems()[0];if(first)focusTableRow(first,'name');}
 function closeTable(){state.tableOpen=false;state.tableRow=undefined;document.body.classList.remove('table-open');$('#input-table').hidden=true;renderRecommendations();renderSelectionDetail(true);}
 function focusTableRow(r,field){const tr=$('#input-rows').querySelector('tr[data-item="'+CSS.escape(r.id)+'"]');const el=tr?.querySelector('[data-field="'+field+'"]');if(el){el.focus();el.scrollIntoView({block:'nearest'});showItem(r);}}
 function showItem(r){
@@ -1208,7 +1209,6 @@ $('#block-library-dialog').addEventListener('close',()=>{if(!$('#library-list').
 renderHeadingTree();renderRecommendations();
 
 // ── 분기점(#7): 고른 범위를 분기점으로(원문은 그대로), 저장소 블록을 후보로, 경우 표(결정 값 → 블록, 기본 블록), 이 업무 건의 직접 고름 ──
-// shortcut: 크게 보기 흐름도(분기점 → 경우 → 블록 한눈에, M.4·M.5)는 2차다, 분기점 묶음 2차에서 왼쪽 "크게 보기"에 붙인다
 /** 지금 범위를 분기점으로 만들 수 없는 까닭(없으면 undefined): 블록 저장과 같은 범위 조건 + 다른 분기점·넣은 블록과 겹치지 않음 */
 function branchProblem(){
   let range;try{range=blockSelection();}catch(e){return e.message;}
@@ -1221,7 +1221,7 @@ function createBranch(){
   const range=blockSelection(),base=($('#remote-name').value.trim()||state.outline.find(h=>h.id===range.from)?.name||headingOf(range.from)?.name||'분기점').trim().slice(0,60);
   let name=base;for(let n=2;state.branches.some(b=>b.name===name);n++)name=base+' '+n;
   const id='s'+(Math.max(0,...state.branches.map(b=>Number(b.id.slice(1))))+1);
-  remember();state.branches.push({id,name,from:range.from,to:range.to,blocks:[],cases:[],picks:{}});changed();void openBranch(id);void refreshBranches();
+  remember();state.branches.push({id,name,from:range.from,to:range.to,blocks:[],keys:[],cases:[],picks:{}});changed();void openBranch(id);void refreshBranches();
   status('분기점 '+name+'을(를) 만들었습니다. 원문은 그대로입니다. 저장소 블록을 후보로 고르세요.','success');
 }
 /** 분기 표 열기: 원문을 그 범위로 옮겨 문단마다 강조하고(블록 후보와 같은 강조) 오른쪽에 분기 표 */
@@ -1243,9 +1243,39 @@ async function refreshBranches(){
     try{const {states}=await api('branch-state',snapshot());if(ticket!==branchStateRequest||session!==state.session)return;state.branchStates=Object.fromEntries(states.map(x=>[x.id,x]));}
     catch(error){if(ticket===branchStateRequest)status(errorMessage(error),'error');}
   }else state.branchStates={};
-  renderHeadingTree();renderSourceTags();if(state.detailBranch)void renderBranch();
+  renderHeadingTree();renderSourceTags();if(state.detailBranch)void renderBranch();void renderFlow();
 }
 const STATE_LABEL={manual:'직접 고름',default:'경우 표',fallback:'기본 블록',confirmed:'확정'};
+/** 지금 업무 건의 식별(직접 고름의 열쇠, #194): 데이터 행 해시, 데이터가 없으면 견본 값 한 건 */
+function pickKey(){return state.records?state.caseIds[state.index]:'sample';}
+// ── 크게 보기 흐름도(#194, 요구 8.4-3·#60 M4·M5): 왼쪽을 넓혀 제목 순서의 세로 흐름에 분기점과 후보 갈래를 보인다. 분기 표(오른쪽)는 그대로 쓴다 ──
+function openFlow(){if(!state.session||state.kind!=='hwpx')return;hideMenu();if(state.tableOpen)closeTable();state.flowOpen=true;document.body.classList.add('flow-open');$('#branch-flow').hidden=false;void renderFlow();}
+function closeFlow(){if(!state.flowOpen)return;state.flowOpen=false;document.body.classList.remove('flow-open');$('#branch-flow').hidden=true;}
+let flowRequest=0;
+async function renderFlow(){
+  if(!state.flowOpen)return;
+  const ticket=++flowRequest;let library=[];
+  try{library=(await (await fetch('/api/blocks')).json()).blocks??[];}catch{}
+  if(ticket!==flowRequest||!state.flowOpen)return;
+  const names=new Map(library.map(x=>[x.protoId,x.name])),list=$('#flow-list');list.replaceChildren();
+  const nodes=branchFlow(state.paragraphs.map(p=>p.id),state.outline,state.branches,state.branchStates,id=>names.get(id)??'지워진 블록');
+  $('#branch-flow-count').textContent='분기점 '+state.branches.length+' · '+caseLabel(state.index);
+  for(const n of nodes){
+    if(n.kind==='heading'){const li=uiNode('li',undefined,'flow-heading'),go=uiNode('button',n.name);go.type='button';go.title=n.name;li.style.paddingLeft=Math.min(3,Math.max(0,n.level-1))*12+'px';go.onclick=()=>{selectRow(n.id);};li.append(go);list.append(li);continue;}
+    const li=uiNode('li',undefined,'flow-branch'+(n.undecided?' undecided':'')+(state.detailBranch===n.id?' current':'')),open=uiNode('button',undefined,'flow-branch-head');open.type='button';open.setAttribute('aria-label','분기 '+n.name+' · 분기 표 열기');open.onclick=()=>void openBranch(n.id);
+    open.append(uiNode('span','분기','kind-tag kind-branch'),uiNode('strong',n.name),uiNode('small',n.undecided?'정하지 못함 · '+n.why:n.state?STATE_LABEL[n.state]??n.state:''));li.append(open);
+    if(n.exclusive.length)li.append(uiNode('small','함께 못 고름 · '+n.exclusive.join(', '),'flow-exclusive'));
+    const ways=uiNode('ul',undefined,'flow-options');
+    for(const o of n.options){const w=uiNode('li',undefined,o.chosen?'chosen':undefined);w.append(uiNode('span',o.name),uiNode('small',[...o.cases,...(o.fallback?['기본 블록']:[])].join(' / ')||'조건 없음'));if(o.chosen)w.setAttribute('aria-current','true');ways.append(w);}
+    if(!n.options.length)ways.append(uiNode('li','후보 없음','muted'));
+    li.append(ways);list.append(li);
+  }
+  if(!state.branches.length)list.append(uiNode('li','분기 없음','rail-empty'));
+  for(const box of $('#flow-renumber').querySelectorAll('input'))box.checked=state.renumber.includes(box.value);
+}
+$('#open-branch-flow').onclick=openFlow;$('#close-branch-flow').onclick=closeFlow;
+// 참조 번호 다시 매기기(#194, 엔진 options.renumber): 고른 꼴의 [붙임 N]·<별지 N>·표 N. 등을 생성 결과의 실제 순번으로
+$('#flow-renumber').onchange=()=>{state.renumber=[...$('#flow-renumber').querySelectorAll('input:checked')].map(x=>x.value);changed();status(state.renumber.length?'생성 때 참조 번호('+state.renumber.join('·')+')를 다시 매깁니다.':'참조 번호를 그대로 둡니다.');};
 let branchRequest=0;
 /** 오른쪽 분기 표: 이름, 후보(저장소 목록 체크·보기), 경우 표, 이 업무 건, 후보 블록 단독 미리 보기(#75) */
 async function renderBranch(){
@@ -1272,33 +1302,43 @@ async function renderBranch(){
   }
   if(!library.length)list.append(uiNode('p','저장한 블록이 없습니다. 원문 범위를 블록으로 저장하세요.','rail-empty'));
   else if(b.blocks.length<2)list.append(uiNode('p','후보를 2개 이상 고르세요.','muted'));
-  // 경우 표: 결정 값(데이터 키) 하나, 값 → 블록, 기본 블록. 결정 값이 없으면 업무 건마다 직접 고른다
-  const label=id=>names.get(id)??'지워진 블록',blocks=b.blocks.map(c=>[c.id,label(c.id)]);
+  // 경우 표(#194): 결정 값(데이터 키) 3개까지(모두 같아야 그 경우), 경우 = 이름(선택) · 키마다 값 → 블록, 기본 블록. 결정 값이 없으면 업무 건마다 직접 고른다
+  const label=id=>names.get(id)??'지워진 블록',blocks=b.blocks.map(c=>[c.id,label(c.id)]),same=(x,y)=>x.every((v,i)=>v===y[i]);
   const keys=[...new Set([...dataPaths(),...inputItems().filter(r=>r.status!=='excluded').map(valueKey).filter(Boolean)])];
-  const key=select([['','없음 · 직접 고름'],...(b.key&&!keys.includes(b.key)?[[b.key,b.key]]:[]),...keys.map(k=>[k,k])],b.key,'결정 값');
-  key.onchange=()=>editBranch(()=>{if(key.value)b.key=key.value;else delete b.key;});
-  const table=uiNode('table',undefined,'case-table'),head=uiNode('tr');head.append(uiNode('th','값'),uiNode('th','블록'),uiNode('th'));table.append(head);
+  // 결정 값 칸: 고르면 바꾸고 "빼기"는 그 열을 지운다(같아진 경우는 첫 것만 남긴다). 끝 칸에서 고르면 열을 더한다(기존 경우의 새 값은 빈 값)
+  const keyPick=(k,i)=>{const end=i===b.keys.length,s=select([['',end?(i?'결정 값 더하기':'없음 · 직접 고름'):'빼기'],...(k&&!keys.includes(k)?[[k,k]]:[]),...keys.filter(x=>x===k||!b.keys.includes(x)).map(x=>[x,x])],k,'결정 값 '+(i+1));
+    s.onchange=()=>editBranch(()=>{if(end){if(!s.value)return;b.keys.push(s.value);for(const c of b.cases)c.values.push('');return;}if(s.value){b.keys[i]=s.value;return;}
+      b.keys.splice(i,1);for(const c of b.cases)c.values.splice(i,1);b.cases=b.keys.length?b.cases.filter((c,j,all)=>all.findIndex(x=>same(x.values,c.values))===j):[];});return s;};
+  const keyBox=uiNode('div',undefined,'case-keys');b.keys.forEach((k,i)=>keyBox.append(keyPick(k,i)));if(b.keys.length<3)keyBox.append(keyPick('',b.keys.length));
+  const table=uiNode('table',undefined,'case-table'),head=uiNode('tr');head.append(uiNode('th','이름'),...b.keys.map(k=>{const th=uiNode('th',k);th.title=k;return th;}),uiNode('th','블록'),uiNode('th'));table.append(head);
   for(const c of b.cases){
-    const tr=uiNode('tr'),value=uiNode('input');value.value=c.value;value.setAttribute('aria-label','경우 값');
-    value.onchange=()=>{if(b.cases.some(x=>x!==c&&x.value===value.value)){value.value=c.value;status('같은 값의 경우가 이미 있습니다.','error');return;}editBranch(()=>{c.value=value.value;});};
+    const tr=uiNode('tr'),name=uiNode('input');name.value=c.name??'';name.maxLength=60;name.placeholder='이름';name.setAttribute('aria-label','경우 이름');
+    name.onchange=()=>editBranch(()=>{const v=name.value.trim();if(v)c.name=v;else delete c.name;});
+    const values=b.keys.map((k,i)=>{const value=uiNode('input');value.value=c.values[i];value.setAttribute('aria-label',k+' 값');
+      value.onchange=()=>{if(b.cases.some(x=>x!==c&&same(x.values,c.values.with(i,value.value)))){value.value=c.values[i];status('같은 값의 경우가 이미 있습니다.','error');return;}editBranch(()=>{c.values[i]=value.value;});};return value;});
     const pick=select(blocks,c.block,'경우 블록');pick.onchange=()=>{editBranch(()=>{c.block=pick.value;});show(pick.value);};
     const remove=uiNode('button','×');remove.type='button';remove.setAttribute('aria-label','경우 지우기');remove.onclick=()=>editBranch(()=>{b.cases.splice(b.cases.indexOf(c),1);});
-    for(const cell of [value,pick,remove]){const td=uiNode('td');td.append(cell);tr.append(td);}table.append(tr);
+    for(const cell of [name,...values,pick,remove]){const td=uiNode('td');td.append(cell);tr.append(td);}table.append(tr);
   }
-  // 새 경우의 값은 이 업무 건의 결정 값(이미 있으면 빈 값)
-  const add=uiNode('button','경우 더하기');add.type='button';add.disabled=!b.key||!b.blocks.length;
-  add.onclick=()=>{const v=[state.samples[b.key]??'',''].find(x=>!b.cases.some(c=>c.value===x));if(v===undefined){status('값이 빈 경우가 이미 있습니다. 그 값을 먼저 적으세요.','error');return;}editBranch(()=>{b.cases.push({value:v,block:b.blocks[0].id});});};
-  const fallback=select([['','없음'],...blocks],b.fallback,'기본 블록');fallback.disabled=!b.key;
+  // 새 경우의 값은 이 업무 건의 결정 값들(이미 있으면 빈 값)
+  const add=uiNode('button','경우 더하기');add.type='button';add.disabled=!b.keys.length||!b.blocks.length;
+  add.onclick=()=>{const v=[b.keys.map(k=>state.samples[k]??''),b.keys.map(()=>'')].find(x=>!b.cases.some(c=>same(c.values,x)));if(v===undefined){status('값이 빈 경우가 이미 있습니다. 그 값을 먼저 적으세요.','error');return;}editBranch(()=>{b.cases.push({values:v,block:b.blocks[0].id});});};
+  const fallback=select([['','없음'],...blocks],b.fallback,'기본 블록');fallback.disabled=!b.keys.length;
   fallback.onchange=()=>{editBranch(()=>{if(fallback.value)b.fallback=fallback.value;else delete b.fallback;});show(fallback.value);};
-  // 이 업무 건: 경우 표대로 또는 직접 고름(그 건에만 남는다). 직접 고르면 생성 미리 보기로 갈아끼운 모습을 본다
-  const st=state.branchStates[b.id],index=String(state.index),current=select([['','경우 표대로'],...blocks],b.picks[index],'이 업무 건의 블록');
-  current.onchange=()=>{editBranch(()=>{if(current.value)b.picks[index]=current.value;else delete b.picks[index];});if(current.value){show(current.value);void generate(false,'갱신 중 · 분기점 '+b.name);}};
-  const note=uiNode('p',!st?'':st.blocked?'정하지 못함 · '+st.why+' · 블록을 고르세요':st.blockName+' · '+(STATE_LABEL[st.state]??st.state)+(st.differs?' · 경우 표와 다름':''),'branch-state'+(st?.blocked?' undecided':''));note.setAttribute('role','status');
+  // 상호 배타(8.9-12): 이 분기점과 함께 경우 표 블록을 고를 수 없는 분기점. 한쪽에만 적어도 양쪽에 같다
+  const others=state.branches.filter(x=>x!==b),exclusive=uiNode('div',undefined,'branch-candidates');
+  for(const o of others){const row=uiNode('label',undefined,'branch-candidate'),check=uiNode('input');check.type='checkbox';check.checked=Boolean(b.exclusive?.includes(o.id)||o.exclusive?.includes(b.id));check.setAttribute('aria-label','함께 고를 수 없음 · '+o.name);
+    check.onchange=()=>editBranch(()=>{if(check.checked){b.exclusive=[...(b.exclusive??[]),o.id];return;}for(const [x,y] of [[b,o],[o,b]]){x.exclusive=x.exclusive?.filter(id=>id!==y.id);if(!x.exclusive?.length)delete x.exclusive;}});
+    row.append(check,uiNode('span',o.name));exclusive.append(row);}
+  // 이 업무 건: 경우 표대로 또는 직접 고름(그 건에만 남는다. 열쇠는 업무 건 식별이라 데이터 순서가 바뀌어도 같은 건). 직접 고르면 생성 미리 보기로 갈아끼운 모습을 본다
+  const st=state.branchStates[b.id],at=pickKey(),current=select([['','경우 표대로'],...blocks],b.picks[at],'이 업무 건의 블록');
+  current.onchange=()=>{editBranch(()=>{if(current.value)b.picks[at]=current.value;else delete b.picks[at];});if(current.value){show(current.value);void generate(false,'갱신 중 · 분기점 '+b.name);}};
+  const note=uiNode('p',!st?'':st.blocked?'정하지 못함 · '+st.why+(st.reason==='exclusive'?' · 한쪽은 기본 블록을 고르세요':' · 블록을 고르세요'):st.blockName+' · '+(STATE_LABEL[st.state]??st.state)+(st.differs?' · 경우 표와 다름':''),'branch-state'+(st?.blocked?' undecided':''));note.setAttribute('role','status');
   const remove=uiNode('button','분기점 지우기');remove.type='button';
-  remove.onclick=()=>{if(!confirm('분기점 '+b.name+'을(를) 지울까요? 원문은 그대로입니다.'))return;remember();state.branches=state.branches.filter(x=>x!==b);state.detailBranch=undefined;changed();renderSelectionDetail(true);void refreshBranches();status('분기점 '+b.name+'을(를) 지웠습니다.');};
+  remove.onclick=()=>{if(!confirm('분기점 '+b.name+'을(를) 지울까요? 원문은 그대로입니다.'))return;remember();state.branches=state.branches.filter(x=>x!==b);for(const x of state.branches){x.exclusive=x.exclusive?.filter(id=>id!==b.id);if(!x.exclusive?.length)delete x.exclusive;}state.detailBranch=undefined;changed();renderSelectionDetail(true);void refreshBranches();status('분기점 '+b.name+'을(를) 지웠습니다.');};
   // 고른 블록의 넣기 경고(서식이 다름 등)는 이 블록 옆에 표시만 한다
   const warnings=(st?.warnings??[]).map(w=>uiNode('p',w,'placement-warning'));
-  tools.replaceChildren(field('분기점 이름',name),uiNode('h3','후보 블록'),list,uiNode('h3','경우 표'),field('결정 값',key),...(b.cases.length?[table]:[]),add,field('기본 블록',fallback),uiNode('h3',caseLabel(state.index)),current,note,...warnings,preview,remove);
+  tools.replaceChildren(field('분기점 이름',name),uiNode('h3','후보 블록'),list,uiNode('h3','경우 표'),uiNode('span','결정 값','branch-field'),keyBox,...(b.cases.length?[table]:[]),add,field('기본 블록',fallback),...(others.length?[uiNode('h3','함께 고를 수 없는 분기점'),exclusive]:[]),uiNode('h3',caseLabel(state.index)),current,note,...warnings,preview,remove);
   if(st?.block)show(st.block);
 }
 

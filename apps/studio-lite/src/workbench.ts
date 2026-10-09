@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import {
-  buildBlockPreviewDocument, planBlockInsert, applyPlan, detectHeadings, headingRangeOf, charDelta, checkValueText, collectFields, compareToBaseline, compileDocument, draftAnchors, emptyTemplate, fieldRangeIn, findPlaceholders, generate,
+  buildBlockPreviewDocument, canonicalStudioJson, sha256Hex, planBlockInsert, applyPlan, detectHeadings, headingRangeOf, charDelta, checkValueText, collectFields, compareToBaseline, compileDocument, draftAnchors, emptyTemplate, fieldRangeIn, findPlaceholders, generate,
   generateFromTemplate, isValidPath, listUnregisteredPlaces, lookupPath, makeLineAnchor, makeRangeAnchor, makeWordAnchor, openPackage, parseDocument,
   placeText, planApplyCharFormat, readDataset, readStudioTemplate, readTemplate, readTypedValue, remapAddress, resolvePathValue, sanitizeFileStem, validateDocument, valueUnit,
   verifyPreservation, walkParagraphs, type CompileTarget, type Dataset, type HwpxDocument, type StudioTemplate,
@@ -12,6 +12,7 @@ import { parseCsv } from './core.ts';
 import { analyzePlaces, describeLeftover, findLeftovers, leftoverOf, listKeys, parseQuickData, type QuickData } from './quick.ts';
 import { CONTEXT, ITEM_KEYS, LABEL_MAX, LABEL_RELS, g2bTemplate, isField, repsOf, spanNow, validKey, type G2BBranch, type G2BEntry, type InputItem } from './input-table.ts';
 import { UNDECIDED_REASON, selectBranches } from './selection.ts';
+import { plainOf } from './quick-messages.ts';
 import { labelAt } from './item-label.ts';
 import { VALUE_TYPES, datePattern, decorateValue } from './value-type.ts';
 
@@ -28,12 +29,13 @@ type Heading = { id: string; level: 1 | 2 };
 type Block = { id: string; from: string; to: string; text: string; alias: string };
 type Placement = {id:string;version:number;from:string;to:string};
 /**
- * 분기점(#7): 범위(from–to, 원문은 그대로)와 후보 블록(저장소 원형 id·판 핀), 경우 표(결정 키, 값 → 블록, 기본 블록), 업무 건 번호마다 직접 고른 블록.
- * 블록은 원형 id로 적고, 서식 판의 블록 id는 `<분기점 id>-<원형 id>`다
+ * 분기점(#7): 범위(from–to, 원문은 그대로)와 후보 블록(저장소 원형 id·판 핀), 경우 표(결정 키들, 이름 있는 경우: 키마다 값 → 블록, 기본 블록),
+ * 함께 경우 표 블록을 고를 수 없는 분기점(`exclusive`), 업무 건 식별(`caseKey`)마다 직접 고른 블록. 블록은 원형 id로 적고, 서식 판의 블록 id는 `<분기점 id>-<원형 id>`다
  */
-// shortcut: 직접 고름은 업무 건 번호에 남는다(데이터를 다시 올려 순서가 바뀌면 다른 건에 붙는다), 이번 건 case@1 저장(#25·#63) 때 행 해시로 올린다
-type Branch = { id: string; name: string; from: string; to: string; blocks: { id: string; version: number }[]; key?: string; cases: { value: string; block: string }[]; fallback?: string; picks: Record<string, string> };
-type Work = { edits: Edit[]; headings: Heading[]; blocks: Block[]; placements: Placement[]; branches: Branch[]; inputItems: InputItem[]; index: number; missing: "error" | "keep"; samples?: Record<string, string> };
+type Branch = { id: string; name: string; from: string; to: string; blocks: { id: string; version: number }[]; keys: string[]; cases: { name?: string; values: string[]; block: string }[]; fallback?: string; exclusive?: string[]; picks: Record<string, string> };
+type Work = { edits: Edit[]; headings: Heading[]; blocks: Block[]; placements: Placement[]; branches: Branch[]; inputItems: InputItem[]; index: number; missing: "error" | "keep"; samples?: Record<string, string>; renumber?: string[] };
+/** 참조 번호 재정렬(#194, 엔진 `options.renumber`)에서 고를 수 있는 꼴 */
+const RENUMBER = ['붙임', '별지', '표'];
 type Session = { workspaceId?: string; kind: 'hwpx' | 'text'; name: string; source: Uint8Array; doc?: HwpxDocument; sourceText?: string; rows: Row[]; headings?: { id: string; name: string }[]; data?: QuickData; dataContent?: string; output?: Uint8Array; blockPreviews?: Map<string, BlockDraft>; pins?: Set<string>; inputs?: Input[] };
 const rowId = (section: number, path: number[]) => `p:${section}:${path.join('.')}`;
 const sameParent = (a: Row, b: Row) => a.sectionIndex === b.sectionIndex && a.path.length === b.path.length && a.path.slice(0, -1).every((n, i) => n === b.path[i]);
@@ -124,9 +126,18 @@ function caseNames(s: Session): string[] {
   const name = keys.find(k => new Set(rows.map(r => r[k])).size > 1) ?? keys[0];
   return rows.map(r => name === undefined ? '' : String(r[name]).replace(/\s+/g, ' ').trim().slice(0, 20));
 }
+/**
+ * 업무 건 식별(#194, 분기점 직접 고름의 열쇠): 데이터 행의 정규 JSON 해시(엔진 `case@1`의 행 해시)라 데이터를 다시 올려 순서가 바뀌어도 같은 건에 붙는다.
+ * 데이터가 없으면 견본 값 한 건(`sample`). 값이 모두 같은 행은 같은 건으로 본다
+ */
+function caseKey(s: Session, index: number): string | undefined {
+  if (!s.data) return index === 0 ? 'sample' : undefined;
+  const r = s.data.records[index];
+  return r && sha256Hex(canonicalStudioJson('dataset' in r ? r.dataset.data : r));
+}
 function dataInfo(s: Session) {
   const first = s.data?.records[0];
-  return { records: s.data?.records.length ?? 0, keys: s.data ? listKeys(s.data.records).keys : [], preview: first && 'dataset' in first ? first.dataset.data : {}, index: 0, cases: caseNames(s) };
+  return { records: s.data?.records.length ?? 0, keys: s.data ? listKeys(s.data.records).keys : [], preview: first && 'dataset' in first ? first.dataset.data : {}, index: 0, cases: caseNames(s), caseIds: (s.data?.records ?? []).map((_, i) => caseKey(s, i)!) };
 }
 function parseData(content: unknown, name: unknown): { data: QuickData; content: string } {
   need(typeof content === 'string' && Buffer.byteLength(content) <= MAX_TEXT && typeof name === 'string');
@@ -172,29 +183,51 @@ function workOf(s: Session, input: Record<string, unknown>): Work {
   // 견본 값(#149): 데이터 없이 표에 적은 값. 열쇠(데이터 키, 없으면 이름) → 글
   need(input.samples === undefined || isObj(input.samples) && Object.keys(input.samples).length <= 3000);
   const samples = input.samples === undefined ? undefined : Object.fromEntries(Object.entries(input.samples).map(([k, v]) => { need(k.trim() !== '' && k.length <= 500 && typeof v === 'string'); return [text(k), text(v)]; }));
-  return { edits, headings, blocks, placements, branches, inputItems: inputItemsOf(input.inputItems, row), index, missing: input.missing ?? "error", ...(samples ? { samples } : {}) };
+  const renumber = input.renumber as unknown[] | undefined;
+  need(renumber === undefined || Array.isArray(renumber) && renumber.every(p => RENUMBER.includes(p as string)) && new Set(renumber).size === renumber.length && (s.kind === 'hwpx' || !renumber.length));
+  return { edits, headings, blocks, placements, branches, inputItems: inputItemsOf(input.inputItems, row), index, missing: input.missing ?? "error", ...(samples ? { samples } : {}), ...(renumber?.length ? { renumber: RENUMBER.filter(p => renumber.includes(p)) } : {}) };
 
 }
 
-/** 작업 꼴의 분기점(#7): HWPX만, 같은 본문·칸 안 범위, 후보는 원형 id·판, 경우 표·기본·직접 고름은 후보만 가리킨다. id·이름(NFC)은 서로 달라야 한다 */
+/**
+ * 작업 꼴의 분기점(#7): HWPX만, 같은 본문·칸 안 범위, 후보는 원형 id·판, 경우 표·기본·직접 고름은 후보만 가리킨다. id·이름(NFC)은 서로 달라야 한다.
+ * 결정 키는 3개까지 서로 다르고 경우마다 키 수만큼 값(같은 값들의 경우는 하나), 배타는 다른 분기점 id. PR #193 꼴(`key`·경우 `value`·업무 건 번호 직접 고름)도 읽어 지금 꼴로 바꾼다
+ */
 function branchesIn(s: Session, value: unknown, row: (id: unknown) => Row): Branch[] {
   need(value === undefined || Array.isArray(value) && value.length <= 50);
   const label = (v: unknown, max: number): v is string => typeof v === 'string' && v.trim() !== '' && v.length <= max && checkValueText(v) === undefined;
   const branches = ((value as unknown[] | undefined) ?? []).map((b): Branch => {
-    need(isObj(b) && Object.keys(b).every(k => ['id', 'name', 'from', 'to', 'blocks', 'key', 'cases', 'fallback', 'picks'].includes(k)) && typeof b.id === 'string' && /^s[0-9]{1,6}$/.test(b.id) && label(b.name, 80));
+    need(isObj(b) && Object.keys(b).every(k => ['id', 'name', 'from', 'to', 'blocks', 'key', 'keys', 'cases', 'fallback', 'exclusive', 'picks'].includes(k)) && typeof b.id === 'string' && /^s[0-9]{1,6}$/.test(b.id) && label(b.name, 80));
     const a = row(b.from), z = row(b.to);
     need(s.kind === 'hwpx' && sameParent(a, z) && a.path.at(-1)! <= z.path.at(-1)!, 'BLOCK_BOUNDARY');
     need(Array.isArray(b.blocks) && b.blocks.length <= 20 && b.blocks.every(x => isObj(x) && Object.keys(x).length === 2 && typeof x.id === 'string' && /^k[0-9a-f]{8}$/.test(x.id) && Number.isInteger(x.version) && (x.version as number) > 0));
     const blocks = (b.blocks as { id: string; version: number }[]).map(x => ({ id: x.id, version: x.version })), ids = blocks.map(x => x.id);
     need(new Set(ids).size === ids.length, 'WORKBENCH_DUPLICATE');
     const known = (v: unknown): v is string => typeof v === 'string' && ids.includes(v);
-    need((b.key === undefined || label(b.key, 500)) && (b.cases === undefined || Array.isArray(b.cases) && b.cases.length <= 200) && (b.fallback === undefined || known(b.fallback)) && (b.picks === undefined || isObj(b.picks)));
-    const cases = ((b.cases as unknown[] | undefined) ?? []).map(c => { need(isObj(c) && Object.keys(c).length === 2 && typeof c.value === 'string' && c.value.length <= 500 && checkValueText(c.value) === undefined && known(c.block)); return { value: c.value, block: c.block }; });
-    need(new Set(cases.map(c => c.value)).size === cases.length, 'WORKBENCH_DUPLICATE');
-    const picks = Object.fromEntries(Object.entries((b.picks as Record<string, unknown> | undefined) ?? {}).map(([k, v]) => { need(/^\d{1,6}$/.test(k) && known(v)); return [k, v]; }));
-    return { id: b.id, name: b.name.trim(), from: a.id, to: z.id, blocks, ...(b.key === undefined ? {} : { key: b.key.trim() }), cases, ...(b.fallback === undefined ? {} : { fallback: b.fallback }), picks };
+    const rawKeys = b.keys ?? (b.key === undefined ? [] : [b.key]);
+    need(!(b.key !== undefined && b.keys !== undefined) && Array.isArray(rawKeys) && rawKeys.length <= 3 && rawKeys.every(k => label(k, 500)) && (b.cases === undefined || Array.isArray(b.cases) && b.cases.length <= 200) && (b.fallback === undefined || known(b.fallback)) && (b.picks === undefined || isObj(b.picks)));
+    const keys = (rawKeys as string[]).map(k => k.trim());
+    need(new Set(keys.map(k => k.normalize('NFC'))).size === keys.length, 'WORKBENCH_DUPLICATE');
+    const cell = (v: unknown): v is string => typeof v === 'string' && v.length <= 500 && checkValueText(v) === undefined;
+    // 결정 키가 없는 경우는 쓰이지 않으므로(모든 후보가 조건 없음) 버린다(PR #193 작업 파일에는 키를 지운 뒤 남은 경우가 있다)
+    const cases = !keys.length ? [] : ((b.cases as unknown[] | undefined) ?? []).map(c => {
+      need(isObj(c) && Object.keys(c).every(k => ['name', 'value', 'values', 'block'].includes(k)) && (c.name === undefined || label(c.name, 60)) && known(c.block));
+      const values = c.values ?? (c.value === undefined ? undefined : [c.value]);
+      need(!(c.value !== undefined && c.values !== undefined) && Array.isArray(values) && values.length === keys.length && values.every(cell));
+      return { ...(c.name === undefined ? {} : { name: c.name.trim() }), values: values as string[], block: c.block };
+    });
+    need(new Set(cases.map(c => JSON.stringify(c.values))).size === cases.length, 'WORKBENCH_DUPLICATE');
+    need(b.exclusive === undefined || Array.isArray(b.exclusive) && b.exclusive.length <= 50 && b.exclusive.every(x => typeof x === 'string' && /^s[0-9]{1,6}$/.test(x) && x !== b.id));
+    // 직접 고름의 열쇠는 업무 건 식별(caseKey). 업무 건 번호(PR #193 꼴)는 지금 데이터의 그 행 식별로 바꾸고, 없는 행이면 버린다
+    const picks = Object.fromEntries(Object.entries((b.picks as Record<string, unknown> | undefined) ?? {}).flatMap(([k, v]) => {
+      need((/^[0-9a-f]{64}$/.test(k) || k === 'sample' || /^\d{1,6}$/.test(k)) && known(v));
+      const at = /^\d{1,6}$/.test(k) ? caseKey(s, Number(k)) : k;
+      return at === undefined ? [] : [[at, v]];
+    }));
+    return { id: b.id, name: b.name.trim(), from: a.id, to: z.id, blocks, keys, cases, ...(b.fallback === undefined ? {} : { fallback: b.fallback }), ...(b.exclusive === undefined || !b.exclusive.length ? {} : { exclusive: [...new Set(b.exclusive as string[])] }), picks };
   });
   need(new Set(branches.map(b => b.id)).size === branches.length && new Set(branches.map(b => b.name.normalize('NFC'))).size === branches.length, 'WORKBENCH_DUPLICATE');
+  need(branches.every(b => (b.exclusive ?? []).every(x => branches.some(o => o.id === x))));
   return branches;
 }
 
@@ -208,10 +241,10 @@ function branchesOf(s: Session, work: Work, library: BlockLibrary | undefined) {
     need(library && s.doc, 'BLOCK_STORE');
     const a = s.rows.find(r => r.id === b.from)!, z = s.rows.find(r => r.id === b.to)!;
     const anchor = makeRangeAnchor(s.doc, a.sectionIndex, a.path.slice(0, -1), a.path.at(-1)!, z.path.at(-1)!); need(anchor, 'WORKBENCH_RANGE');
-    return { id: b.id, name: b.name, anchor: { ...anchor, id: b.id + '-r' }, ...(b.key === undefined ? {} : { key: b.key }), blocks: b.blocks.map(c => {
+    return { id: b.id, name: b.name, anchor: { ...anchor, id: b.id + '-r' }, keys: b.keys, ...(b.exclusive ? { exclusive: b.exclusive } : {}), blocks: b.blocks.map(c => {
       const m = library.material(c.id, c.version);
       materials.push({ block: `${b.id}-${c.id}`, m }); if ('fragment' in m.proto.content) blobs.set(m.proto.content.fragment, m.blob);
-      return { id: `${b.id}-${c.id}`, name: m.item.name, proto: { id: m.proto.id, version: m.proto.version }, content: m.proto.content, values: b.cases.filter(x => x.block === c.id).map(x => x.value), fallback: b.fallback === c.id };
+      return { id: `${b.id}-${c.id}`, name: m.item.name, proto: { id: m.proto.id, version: m.proto.version }, content: m.proto.content, cases: b.cases.filter(x => x.block === c.id).map(x => x.values), fallback: b.fallback === c.id };
     }) };
   });
   return { branches, blobs, materials };
@@ -224,19 +257,27 @@ function branchesOf(s: Session, work: Work, library: BlockLibrary | undefined) {
 function branchStates(s: Session, work: Work, library: BlockLibrary | undefined) {
   if (!work.branches.length) return [];
   const { branches } = branchesOf(s, work, library);
-  const t = readStudioTemplate(JSON.stringify(g2bTemplate([], { id: 't00000000', version: 1, name: 'branches', sha256: hash(s.source) }, branches))) as StudioTemplate;
+  let t: StudioTemplate;
+  // 배타로 묶은 두 분기점이 같은 결정 값으로 함께 경우 표 블록을 고르게 되어 있으면 엔진이 읽기에서 거절한다(TPL_EXCLUSIVE): 쉬운 말로
+  try { t = readStudioTemplate(JSON.stringify(g2bTemplate([], { id: 't00000000', version: 1, name: 'branches', sha256: hash(s.source) }, branches))) as StudioTemplate; }
+  catch (e) { if ((e as { code?: string }).code === 'TPL_EXCLUSIVE') fail('TPL_EXCLUSIVE', plainOf('TPL_EXCLUSIVE')); throw e; }
   const dataset = datasetOf(s, work), record: Record<string, unknown> = {};
   if (dataset) for (const b of t.bindings) { const k = 'key' in b ? b.key : b.path, f = lookupPath(dataset, k); if (f.found && f.value !== null) record[k] = f.value; }
-  const picks = Object.fromEntries(work.branches.flatMap(b => b.picks[String(work.index)] ? [[b.id, `${b.id}-${b.picks[String(work.index)]}`]] : []));
-  return selectBranches(t, record, picks, work.index).map(x => {
+  const at = caseKey(s, work.index)!;
+  const picks = Object.fromEntries(work.branches.flatMap(b => b.picks[at] ? [[b.id, `${b.id}-${b.picks[at]}`]] : []));
+  const selections = selectBranches(t, record, picks, work.index), clashing = new Set(selections.filter(x => x.blocked === 'SEL_EXCLUSIVE').map(x => x.slot));
+  // 배타 위반은 짝 분기점 이름으로 알린다(엔진 8.8.8 5번: 두 슬롯 모두 막힘)
+  const partners = (b: Branch) => work.branches.filter(o => o !== b && clashing.has(o.id) && (b.exclusive?.includes(o.id) || o.exclusive?.includes(b.id))).map(o => o.name).join(', ');
+  return selections.map(x => {
     const b = work.branches.find(y => y.id === x.slot)!, block = x.block?.slice(b.id.length + 1);
-    return { id: b.id, name: b.name, state: x.state, ...(block ? { block, blockName: branches.find(y => y.id === b.id)!.blocks.find(y => y.id === x.block)!.name, version: b.blocks.find(y => y.id === block)!.version } : {}), ...(x.reason ? { reason: x.reason, why: UNDECIDED_REASON[x.reason] ?? x.reason } : {}), ...(x.blocked ? { blocked: x.blocked } : {}), ...(x.differs ? { differs: true } : {}) };
+    const why = x.reason === 'exclusive' ? `함께 고를 수 없는 ${partners(b)}도 경우 표 블록을 고름` : x.reason ? UNDECIDED_REASON[x.reason] ?? x.reason : undefined;
+    return { id: b.id, name: b.name, state: x.state, ...(block ? { block, blockName: branches.find(y => y.id === b.id)!.blocks.find(y => y.id === x.block)!.name, version: b.blocks.find(y => y.id === block)!.version } : {}), ...(x.reason ? { reason: x.reason, why } : {}), ...(x.blocked ? { blocked: x.blocked } : {}), ...(x.differs ? { differs: true } : {}) };
   });
 }
-/** 생성에 넣을 분기점 블록: 고른 블록을 그 범위의 저장 블록 배치로. 하나라도 못 정하면 막는다(`SEL_UNDECIDED`, 분기점 이름과 쉬운 까닭) */
+/** 생성에 넣을 분기점 블록: 고른 블록을 그 범위의 저장 블록 배치로. 하나라도 못 정하면 막는다(`SEL_UNDECIDED`, 배타 위반뿐이면 `SEL_EXCLUSIVE`, 분기점 이름과 쉬운 까닭) */
 function branchPlacements(s: Session, work: Work, library: BlockLibrary | undefined): Placement[] {
   const states = branchStates(s, work, library), open = states.filter(x => x.blocked);
-  if (open.length) fail('SEL_UNDECIDED', `이 업무 건에서 분기점 블록을 정하지 못했습니다: ${open.map(x => `${x.name}(${x.why})`).join(', ')}. 분기 표에서 이 업무 건의 블록을 고르세요.`);
+  if (open.length) fail(open.every(x => x.blocked === 'SEL_EXCLUSIVE') ? 'SEL_EXCLUSIVE' : 'SEL_UNDECIDED', `이 업무 건에서 분기점 블록을 정하지 못했습니다: ${open.map(x => `${x.name}(${x.why})`).join(', ')}. 분기 표에서 이 업무 건의 블록을 고르세요.`);
   return states.map(x => { const b = work.branches.find(y => y.id === x.id)!; return { id: x.block!, version: x.version!, from: b.from, to: b.to }; });
 }
 
@@ -296,8 +337,9 @@ function formatsOf(s: Session, items: readonly InputItem[]): Map<string, Shape> 
  * 값 단계(#186): 조립본의 `{{키}}`·누름틀·메일머지를 Helper 2판 창구와 같은 엔진 생성(`generateFromTemplate`)으로 자리마다 채운다(금액 "원"은 자리 바로 뒤 글로, 8.8.4).
  * 서식 판은 같은 `g2bTemplate`이고 확정한 지정 자리는 편집 글의 `{{키}}`로, 그 밖의 `{{키}}`·필드(직접 적은 것·블록 안의 것)는 글 값으로 더한다.
  * 데이터는 연결 키(없으면 별칭)의 값을 담은 한 행이다. 엔진이 읽지 못하는 금액·날짜 값(`미정` 등)은 그 값만 글로 넣는다(창구는 `INVALID_FIELDS`).
+ * 참조 번호 재정렬(#194)을 켰으면 같은 생성이 조립본의 `[붙임 N]` 등을 다시 매긴다(엔진 `options.renumber`, 다시 매긴 곳 수·대응 없는 참조 경고).
  */
-function fillValues(s: Session, items: readonly InputItem[], bytes: Uint8Array, dataset: Dataset, missing: Work['missing']): { output: Uint8Array; filled: number } {
+function fillValues(s: Session, items: readonly InputItem[], bytes: Uint8Array, dataset: Dataset, missing: Work['missing'], renumber: readonly string[] = []): { output: Uint8Array; filled: number; renumbered: number; warnings: string[] } {
   const doc = parseDocument(openPackage(bytes));
   const entries = g2bEntries(s, items).entries.flatMap(({ anchor, ...x }): G2BEntry[] => !anchor ? [x] : isValidPath(x.key?.trim() || x.name) ? [{ ...x, kind: 'placeholder', name: x.key?.trim() || x.name }] : []);
   // 문서에서 찾은 자리(목록에서 제외한 것 포함)는 서식 판 그대로 두고, 그 밖의 것만 이름 규칙에 맞으면 더한다
@@ -305,7 +347,7 @@ function fillValues(s: Session, items: readonly InputItem[], bytes: Uint8Array, 
   const add = (kind: G2BEntry['kind'], name: string | undefined) => { if (name && isValidPath(name) && !seen.has(kind + '\n' + name)) { seen.add(kind + '\n' + name); entries.push({ kind, name }); } };
   for (const f of collectFields(doc)) add(f.info.type === 'CLICK_HERE' ? 'clickHere' : 'mailMerge', f.info.type === 'CLICK_HERE' ? f.info.name : f.info.type === 'MAILMERGE' ? f.info.mergeKey : undefined);
   for (const section of doc.sections) for (const p of walkParagraphs(section.paragraphs)) for (const k of findPlaceholders(p.logicalText)) add('placeholder', k.path);
-  const t = g2bTemplate(entries, { id: 't00000000', version: 1, name: 'preview', sha256: hash(bytes) }), record: Record<string, unknown> = {};
+  const t = g2bTemplate(entries, { id: 't00000000', version: 1, name: 'preview', sha256: hash(bytes) }, [], renumber), record: Record<string, unknown> = {};
   for (const b of t.bindings) {
     const found = [b.key, ...(b.aliases ?? [])].map(name => lookupPath(dataset, name)).find(f => f.found && f.value !== null);
     if (!found?.found) continue;
@@ -313,7 +355,7 @@ function fillValues(s: Session, items: readonly InputItem[], bytes: Uint8Array, 
     const i = t.values.findIndex(v => v.id === b.value), v = t.values[i]! as { id: string; name: string; format: 'text' | 'money' | 'date'; display?: { unit?: string; pattern?: string } };
     if (v.format !== 'text' && !readTypedValue(v.format, found.value, v.display).ok) t.values[i] = { id: v.id, name: v.name, format: 'text' };
   }
-  const r = generateFromTemplate(bytes, readStudioTemplate(JSON.stringify({ ...t, options: { unregistered: 'keep' } })) as StudioTemplate, record, undefined, () => undefined, { missing, mode: 'baseline' });
+  const r = generateFromTemplate(bytes, readStudioTemplate(JSON.stringify({ ...t, options: { ...t.options, unregistered: 'keep' } })) as StudioTemplate, record, undefined, () => undefined, { missing, mode: 'baseline' });
   if (!r.ok || r.dryRun) {
     const lost = [...new Set(r.report.issues.filter(i => i.code === 'DATA_MISSING').map(i => t.bindings.find(b => 'value:' + b.value === i.where)?.key ?? ''))];
     if (lost.length) unlinked(`데이터에 없는 키 ${lost.length}개: ${lost.slice(0, 20).join(', ')}`);
@@ -322,7 +364,8 @@ function fillValues(s: Session, items: readonly InputItem[], bytes: Uint8Array, 
     const keys = [...new Set(r.report.skipped.map(x => { const p = t.places.find(p => p.id === x.anchor.split('@')[0]) as { key?: string; name?: string } | undefined; return p?.key ?? p?.name ?? x.anchor; }))];
     return fail(code, code === 'FILL_SKIPPED' ? `서식이 섞이거나 개체에 걸친 {{키}} 자리 ${r.report.skipped.length}곳(${namesOf(keys)})은 채울 수 없어 생성을 막았습니다(Helper 생성도 같습니다). 한컴에서 키 전체를 같은 서식으로 고치세요.` : '입력 값을 채우지 못했습니다. 데이터 항목을 확인하세요.');
   }
-  return { output: r.output as Uint8Array, filled: r.report.stage2?.plan.actions.filter(a => a.type === 'fill').reduce((n, a) => n + a.targets, 0) ?? 0 };
+  const actions = r.report.stage2?.plan.actions ?? [], renumbered = actions.filter(a => a.ruleId.startsWith('renumber:')).length;
+  return { output: r.output as Uint8Array, filled: actions.filter(a => a.type === 'fill' && !a.ruleId.startsWith('renumber:')).reduce((n, a) => n + a.targets, 0), renumbered, warnings: r.report.issues.filter(i => i.code === 'RENUMBER_UNMATCHED').map(i => i.message) };
 }
 
 /**
@@ -543,12 +586,14 @@ function build(s: Session, work: Work, makeTemplate = false, library?: BlockLibr
       return fail('WORKBENCH_TEMPLATE_INCOMPLETE', '누름틀로 만들지 못한 키가 있습니다. 키 전체가 같은 서식 안에 있도록 수정하세요. 일부만 만든 파일은 저장하지 않았습니다.');
     output = compiled.output;
   }
-  if(dataset){const values=fillValues(s,work.inputItems,output,dataset,work.missing);output=values.output;filled+=values.filled;}
+  // 값 단계: 데이터가 있거나 참조 번호 재정렬을 켰을 때(데이터가 없으면 자리는 그대로 두고 번호만, 누름틀 서식 만들기는 빼고)
+  const values = dataset || (work.renumber && !makeTemplate) ? fillValues(s, work.inputItems, output, dataset ?? { data: {}, derived: {} }, dataset ? work.missing : 'keep', work.renumber) : undefined;
+  if (values) { output = values.output; filled += values.filled; }
   const outputDoc = parseDocument(openPackage(output));
   need(compareToBaseline(validateDocument(s.source), validateDocument(output)).newErrors.length === 0, 'WORKBENCH_VALIDATION');
   const paragraphs = outputDoc.sections.flatMap(section => [...walkParagraphs(section.paragraphs)]);
   return { output, text: paragraphs.map(p => p.logicalText.replaceAll('\uFFFC', '')).join('\n'), filled: makeTemplate ? 0 : filled, changed: edits.length + work.blocks.length + work.placements.length, ...(makeTemplate ? { template: true as const, promoted: targets.length } : {}),
-    notes: [...new Set(result.report.issues.filter(i => i.severity === 'warning').map(i => plainBlock(i.code))), ...(work.headings.length ? ['제목 단계는 작업 화면의 표시 정보입니다.'] : []), ...(work.blocks.length ? ['일반 글 블록은 첫 문단의 서식을 상속합니다.'] : []), ...(paragraphs.some(p => p.logicalText.includes('\uFFFC')) ? ['복사용 본문에는 개체 자리 표시를 생략했습니다.'] : [])] };
+    notes: [...new Set(result.report.issues.filter(i => i.severity === 'warning').map(i => plainBlock(i.code))), ...(values?.renumbered ? [`참조 번호 ${values.renumbered}곳을 다시 매겼습니다.`] : []), ...(values?.warnings ?? []), ...(work.headings.length ? ['제목 단계는 작업 화면의 표시 정보입니다.'] : []), ...(work.blocks.length ? ['일반 글 블록은 첫 문단의 서식을 상속합니다.'] : []), ...(paragraphs.some(p => p.logicalText.includes('\uFFFC')) ? ['복사용 본문에는 개체 자리 표시를 생략했습니다.'] : [])] };
 }
 
 function buildText(s: Session, work: Work) {
@@ -620,7 +665,7 @@ export function createWorkbench(library?: BlockLibrary) {
         if (path === '/api/workbench/restore') {
           need(typeof input.workspace !== 'string' || Buffer.byteLength(input.workspace) <= 20 * 1024 * 1024, 'WORKBENCH_WORKSPACE');
           const raw: unknown = typeof input.workspace === 'string' ? JSON.parse(input.workspace) : input.workspace;
-          need(isObj(raw) && raw.schema === schema && (raw.kind === 'text' || raw.kind === 'hwpx') && Object.keys(raw).every(k => ['schema', 'kind', 'name', 'source', 'sha256', 'data', 'edits', 'headings', 'blocks', 'placements', 'branches', 'inputItems', 'index', 'missing', 'samples', 'workspaceId'].includes(k)), 'WORKBENCH_WORKSPACE');
+          need(isObj(raw) && raw.schema === schema && (raw.kind === 'text' || raw.kind === 'hwpx') && Object.keys(raw).every(k => ['schema', 'kind', 'name', 'source', 'sha256', 'data', 'edits', 'headings', 'blocks', 'placements', 'branches', 'inputItems', 'index', 'missing', 'samples', 'renumber', 'workspaceId'].includes(k)), 'WORKBENCH_WORKSPACE');
           const s = open(raw.name, raw.source); need(raw.kind === s.kind, 'WORKBENCH_WORKSPACE'); need(raw.sha256 === hash(s.source), 'WORKBENCH_SOURCE_HASH');
           if (raw.data !== undefined) { const parsed = parseData(raw.data, 'data.json'); s.data = parsed.data; s.dataContent = parsed.content; }
           need(raw.workspaceId===undefined||typeof raw.workspaceId==='string'&&/^[0-9a-f-]{36}$/.test(raw.workspaceId),'WORKBENCH_WORKSPACE');
@@ -700,7 +745,7 @@ export function createWorkbench(library?: BlockLibrary) {
           const own = entries.slice();
           for (const { block, m } of materials) for (const f of buildBlockPreviewDocument(m.proto, m.blob).fields)
             if (!own.some(e => e.kind === f.kind && e.name.normalize('NFC') === f.name.normalize('NFC'))) entries.push({ kind: f.kind, name: f.name, where: block });
-          const template = g2bTemplate(entries, { id: (input.id as string | undefined) ?? 't' + sha256.slice(0, 8), version: 1, name: s.name.replace(/\.hwpx$/i, ''), sha256 }, branches);
+          const template = g2bTemplate(entries, { id: (input.id as string | undefined) ?? 't' + sha256.slice(0, 8), version: 1, name: s.name.replace(/\.hwpx$/i, ''), sha256 }, branches, work.renumber);
           // 추천 목록에서 제외한 {{키}}는 서식 판에 없어 Helper 2판 생성이 건마다 막힌다(엔진 PLACE_UNREGISTERED, {{}}는 기본 error, #192): 저장하지 않고 알린다
           // shortcut: 분기점 범위 안의 제외한 {{키}}도 센다(블록으로 바뀌어 사라질 자리, 엔진 `listUnregisteredPlaces`와 같은 한계), 그런 사례가 나오면 범위 안 자리를 뺀다
           const left = listUnregisteredPlaces(s.doc, template as unknown as StudioTemplate).filter(p => p.kind === 'placeholder');

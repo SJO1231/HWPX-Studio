@@ -1,7 +1,7 @@
 import {createPageView} from '/packages/viewer/src/dom/index.ts';
 import {loadRhwp,openDocument} from '/packages/viewer/src/rhwp/index.ts';
 // Store engine fragments and confirm placement before changing the generated result.
-export function installBlockLibrary({selection, session, api, status, beforeOpen, previewPlacement, onSaved, currentUsage}) {
+export function installBlockLibrary({selection, session, api, status, beforeOpen, previewPlacement, onSaved, currentUsage, sameValue}) {
   const $ = s => document.querySelector(s), dialog = $('#block-library-dialog');
   const body = $('#block-library-body'), title = $('#block-library-title');
   let busy = false, draft, savedFocus;
@@ -43,8 +43,10 @@ export function installBlockLibrary({selection, session, api, status, beforeOpen
       if(!active)return;await loadRhwp({wasmUrl:'/vendor/rhwp/rhwp_bg.wasm'});if(!active)return;
       doc=openDocument(Uint8Array.from(atob(result.hwpx),c=>c.charCodeAt(0)));
       const count=result.fields.reduce((n,f)=>n+f.count,0);note.textContent='블록 단독 미리보기 · 읽기 전용 · 입력 '+count+' · '+doc.pageCount()+'쪽';
-      const fields=element('details');fields.append(element('summary','입력 '+count));
-      for(const f of result.fields)fields.append(element('p',f.name+' · '+f.count+'곳'));
+      // 블록 안 입력 항목은 문서의 같은 이름 항목과 같은 값이다(요구 8.3-3, #60 O8): 열린 문서에 같은 이름이 있으면 "같은 값 n곳(문서 m곳)"
+      const shared=f=>sameValue?.(f.name)??0,fields=element('details'),same=result.fields.filter(shared).length;
+      fields.append(element('summary','입력 '+count+(same?' · 문서와 같은 값 '+same:'')));
+      for(const f of result.fields)fields.append(element('p',f.name+' · '+f.count+'곳'+(shared(f)?' · 같은 값 '+(f.count+shared(f))+'곳(문서 '+shared(f)+'곳)':'')));
       if(count)box.append(fields);
       for(const warning of result.warnings)box.append(element('p',warning.message,'block-warning'));
       const pages=element('div',undefined,'page-view block-preview-pages');box.append(pages);
